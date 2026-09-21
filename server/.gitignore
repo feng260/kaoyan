@@ -1,0 +1,16 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+
+# 环境变量（含数据库密码，严禁提交）
+.env
+.env.*
+!.env.example
+
+# 上架产物 / 上传的 APK
+releases/
+
+# 日志
+*.log

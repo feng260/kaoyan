@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>研钟 · 管理后台</title>
+<style>
+  :root{--bg:#12142a;--card:#1a1d38;--line:#2c3055;--txt:#e8eaf6;--dim:#8f95c8;--pri:#5865f2;--ok:#2e9e5b;--err:#e5534b;--amber:#f5a83c}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:"Segoe UI",system-ui,sans-serif;background:var(--bg);color:var(--txt);min-height:100vh}
+  .login{max-width:380px;margin:14vh auto;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:32px}
+  .login h1{font-size:20px;margin-bottom:4px}.login p{color:var(--dim);font-size:13px;margin-bottom:20px}
+  input,textarea{width:100%;background:#12142a;border:1px solid var(--line);border-radius:8px;color:var(--txt);padding:10px 12px;font-size:14px;margin-bottom:12px}
+  button{cursor:pointer;border:none;border-radius:8px;padding:10px 18px;font-size:14px;background:var(--pri);color:#fff}
+  button.ghost{background:transparent;border:1px solid var(--line);color:var(--dim)}
+  button.danger{background:transparent;border:1px solid var(--err);color:var(--err)}
+  header{display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:1px solid var(--line);background:var(--card)}
+  header h1{font-size:17px}header .sp{flex:1}
+  nav{display:flex;gap:6px;padding:0 24px;border-bottom:1px solid var(--line)}
+  nav a{padding:12px 18px;color:var(--dim);text-decoration:none;font-size:14px;border-bottom:2px solid transparent}
+  nav a.on{color:var(--txt);border-color:var(--pri)}
+  main{max-width:1080px;margin:0 auto;padding:24px}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:24px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .card .v{font-size:26px;font-weight:700}.card .l{color:var(--dim);font-size:12px;margin-top:2px}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:13px}
+  th{color:var(--dim);text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);font-weight:500}
+  td{padding:10px 14px;border-bottom:1px solid var(--line)}
+  tr:last-child td{border-bottom:none}
+  .pill{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px}
+  .pill.ok{background:var(--ok);color:#fff}.pill.forced{background:var(--err);color:#fff}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:16px}
+  #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--pri);color:#fff;padding:10px 22px;border-radius:99px;font-size:13px;opacity:0;transition:.3s;pointer-events:none}
+  #toast.show{opacity:1}
+  .muted{color:var(--dim)}
+  .notes li{margin-left:16px;color:var(--dim);font-size:12px}
+</style>
+</head>
+<body>
+
+<div class="login" id="loginBox">
+  <h1>研钟 · 管理后台</h1>
+  <p>输入 server/.env 中的 ADMIN_TOKEN</p>
+  <input type="password" id="tokenInput" placeholder="管理员令牌" autofocus>
+  <button onclick="doLogin()">进入</button>
+  <div id="loginErr" style="color:var(--err);font-size:12px;margin-top:10px"></div>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <h1>研钟 · 管理后台</h1>
+    <span class="sp"></span>
+    <span class="muted" id="srvInfo"></span>
+    <button class="ghost" onclick="logout()">退出</button>
+  </header>
+  <nav>
+    <a data-tab="overview" class="on">概览</a>
+    <a data-tab="users">用户</a>
+    <a data-tab="releases">版本发布</a>
+  </nav>
+  <main>
+    <section id="tab-overview"><div class="cards" id="statCards"></div></section>
+
+    <section id="tab-users" style="display:none">
+      <div class="row"><button class="ghost" onclick="loadUsers()">刷新</button></div>
+      <table><thead><tr><th>用户名</th><th>邮箱</th><th>设备</th><th>任务</th><th>专注记录</th><th>注册时间</th><th></th></tr></thead>
+      <tbody id="userRows"></tbody></table>
+    </section>
+
+    <section id="tab-releases" style="display:none">
+      <div class="card" style="margin-bottom:16px">
+        <b style="font-size:14px">发布新版本</b>
+        <div class="row" style="margin-top:12px">
+          <input id="vCode" type="number" placeholder="versionCode(必填)" style="width:150px">
+          <input id="vName" placeholder="versionName 如 1.0.2" style="width:170px">
+          <input id="vForced" type="checkbox" style="width:16px"><label for="vForced" class="muted">强制更新</label>
+        </div>
+        <textarea id="vNotes" rows="2" placeholder="更新说明,每行一条"></textarea>
+        <input type="file" id="vFile" accept=".apk">
+        <div style="margin-top:12px"><button onclick="uploadRelease()">上传发布</button></div>
+      </div>
+      <table><thead><tr><th>版本</th><th>大小</th><th>说明</th><th>类型</th><th>发布时间</th><th></th></tr></thead>
+      <tbody id="relRows"></tbody></table>
+    </section>
+  </main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const API = location.origin + '/api/v1'
+let ADMIN = localStorage.getItem('admin_token') || ''
+
+const $ = s => document.querySelector(s)
+const toast = m => { const t = $('#toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2200) }
+const fmtT = t => new Date(t).toLocaleString('zh-CN', {hour12:false})
+const fmtMB = b => (b/1048576).toFixed(2) + ' MB'
+
+async function api(path, opt = {}) {
+  const r = await fetch(API + path, {
+    ...opt,
+    headers: {'Content-Type':'application/json','X-Admin-Token':ADMIN, ...(opt.headers||{})},
+  })
+  if (r.status === 403) { logout(); throw new Error('令牌无效') }
+  if (!r.ok && r.status !== 204) throw new Error((await r.json().catch(()=>({message:'请求失败'}))).message)
+  return r.status === 204 ? null : r.json()
+}
+
+// ---- 登录 ----
+async function doLogin() {
+  ADMIN = $('#tokenInput').value.trim()
+  if (!ADMIN) return
+  try { await api('/admin/stats'); localStorage.setItem('admin_token', ADMIN); enter() }
+  catch { $('#loginErr').textContent = '令牌无效,请检查 server/.env 的 ADMIN_TOKEN' }
+}
+function logout() { localStorage.removeItem('admin_token'); location.reload() }
+async function enter() {
+  $('#loginBox').style.display = 'none'; $('#app').style.display = ''
+  $('#srvInfo').textContent = location.host
+  document.querySelectorAll('nav a').forEach(a => a.onclick = () => switchTab(a.dataset.tab))
+  await Promise.all([loadStats(), loadUsers(), loadReleases()])
+}
+function switchTab(name) {
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.tab === name))
+  ;['overview','users','releases'].forEach(t => $('#tab-' + t).style.display = t === name ? '' : 'none')
+}
+
+// ---- 概览 ----
+async function loadStats() {
+  const s = await api('/admin/stats')
+  const items = [
+    ['用户', s.users], ['在线设备', s.devices], ['科目', s.subjects],
+    ['任务', s.tasks], ['专注记录', s.sessions], ['累计专注', Math.round(s.totalFocusMinutes/60) + ' h'],
+  ]
+  $('#statCards').innerHTML = items.map(([l, v]) => `<div class="card"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('')
+}
+
+// ---- 用户 ----
+async function loadUsers() {
+  const { users } = await api('/admin/users')
+  $('#userRows').innerHTML = users.map(u => `<tr>
+    <td><b>${esc(u.username)}</b></td><td>${esc(u.email || '—')}</td>
+    <td>${u.devices}</td><td>${u.tasks}</td><td>${u.sessions}</td>
+    <td class="muted">${fmtT(u.createdAt)}</td>
+    <td><button class="danger" onclick="delUser('${u.guid}','${esc(u.username)}')">删除</button></td>
+  </tr>`).join('') || '<tr><td colspan="7" class="muted">暂无用户</td></tr>'
+}
+async function delUser(guid, name) {
+  if (!confirm(`删除用户「${name}」?\n其全部数据(设备/任务/专注记录)将一并清除,不可恢复`)) return
+  await api('/admin/users/' + guid, {method:'DELETE'})
+  toast('已删除'); loadStats(); loadUsers()
+}
+
+// ---- 版本 ----
+async function loadReleases() {
+  const { releases } = await api('/admin/releases')
+  $('#relRows').innerHTML = releases.map(r => `<tr>
+    <td><b>${esc(r.versionName)}</b> <span class="muted">#${r.versionCode}</span></td>
+    <td>${fmtMB(r.fileSize)}</td>
+    <td><ul class="notes">${r.notes.map(n => '<li>' + esc(n) + '</li>').join('')}</ul></td>
+    <td>${r.forced ? '<span class="pill forced">强更</span>' : '<span class="pill ok">普通</span>'}</td>
+    <td class="muted">${fmtT(r.createdAt)}</td>
+    <td><button class="danger" onclick="delRel(${r.versionCode},'${esc(r.versionName)}')">删除</button></td>
+  </tr>`).join('') || '<tr><td colspan="6" class="muted">暂无发布版本</td></tr>'
+}
+async function uploadRelease() {
+  const code = Number($('#vCode').value), name = $('#vName').value.trim(),
+        notes = $('#vNotes').value.trim(), forced = $('#vForced').checked, file = $('#vFile').files[0]
+  if (!code || !name || !file) return toast('versionCode / versionName / APK 文件均必填')
+  const q = `?versionCode=${code}&versionName=${encodeURIComponent(name)}&forced=${forced}&notes=${encodeURIComponent(notes)}`
+  const r = await fetch(API + '/admin/app/upload' + q, {
+    method: 'PUT', headers: {'X-Admin-Token': ADMIN}, body: file,
+  })
+  if (r.ok) { toast(`已发布 ${name}`); $('#vCode').value = $('#vName').value = $('#vNotes').value = ''; $('#vFile').value = ''; loadReleases() }
+  else toast('发布失败: ' + ((await r.json()).message))
+}
+async function delRel(code, name) {
+  if (!confirm(`删除版本「${name}」?APK 文件将一并移除`)) return
+  await api('/admin/releases/' + code, {method:'DELETE'})
+  toast('已删除'); loadReleases()
+}
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+
+if (ADMIN) { api('/admin/stats').then(enter).catch(() => {}) }
+$('#tokenInput').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin() })
+</script>
+</body>
+</html>

@@ -1,0 +1,216 @@
+// 研钟后端数据库设计(MySQL 8+,Prisma)
+// 约定:业务字段与 Android Room 实体同名同型(见 YanZhong/.../data/db/Entities.kt);
+//       时间戳统一为 BigInt 毫秒(与 App System.currentTimeMillis() 对齐);
+//       业务表通用列 client_guid + updated_at + is_deleted 支撑增量同步与 LWW upsert。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- 账号与安全 ----------
+
+model User {
+  id           Int     @id @default(autoincrement())
+  guid         String  @unique @db.VarChar(36) // 对外暴露的用户标识,业务数据 user_guid 关联此列
+  username     String  @unique @db.VarChar(32)
+  email        String? @unique @db.VarChar(255)
+  passwordHash String  @db.VarChar(100) // bcrypt(12)
+  // 找回密码:一次性 token 的 SHA-256(不存明文)
+  resetTokenHash    String?
+  resetTokenExpiry  BigInt?
+  createdAt         BigInt
+
+  @@map("users")
+}
+
+model Device {
+  id           Int     @id @default(autoincrement())
+  userGuid     String  @db.VarChar(36)
+  deviceGuid   String  @unique @db.VarChar(36)
+  name         String  @db.VarChar(64)
+  platform     String  @db.VarChar(16) // android-phone / android-tablet / web ...
+  lastIp       String? @db.VarChar(45)
+  lastActiveAt BigInt
+  createdAt    BigInt
+
+  @@index([userGuid])
+  @@map("devices")
+}
+
+model RefreshToken {
+  id        Int     @id @default(autoincrement())
+  userGuid  String  @db.VarChar(36)
+  deviceId  Int
+  tokenHash String  @unique @db.VarChar(100) // SHA-256(refresh 明文)
+  expiresAt BigInt
+  revokedAt BigInt? // 非空 = 已吊销(登出/轮换/强制下线)
+  createdAt BigInt
+
+  @@index([userGuid])
+  @@map("refresh_tokens")
+}
+
+// ---------- 业务数据(6 张表 + 设置) ----------
+
+model Subject {
+  id        Int     @id @default(autoincrement())
+  userGuid  String  @db.VarChar(36)
+  clientGuid String @db.VarChar(36)
+  name      String  @db.VarChar(64)
+  colorArgb BigInt
+  sort      Int     @default(0)
+  archived  Boolean @default(false)
+  isDeleted Boolean @default(false) // 软删墓碑:同步下发给所有端,防删端复现
+  updatedAt BigInt
+
+  @@unique([userGuid, clientGuid])
+  @@index([userGuid, updatedAt])
+  @@map("subjects")
+}
+
+model CountdownNode {
+  id         Int     @id @default(autoincrement())
+  userGuid   String  @db.VarChar(36)
+  clientGuid String  @db.VarChar(36)
+  name       String  @db.VarChar(64)
+  type       Int     @default(0) // 0初试/1单科/2复试/3报名确认/4模考/5自定义
+  targetAt   BigInt
+  pinned     Boolean @default(false)
+  sort       Int     @default(0)
+  isDeleted  Boolean @default(false)
+  updatedAt  BigInt
+
+  @@unique([userGuid, clientGuid])
+  @@index([userGuid, updatedAt])
+  @@map("countdown_nodes")
+}
+
+model Task {
+  id               Int     @id @default(autoincrement())
+  userGuid         String  @db.VarChar(36)
+  clientGuid       String  @db.VarChar(36)
+  // 业务关联存对端 clientGuid(跨设备本地 id 不一致)
+  subjectClientGuid String? @db.VarChar(36)
+  title            String  @db.VarChar(128)
+  priority         Int     @default(1) // 0高/1中/2低
+  pomodoroEstimate Int     @default(1)
+  completedPomodoros Int   @default(0)
+  dueAt            BigInt?
+  repeatRule       Int     @default(0) // 0无/1每日/2每周
+  repeatDays       Int     @default(0) // bit0=周一 … bit6=周日
+  status           Int     @default(0) // 0待办/1完成/2顺延/3放弃
+  postponeCount    Int     @default(0)
+  completedAt      BigInt?
+  createdAt        BigInt
+  note             String  @db.Text
+  repeatParentId   BigInt? // 重复模板完成实例回溯(本地 id,仅统计口径,不参与关联)
+  isDeleted        Boolean @default(false)
+  updatedAt        BigInt
+
+  @@unique([userGuid, clientGuid])
+  @@index([userGuid, updatedAt])
+  @@index([userGuid, subjectClientGuid])
+  @@map("tasks")
+}
+
+model PomodoroSession {
+  id               Int     @id @default(autoincrement())
+  userGuid         String  @db.VarChar(36)
+  clientGuid       String  @db.VarChar(36)
+  taskClientGuid   String? @db.VarChar(36)
+  subjectClientGuid String? @db.VarChar(36)
+  startedAt        BigInt
+  endedAt          BigInt
+  durationMin      Int
+  valid            Boolean @default(true)
+  planName         String  @default("") @db.VarChar(32)
+  abandonReason    String? @db.VarChar(64)
+  isDeleted        Boolean @default(false)
+  updatedAt        BigInt
+
+  @@unique([userGuid, clientGuid])
+  @@index([userGuid, updatedAt])
+  @@index([userGuid, startedAt])
+  @@map("pomodoro_sessions")
+}
+
+model DailyReview {
+  id        Int    @id @default(autoincrement())
+  userGuid  String @db.VarChar(36)
+  // 自然键:该用户某一天只有一条
+  epochDay  Int
+  q1Done    String @db.Text
+  q2Weak    String @db.Text
+  q3Tomorrow String @db.Text
+  createdAt BigInt
+  updatedAt BigInt
+
+  @@unique([userGuid, epochDay])
+  @@index([userGuid, updatedAt])
+  @@map("daily_reviews")
+}
+
+model WeeklyReview {
+  id              Int    @id @default(autoincrement())
+  userGuid        String @db.VarChar(36)
+  weekStartEpochDay Int  // 自然键:周一
+  weakPoints      String @db.Text
+  nextWeekTop1    String @db.Text
+  nextWeekTop2    String @db.Text
+  nextWeekTop3    String @db.Text
+  createdAt       BigInt
+  updatedAt       BigInt
+
+  @@unique([userGuid, weekStartEpochDay])
+  @@index([userGuid, updatedAt])
+  @@map("weekly_reviews")
+}
+
+model MonthlyReview {
+  id                 Int    @id @default(autoincrement())
+  userGuid           String @db.VarChar(36)
+  monthStartEpochDay Int // 自然键:月初
+  summary            String @db.Text
+  nextMonthTop1      String @db.Text
+  nextMonthTop2      String @db.Text
+  nextMonthTop3      String @db.Text
+  createdAt          BigInt
+  updatedAt          BigInt
+
+  @@unique([userGuid, monthStartEpochDay])
+  @@index([userGuid, updatedAt])
+  @@map("monthly_reviews")
+}
+
+model UserSetting {
+  id        Int    @id @default(autoincrement())
+  userGuid  String @db.VarChar(36)
+  key       String @db.VarChar(64)
+  value     String @db.Text // JSON 值
+  updatedAt BigInt
+
+  @@unique([userGuid, key])
+  @@index([userGuid, updatedAt])
+  @@map("user_settings")
+}
+
+// ---------- 应用更新分发 ----------
+
+model AppRelease {
+  id          Int     @id @default(autoincrement())
+  versionCode Int     @unique // Android versionCode,单调递增
+  versionName String  @db.VarChar(32) // 如 1.0.1-m2
+  fileName    String  @db.VarChar(128) // releases/ 目录下文件名
+  fileSize    BigInt
+  sha256      String  @db.VarChar(64) // 下载完整性校验
+  notes       String  @db.Text // 更新说明(逐条 \n 分隔)
+  forced      Boolean @default(false) // 强更(低于此版本必须更新)
+  createdAt   BigInt
+
+  @@map("app_releases")
+}

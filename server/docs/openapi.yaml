@@ -1,0 +1,258 @@
+openapi: 3.0.3
+info:
+  title: 研钟后端 API
+  version: "1.0.0"
+  description: 研钟 App 后端:用户认证、多设备状态同步(WebSocket)、数据备份与增量同步。
+    认证方式为 Bearer JWT(access 2h);过期后用 refresh token 轮换。
+servers:
+  - url: http://localhost:3000
+    description: 本地开发
+tags:
+  - name: auth
+  - name: devices
+  - name: sync
+  - name: settings
+  - name: ws
+paths:
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      summary: 注册(限流 5 次/15 分钟)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string, minLength: 3, maxLength: 32 }
+                password: { type: string, minLength: 8, maxLength: 64 }
+                email: { type: string, format: email }
+      responses:
+        "201": { description: 创建成功,返回 user }
+        "409": { description: 用户名或邮箱已存在 }
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      summary: 登录(rememberMe → refresh 30 天,默认 7 天)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, deviceGuid, deviceName]
+              properties:
+                username: { type: string }
+                password: { type: string }
+                deviceGuid: { type: string, format: uuid }
+                deviceName: { type: string }
+                platform: { type: string, default: android }
+                rememberMe: { type: boolean, default: false }
+      responses:
+        "200":
+          description: 返回 access/refresh/user/device
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user: { $ref: "#/components/schemas/User" }
+                  device: { $ref: "#/components/schemas/Device" }
+                  tokens:
+                    type: object
+                    properties:
+                      access: { type: string }
+                      refresh: { type: string }
+                      expiresIn: { type: integer, description: refresh 有效期(毫秒) }
+        "401": { description: 用户名或密码错误 }
+  /api/v1/auth/refresh:
+    post:
+      tags: [auth]
+      summary: 刷新 access(refresh token 轮换,旧 token 作废)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [refresh], properties: { refresh: { type: string } } } } }
+      responses:
+        "200": { description: 新的 user/device/tokens }
+        "401": { description: refresh 无效或已过期 }
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      summary: 登出当前设备(吊销其 refresh)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: 成功 }
+  /api/v1/auth/password/forgot:
+    post:
+      tags: [auth]
+      summary: 找回密码(发重置邮件;SMTP 未配置时链接输出服务端日志)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [account], properties: { account: { type: string, description: 用户名或邮箱 } } } } }
+      responses:
+        "200": { description: 统一返回 sent=true(不泄漏账号是否存在) }
+  /api/v1/auth/password/reset:
+    post:
+      tags: [auth]
+      summary: 用重置 token 设置新密码(所有设备强制下线)
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [token, newPassword], properties: { token: { type: string }, newPassword: { type: string, minLength: 8 } } } } }
+      responses:
+        "204": { description: 成功 }
+        "400": { description: token 无效或已过期 }
+  /api/v1/auth/password/change:
+    post:
+      tags: [auth]
+      summary: 修改密码(验证原密码;所有设备强制下线)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [oldPassword, newPassword], properties: { oldPassword: { type: string }, newPassword: { type: string, minLength: 8 } } } } }
+      responses:
+        "204": { description: 成功 }
+        "400": { description: 原密码错误 }
+  /api/v1/devices:
+    get:
+      tags: [devices]
+      summary: 当前用户全部登录设备(含在线状态)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: 设备列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  devices:
+                    type: array
+                    items: { $ref: "#/components/schemas/DeviceFull" }
+    delete:
+      tags: [devices]
+      summary: 全部设备强制登出(踢 WS)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "204": { description: 成功 }
+  /api/v1/devices/{id}:
+    delete:
+      tags: [devices]
+      summary: 强制登出指定设备
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer } }]
+      responses:
+        "204": { description: 成功 }
+        "404": { description: 设备不存在 }
+  /api/v1/sync/{resource}:
+    post:
+      tags: [sync]
+      summary: 批量 upsert 资源行(LWW:last-write-wins by updatedAt)
+      description: |
+        resource ∈ subjects|countdownNodes|tasks|sessions|dailyReviews|weeklyReviews。
+        body 为行数组(或 {rows: [...]})。命中 (user,clientGuid) 且存量 updatedAt ≥ incoming 时跳过。
+        服务端写入 updatedAt = max(serverNow, incoming.updatedAt) 防时钟漂移。
+      security: [{ bearerAuth: [] }]
+      parameters: [{ name: resource, in: path, required: true, schema: { type: string } }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: array, items: { type: object } } } }
+      responses:
+        "200":
+          description: 应用统计
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  applied: { type: integer }
+                  skipped: { type: integer }
+                  serverTime: { type: integer }
+  /api/v1/sync:
+    get:
+      tags: [sync]
+      summary: 增量拉取(updatedAt > since 的行,含软删墓碑)
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - { name: since, in: query, schema: { type: integer, default: 0 }, description: 上次同步的 serverTime }
+        - { name: resources, in: query, schema: { type: string }, description: 逗号分隔资源名,缺省全部 }
+      responses:
+        "200":
+          description: 各资源变更行
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changes: { type: object, additionalProperties: { type: array, items: { type: object } } }
+                  serverTime: { type: integer }
+  /api/v1/backup:
+    get:
+      tags: [sync]
+      summary: 全量导出(兼容 App 端 ExportPayload v2,含 reviews+settings)
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200": { description: 备份 JSON(版本 2) }
+  /api/v1/backup/restore:
+    post:
+      tags: [sync]
+      summary: 全量恢复(事务内清空该用户数据后整包重插)
+      security: [{ bearerAuth: [] }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object } } } }
+      responses:
+        "200": { description: restored=true }
+  /api/v1/settings:
+    get:
+      tags: [settings]
+      summary: 读取全部设置 KV
+      security: [{ bearerAuth: [] }]
+      responses:
+        "200":
+          description: settings 对象 + serverTime
+    put:
+      tags: [settings]
+      summary: 写入设置 KV(合并)
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [settings], properties: { settings: { type: object } } } } }
+      responses:
+        "200": { description: serverTime }
+  /ws:
+    get:
+      tags: [ws]
+      summary: 专注状态 WebSocket(连接参数 ?token=<access>)
+      description: |
+        C→S:`{"type":"hello","deviceName":"..."}` / `{"type":"status","phase":"focus|break|idle","remainMs":0,"taskId":1,"taskTitle":"...","planName":"..."}` / `{"type":"stop"}`。
+        S→C:`presence`(全量在线设备+最近状态) / `peerStatus`(他端状态变更) / `kicked`(强制登出,code 4001)。
+        30s 心跳;重连后先发 hello 即可全量恢复 presence。
+      responses:
+        "101": { description: 协议切换 }
+components:
+  securitySchemes:
+    bearerAuth: { type: http, scheme: bearer, bearerFormat: JWT }
+  schemas:
+    User:
+      type: object
+      properties:
+        guid: { type: string }
+        username: { type: string }
+        email: { type: string, nullable: true }
+        createdAt: { type: integer }
+    Device:
+      type: object
+      properties:
+        id: { type: integer }
+        guid: { type: string }
+        name: { type: string }
+    DeviceFull:
+      type: object
+      properties:
+        id: { type: integer }
+        guid: { type: string }
+        name: { type: string }
+        platform: { type: string }
+        lastIp: { type: string, nullable: true }
+        lastActiveAt: { type: integer }
+        online: { type: boolean }

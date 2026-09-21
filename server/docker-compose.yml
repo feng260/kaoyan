@@ -1,0 +1,29 @@
+services:
+  mysql:
+    image: mysql:8
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: yanzhong
+      MYSQL_DATABASE: yanzhong
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-pyanzhong"]
+      interval: 5s
+      retries: 20
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: "mysql://root:yanzhong@mysql:3306/yanzhong"
+      JWT_SECRET: "change-me-in-production"
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+
+volumes:
+  mysql-data:
