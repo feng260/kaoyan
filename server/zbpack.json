@@ -1,0 +1,4 @@
+{
+  "build_command": "npm install --include=dev && npm run build",
+  "start_command": "npm run start"
+}

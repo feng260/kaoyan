@@ -1,0 +1,14 @@
+# IDE / 工具本地状态
+.idea/
+.vscode/
+.trae/
+*.iml
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# JVM / 崩溃日志
+hs_err_pid*.log
+replay_pid*.log
