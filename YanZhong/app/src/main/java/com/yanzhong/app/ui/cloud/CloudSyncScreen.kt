@@ -54,17 +54,28 @@ fun CloudSyncScreen(padding: PaddingValues, navController: NavHostController) {
             Column(Modifier.padding(horizontal = 20.dp)) {
 
                 // 服务器
-                SectionCard(title = "服务器", subtitle = "电脑/云服务器地址,手机平板需能访问") {
+                SectionCard(title = "服务器", subtitle = "已内置默认服务器，正常使用无需修改；仅连接本地或调试服务器时才需要填写") {
                     OutlinedTextField(
                         value = serverInput,
                         onValueChange = { serverInput = it },
-                        label = { Text("如 ${com.yanzhong.app.data.remote.DEFAULT_SERVER_URL}") },
+                        label = { Text("服务器地址") },
+                        placeholder = { Text(com.yanzhong.app.data.remote.DEFAULT_SERVER_URL) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "当前生效：${state.serverUrl}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                     Spacer(Modifier.height(8.dp))
-                    Button(onClick = { vm.saveServer(serverInput) }, shape = RoundedCornerShape(999.dp)) {
-                        Text("保存服务器地址")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Button(onClick = { vm.saveServer(serverInput) }, shape = RoundedCornerShape(999.dp)) {
+                            Text("保存服务器地址")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        TextButton(onClick = { vm.resetServer() }) { Text("恢复默认") }
                     }
                 }
                 Spacer(Modifier.height(16.dp))

@@ -47,9 +47,9 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
-            val server = TokenStore.currentServer()
+            val server = effectiveServerUrl()
             val access = TokenStore.currentAccess()
-            _ui.update { it.copy(serverUrl = server ?: DEFAULT_SERVER_URL, loggedIn = access != null) }
+            _ui.update { it.copy(serverUrl = server, loggedIn = access != null) }
             if (access != null) refreshDevices()
         }
     }
@@ -58,6 +58,14 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             TokenStore.saveServer(url)
             _ui.update { it.copy(serverUrl = url, message = "服务器已保存") }
+        }
+    }
+
+    /** 丢弃设备上保存的自定义地址,回到内置默认服务器 */
+    fun resetServer() {
+        viewModelScope.launch {
+            TokenStore.clearServer()
+            _ui.update { it.copy(serverUrl = DEFAULT_SERVER_URL, message = "已恢复默认服务器地址") }
         }
     }
 

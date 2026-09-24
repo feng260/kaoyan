@@ -9,6 +9,7 @@ import com.yanzhong.app.data.remote.DEFAULT_SERVER_URL
 import com.yanzhong.app.data.remote.LoginReq
 import com.yanzhong.app.data.remote.RegisterReq
 import com.yanzhong.app.data.remote.TokenStore
+import com.yanzhong.app.data.remote.effectiveServerUrl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -34,7 +35,7 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
-            val server = TokenStore.currentServer() ?: DEFAULT_SERVER_URL
+            val server = effectiveServerUrl()
             _ui.update { it.copy(serverUrl = server) }
         }
     }
@@ -59,6 +60,20 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             TokenStore.saveServer(url)
             _ui.update { it.copy(serverUrl = url, message = "服务器地址已保存", messageIsError = false) }
+        }
+    }
+
+    /** 丢弃设备上保存的自定义地址,回到内置默认服务器 */
+    fun resetServer() {
+        viewModelScope.launch {
+            TokenStore.clearServer()
+            _ui.update {
+                it.copy(
+                    serverUrl = DEFAULT_SERVER_URL,
+                    message = "已恢复默认服务器地址",
+                    messageIsError = false
+                )
+            }
         }
     }
 

@@ -169,7 +169,7 @@ class StatusSyncClient(private val app: YanZhongApp) {
         if (!started) return
         workScope?.launch {
             val access = TokenStore.currentAccess() ?: return@launch
-            val server = TokenStore.currentServer() ?: return@launch
+            val server = effectiveServerUrl()
             val wsUrl = server.replaceFirst("http", "ws") + "/ws?token=" + access
             val request = Request.Builder().url(wsUrl).build()
             http.newWebSocket(

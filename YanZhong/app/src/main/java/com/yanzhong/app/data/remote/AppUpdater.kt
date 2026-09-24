@@ -43,7 +43,7 @@ object AppUpdater {
 
     suspend fun checkForUpdate(): UpdateCheckResp = withContext(Dispatchers.IO) {
         runCatching {
-            val server = TokenStore.currentServer() ?: return@withContext UpdateCheckResp()
+            val server = effectiveServerUrl()
             val req = Request.Builder()
                 .url("$server/api/v1/app/latest?current=$CURRENT_VERSION_CODE")
                 .get()
@@ -67,7 +67,7 @@ object AppUpdater {
         onProgress: (Int) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            val server = TokenStore.currentServer() ?: error("未配置服务器地址")
+            val server = effectiveServerUrl()
             val dir = File(context.filesDir, "updates").apply { mkdirs() }
             val file = File(dir, "yanzhong-v${version.versionCode}.apk")
             val req = Request.Builder().url("$server${version.downloadUrl}").get().build()

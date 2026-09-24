@@ -207,7 +207,7 @@ fun LoginScreen() {
                     onClick = { showServerDialog = true },
                     modifier = Modifier.align(Alignment.Start)
                 ) {
-                    Text("服务器地址")
+                    Text("服务器地址（可选）")
                 }
             }
         }
@@ -219,9 +219,15 @@ fun LoginScreen() {
                 text = {
                     Column {
                         Text(
-                            "当前调试默认使用云服务器:3000。部署 Nginx/HTTPS 后，请改为对应域名。",
+                            "已内置默认服务器，正常使用无需填写。仅当需要连接本地或调试服务器时才在此修改。",
                             style = MaterialTheme.typography.bodyMedium,
                             color = colors.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "当前生效：${state.serverUrl}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.primary
                         )
                         Spacer(Modifier.height(12.dp))
                         OutlinedTextField(
@@ -233,6 +239,14 @@ fun LoginScreen() {
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             modifier = Modifier.fillMaxWidth()
                         )
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(
+                            onClick = {
+                                vm.resetServer()
+                                showServerDialog = false
+                            },
+                            modifier = Modifier.align(Alignment.Start)
+                        ) { Text("恢复默认") }
                     }
                 },
                 confirmButton = {

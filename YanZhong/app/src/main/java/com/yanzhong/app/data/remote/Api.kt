@@ -154,9 +154,18 @@ interface YanzhongApi {
  * 明文请求依赖 res/xml/network_security_config.xml 放行该 IP,换地址时两处要一起改。
  * 接入 HTTPS 域名后改成 "https://<域名>" 并收回明文许可;
  * 若届时仍需区分调试/正式环境,可恢复成按 BuildConfig.DEBUG 分支的写法。
- * 用户在「云同步」页保存的地址优先级更高。
+ * 用户在登录页/「云同步」页手动保存过的地址优先级更高(见 [effectiveServerUrl])。
  */
 const val DEFAULT_SERVER_URL: String = "http://81.71.14.219:3000"
+
+/**
+ * 本次请求实际要用的服务器地址:设备上保存过的自定义地址优先,没保存则用内置默认地址。
+ * 所有网络出口(接口调用、状态 WS、更新检查、OTA 下载)都必须走这里——
+ * 以前有几处直接读 TokenStore.currentServer() 且不回落到默认值,
+ * 结果"没手填过地址"的设备上,更新检查和状态 WS 会直接静默失效。
+ */
+suspend fun effectiveServerUrl(): String =
+    TokenStore.currentServer()?.trim().takeUnless { it.isNullOrEmpty() } ?: DEFAULT_SERVER_URL
 
 private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
 
@@ -176,7 +185,7 @@ object ApiClient {
 
     /** 服务器地址变更时自动重建 */
     fun api(): YanzhongApi {
-        val server = runBlocking { TokenStore.currentServer() } ?: DEFAULT_SERVER_URL
+        val server = runBlocking { effectiveServerUrl() }
         cached?.let { (s, api) -> if (s == server) return api }
         val client = OkHttpClient.Builder()
             .callTimeout(20, TimeUnit.SECONDS)
@@ -238,7 +247,7 @@ object ApiClient {
         onEvent: (String) -> Unit,
         onOpened: () -> Unit
     ): WebSocket {
-        val server = runBlocking { TokenStore.currentServer() } ?: DEFAULT_SERVER_URL
+        val server = runBlocking { effectiveServerUrl() }
         val wsUrl = server.replaceFirst("http", "ws") + "/ws?token=" + token
         val client = OkHttpClient()
         return client.newWebSocket(
