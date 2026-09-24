@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">研钟</string>
+    <string name="widget_today_title">研钟·今日</string>
+    <string name="widget_today_description">显示今日番茄数、待办数与最近的倒计时节点</string>
+</resources>

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 9(targetSdk 28)起默认禁止明文 HTTP 请求,不放开的话连自建服务器的请求会被系统直接拦截,
+  表现为登录/同步一律失败且 OkHttp 报 "CLEARTEXT communication not permitted"。
+  这里只对下面列出的地址放开,其余域名仍强制 HTTPS,避免全局打开 usesCleartextTraffic 把安全性一起放掉。
+  后续接入 HTTPS 域名后,删掉对应 <domain> 即可收回明文许可。
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 自建服务器 -->
+        <domain includeSubdomains="false">81.71.14.219</domain>
+        <!-- Android 模拟器访问宿主机 -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">localhost</domain>
+        <!-- 真机连电脑局域网调试时,把电脑局域网 IP 也加一行,例如:
+             <domain includeSubdomains="false">192.168.1.5</domain> -->
+    </domain-config>
+</network-security-config>

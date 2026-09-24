@@ -1,0 +1,60 @@
+{
+    "sessions": [],
+    "subjects": [
+        { "id": 1, "name": "数学", "colorArgb": 4283983346, "sort": 0, "archived": false },
+        { "id": 2, "name": "专业课 408", "colorArgb": 4279806361, "sort": 1, "archived": false },
+        { "id": 3, "name": "英语", "colorArgb": 4294937180, "sort": 2, "archived": false },
+        { "id": 4, "name": "政治", "colorArgb": 4293419404, "sort": 3, "archived": false }
+    ],
+    "nodes": [
+        { "id": 0, "name": "基础唤醒期收官", "type": 5, "targetAt": 1801400400000, "pinned": false, "sort": 0 },
+        { "id": 0, "name": "寒假衔接期收官", "type": 5, "targetAt": 1803819600000, "pinned": false, "sort": 1 },
+        { "id": 0, "name": "强化一轮期收官·模考定择校", "type": 5, "targetAt": 1814360400000, "pinned": false, "sort": 2 },
+        { "id": 0, "name": "政治入场日", "type": 5, "targetAt": 1814403600000, "pinned": false, "sort": 3 },
+        { "id": 0, "name": "暑期封闭期收官", "type": 5, "targetAt": 1819717200000, "pinned": false, "sort": 4 },
+        { "id": 0, "name": "冲刺模考期开始", "type": 5, "targetAt": 1819760400000, "pinned": false, "sort": 5 },
+        { "id": 0, "name": "研招网预报名", "type": 3, "targetAt": 1822093200000, "pinned": false, "sort": 6 },
+        { "id": 0, "name": "正式报名", "type": 3, "targetAt": 1824426000000, "pinned": false, "sort": 7 },
+        { "id": 0, "name": "网上确认截止", "type": 3, "targetAt": 1825408800000, "pinned": false, "sort": 8 },
+        { "id": 0, "name": "肖四发售·分析题背诵", "type": 5, "targetAt": 1828573200000, "pinned": false, "sort": 9 },
+        { "id": 0, "name": "准考证下载·打印", "type": 3, "targetAt": 1828746000000, "pinned": false, "sort": 10 },
+        { "id": 0, "name": "成绩公布", "type": 5, "targetAt": 1834707600000, "pinned": false, "sort": 11 },
+        { "id": 0, "name": "复试·调剂启动", "type": 2, "targetAt": 1837126800000, "pinned": false, "sort": 12 }
+    ],
+    "tasks": [
+        { "id": 0, "title": "背新单词 80–100 + 碎片时间复习", "subjectId": 3, "pomodoroEstimate": 2, "priority": 0, "repeatRule": 1, "dueAt": null, "repeatDays": 0 },
+        { "id": 0, "title": "数学:基础班视频 1 讲(例题先遮答案)", "subjectId": 1, "pomodoroEstimate": 2, "priority": 0, "repeatRule": 1, "dueAt": null, "repeatDays": 0 },
+        { "id": 0, "title": "数学:当讲配套习题动笔", "subjectId": 1, "pomodoroEstimate": 2, "priority": 1, "repeatRule": 1, "dueAt": null, "repeatDays": 0 },
+        { "id": 0, "title": "408:王道章节精读 + 课后选择题", "subjectId": 2, "pomodoroEstimate": 8, "priority": 1, "repeatRule": 2, "dueAt": null, "repeatDays": 44 },
+        { "id": 0, "title": "408:晚间章节复习", "subjectId": 2, "pomodoroEstimate": 3, "priority": 2, "repeatRule": 2, "dueAt": null, "repeatDays": 3 },
+        { "id": 0, "title": "英语:长难句 2–3 句 + 精读", "subjectId": 3, "pomodoroEstimate": 3, "priority": 1, "repeatRule": 2, "dueAt": null, "repeatDays": 12 },
+        { "id": 0, "title": "数学:当日错题重做入错题本", "subjectId": 1, "pomodoroEstimate": 2, "priority": 1, "repeatRule": 2, "dueAt": null, "repeatDays": 12 },
+        { "id": 0, "title": "英语:真题精读 2h", "subjectId": 3, "pomodoroEstimate": 4, "priority": 2, "repeatRule": 2, "dueAt": null, "repeatDays": 32 },
+        { "id": 0, "title": "数学:本周集中刷题 + 错题重做", "subjectId": 1, "pomodoroEstimate": 4, "priority": 1, "repeatRule": 2, "dueAt": null, "repeatDays": 32 },
+        { "id": 0, "title": "数学:错题 + 公式保温(保底日)", "subjectId": 1, "pomodoroEstimate": 2, "priority": 2, "repeatRule": 2, "dueAt": null, "repeatDays": 16 },
+        { "id": 0, "title": "数学 + 408 错题二刷", "subjectId": 1, "pomodoroEstimate": 3, "priority": 1, "repeatRule": 2, "dueAt": null, "repeatDays": 64 },
+        { "id": 0, "title": "周复盘 + 排下周任务", "subjectId": 3, "pomodoroEstimate": 1, "priority": 2, "repeatRule": 2, "dueAt": null, "repeatDays": 64 },
+
+        { "id": 0, "title": "里程碑:高数基础一轮过完", "subjectId": 1, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1801400400000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:数据结构 + 组成原理一轮过完", "subjectId": 2, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1801400400000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:单词一轮背完", "subjectId": 3, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1801400400000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:计网跟住校课无欠账", "subjectId": 2, "pomodoroEstimate": 1, "priority": 2, "repeatRule": 0, "dueAt": 1801400400000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:线代基础一轮过完", "subjectId": 1, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1803819600000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:英一精读完成 6–8 篇", "subjectId": 3, "pomodoroEstimate": 1, "priority": 2, "repeatRule": 0, "dueAt": 1803819600000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:408 三科无硬伤盘点", "subjectId": 2, "pomodoroEstimate": 1, "priority": 2, "repeatRule": 0, "dueAt": 1803819600000, "repeatDays": 0 },
+
+        { "id": 0, "title": "里程碑:数学强化完毕", "subjectId": 1, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1814317200000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:408 四科一轮完成", "subjectId": 2, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1814317200000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:英一精读 20 篇以上", "subjectId": 3, "pomodoroEstimate": 1, "priority": 2, "repeatRule": 0, "dueAt": 1814317200000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:两次真题模考·定择校区间", "subjectId": 1, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1814317200000, "repeatDays": 0 },
+
+        { "id": 0, "title": "里程碑:数二真题 2010–2019 刷完", "subjectId": 1, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1819674000000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:408 真题分科 2009–2018 刷完", "subjectId": 2, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1819674000000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:政治强化课马原+毛中特过完", "subjectId": 4, "pomodoroEstimate": 1, "priority": 2, "repeatRule": 0, "dueAt": 1819674000000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:单词进入第四轮", "subjectId": 3, "pomodoroEstimate": 1, "priority": 2, "repeatRule": 0, "dueAt": 1819674000000, "repeatDays": 0 },
+
+        { "id": 0, "title": "里程碑:数学与 408 真题完成二刷", "subjectId": 1, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1827536400000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:肖八选择题稳定 40+", "subjectId": 4, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1827536400000, "repeatDays": 0 },
+        { "id": 0, "title": "里程碑:肖四分析题背完", "subjectId": 4, "pomodoroEstimate": 1, "priority": 1, "repeatRule": 0, "dueAt": 1828573200000, "repeatDays": 0 }
+    ]
+}

@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_today_bg"
+    android:padding="18dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="研钟 · 今日"
+        android:textColor="#B0B7E6"
+        android:textSize="12sp" />
+
+    <TextView
+        android:id="@+id/widget_pomodoros"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="6dp"
+        android:text="0 🍅"
+        android:textColor="#FFFFFF"
+        android:textSize="24sp"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/widget_open_count"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="待办 0 项"
+        android:textColor="#E6E8FF"
+        android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/widget_countdown"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:text="添加倒计时节点"
+        android:textColor="#A9B0FF"
+        android:textSize="13sp" />
+</LinearLayout>

@@ -12,3 +12,6 @@ desktop.ini
 # JVM / 崩溃日志
 hs_err_pid*.log
 replay_pid*.log
+
+# Trae 本地导出的分享包(体积大且可随时重新导出)
+.trae-html-share-packages/

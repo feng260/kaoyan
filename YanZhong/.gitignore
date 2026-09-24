@@ -1,0 +1,21 @@
+# 构建产物
+# 注意:原来只写了 /build,那是仓库根目录下的 build,挡不住模块级的 app/build,
+# 结果 app/build 下 5000 多个中间产物(含 44MB 混淆映射与 APK)全被 Git 当成新增文件。
+build/
+app/build/
+.gradle/
+.kotlin/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# 本地环境与签名密钥,严禁提交
+local.properties
+keystore.properties
+*.jks
+*.keystore
+
+# IDE / 系统
+*.iml
+.idea/
+.DS_Store
