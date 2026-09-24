@@ -1,0 +1,16 @@
+# 依赖与构建产物:镜像内由 npm ci / tsc 重新生成
+node_modules
+dist
+
+# 环境变量:含数据库密码与 JWT 密钥,严禁进入镜像
+.env
+.env.*
+!.env.example
+
+# 上架产物(APK 通过数据卷持久化,不打进镜像)
+releases
+
+# 版本库与日志
+.git
+.gitignore
+*.log
