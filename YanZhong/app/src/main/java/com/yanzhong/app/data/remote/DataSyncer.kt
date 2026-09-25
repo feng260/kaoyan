@@ -120,9 +120,23 @@ class DataSyncer(private val app: YanZhongApp) {
             var pushed = 0
             val outcome = runCatching {
                 app.repository.collectPush().forEach { batch ->
-                    ApiClient.api().pushResource(batch.resource, batch.rows)
-                    app.repository.markPushed(batch.resource, batch.keys)
-                    pushed += batch.rows.size
+                    batch.rows.indices.chunked(2000).forEach { indices ->
+                        val rows = indices.map { batch.rows[it] }
+                        val keys = indices.map { batch.keys[it] }
+                        val result = ApiClient.api().pushResource(batch.resource, rows)
+                        val rejected = result.rejected
+                        if (
+                            rejected == null ||
+                            result.truncated == null ||
+                            result.truncated != 0 ||
+                            rejected.isNotEmpty() ||
+                            result.applied + result.skipped != rows.size
+                        ) {
+                            error("${batch.resource} 同步未完整确认，保留本地待同步数据")
+                        }
+                        app.repository.markPushed(batch.resource, keys)
+                        pushed += rows.size
+                    }
                 }
                 val resp = ApiClient.api().pullChanges(prefs.getLong(SINCE_KEY, 0L))
                 val applied = app.repository.applyPull(resp.changes)

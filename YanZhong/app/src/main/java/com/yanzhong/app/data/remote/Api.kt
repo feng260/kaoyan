@@ -82,7 +82,19 @@ data class ChangePasswordReq(val oldPassword: String, val newPassword: String)
 data class DevicesResp(val devices: List<DeviceFullDto>)
 
 @Serializable
-data class SyncResult(val applied: Int = 0, val skipped: Int = 0, val serverTime: Long = 0)
+data class RejectedSyncRow(
+    val index: Int,
+    val reasons: List<String>
+)
+
+@Serializable
+data class SyncResult(
+    val applied: Int = 0,
+    val skipped: Int = 0,
+    val rejected: List<RejectedSyncRow>? = null,
+    val truncated: Int? = null,
+    val serverTime: Long = 0
+)
 
 @Serializable
 data class SettingsResp(val settings: Map<String, kotlinx.serialization.json.JsonElement>, val serverTime: Long = 0)

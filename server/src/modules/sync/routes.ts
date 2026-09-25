@@ -26,7 +26,7 @@ router.post('/sync/:resource', requireAuth, apiLimit(), async ctx => {
   const rows = Array.isArray(body) ? body : body.rows
   const result = await syncService.upsertResource(ctx.state.auth!.userGuid, ctx.params.resource, rows)
   ctx.body = result
-  if (rows.length > 0) {
+  if (result.applied > 0) {
     notifyDataChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId, ctx.params.resource)
   }
 })

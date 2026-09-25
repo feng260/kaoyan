@@ -22,9 +22,18 @@ export async function upsertResource(userGuid: string, resource: string, rows: u
 
   let applied = 0
   let skipped = 0
-  for (const raw of rows.slice(0, 2000)) { // 单批上限,防滥用
+  const rejected: Array<{ index: number; reasons: string[] }> = []
+  const truncated = Math.max(0, rows.length - 2000)
+  for (const [index, raw] of rows.slice(0, 2000).entries()) { // 单批上限,防滥用
     const parsed = schema.safeParse(raw)
-    if (!parsed.success) { skipped++; continue }
+    if (!parsed.success) {
+      skipped++
+      rejected.push({
+        index,
+        reasons: parsed.error.issues.map(issue => `${issue.path.join('.') || '(row)'}: ${issue.message}`),
+      })
+      continue
+    }
     const row: any = { ...parsed.data }
     delete row.userGuid
     // BigInt 列(stringify 前 Number 化)
@@ -58,7 +67,7 @@ export async function upsertResource(userGuid: string, resource: string, rows: u
     }
     applied++
   }
-  return { applied, skipped, serverTime: now() }
+  return { applied, skipped, rejected, truncated, serverTime: now() }
 }
 
 /** 增量拉取:updated_at > since 的行(含墓碑);无 since = 全量 */
@@ -123,6 +132,11 @@ export async function restoreBackup(userGuid: string, payload: any) {
   if (!payload || typeof payload !== 'object') {
     throw new ApiError(400, 'INVALID_PARAMS', '备份包格式错误')
   }
+  const stats: Record<string, {
+    applied: number
+    skipped: number
+    rejected: Array<{ index: number; reasons: string[] }>
+  }> = {}
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     // 清空该用户现有数据(事务内)
     await Promise.all([
@@ -149,9 +163,23 @@ export async function restoreBackup(userGuid: string, payload: any) {
       const name = parseResource(resource)!
       const schema = schemas[name] as z.ZodTypeAny
       const delegate = (tx as any)[table[name]]
-      for (const raw of rows) {
+      if (!Array.isArray(rows)) {
+        stats[resource] = { applied: 0, skipped: 0, rejected: [{ index: -1, reasons: ['资源数据应为数组'] }] }
+        continue
+      }
+      let applied = 0
+      let skipped = 0
+      const rejected: Array<{ index: number; reasons: string[] }> = []
+      for (const [index, raw] of rows.entries()) {
         const parsed = schema.safeParse(raw)
-        if (!parsed.success) continue
+        if (!parsed.success) {
+          skipped++
+          rejected.push({
+            index,
+            reasons: parsed.error.issues.map(issue => `${issue.path.join('.') || '(row)'}: ${issue.message}`),
+          })
+          continue
+        }
         const row: any = { ...parsed.data, userGuid }
         delete row.isDeleted
         for (const key of ['colorArgb', 'targetAt', 'dueAt', 'completedAt', 'startedAt', 'endedAt']) {
@@ -159,7 +187,9 @@ export async function restoreBackup(userGuid: string, payload: any) {
         }
         row.updatedAt = BigInt(Math.max(Date.now(), parsed.data.updatedAt || Date.now()))
         await delegate.create({ data: row })
+        applied++
       }
+      stats[resource] = { applied, skipped, rejected }
     }
     // 设置 KV
     if (payload.settings && typeof payload.settings === 'object') {
@@ -170,7 +200,7 @@ export async function restoreBackup(userGuid: string, payload: any) {
       }
     }
   })
-  return { restored: true, serverTime: now() }
+  return { restored: true, resources: stats, serverTime: now() }
 }
 
 // ---------- 设置 ----------
