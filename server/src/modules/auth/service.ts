@@ -40,7 +40,8 @@ async function issueTokens(userGuid: string, deviceId: number, rememberMe: boole
   return { access, refresh, expiresIn: days * 24 * 3600_000 }
 }
 
-export async function register(input: { username: string; password: string; email?: string }): Promise<PublicUser> {
+/** email 允许 null:客户端"没填邮箱"时下发的是 null 而非省略键(见 routes.ts registerSchema) */
+export async function register(input: { username: string; password: string; email?: string | null }): Promise<PublicUser> {
   const exists = await prisma.user.findFirst({
     where: { OR: [{ username: input.username }, ...(input.email ? [{ email: input.email }] : [])] },
   })

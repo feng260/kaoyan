@@ -9,7 +9,11 @@ const router = new Router({ prefix: '/api/v1/auth' })
 const registerSchema = z.object({
   username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_\u4e00-\u9fa5]+$/, '仅限中英文数字下划线'),
   password: z.string().min(8).max(64),
-  email: z.string().email().optional(),
+  // 邮箱可选。客户端用 kotlinx.serialization 且默认 explicitNulls=true,
+  // "没填邮箱"时序列化出来的是 {"email": null} 而不是省略该键;
+  // 而 zod 的 .optional() 只放行 undefined、遇到 null 会报 "Expected string",
+  // 于是注册被直接打回 400。故用 .nullish() 同时放行 null/undefined,由 service 归一成 null。
+  email: z.string().email().nullish(),
 })
 
 const loginSchema = z.object({
