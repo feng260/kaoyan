@@ -1,6 +1,7 @@
 import Router from '@koa/router'
 import { z } from 'zod'
 import * as authService from './service'
+import { legalConsentSchema } from './consent'
 import { strictLimit } from '../../middlewares/ratelimit'
 import { requireAuth } from '../../middlewares/auth'
 
@@ -14,6 +15,9 @@ const registerSchema = z.object({
   // 而 zod 的 .optional() 只放行 undefined、遇到 null 会报 "Expected string",
   // 于是注册被直接打回 400。故用 .nullish() 同时放行 null/undefined,由 service 归一成 null。
   email: z.string().email().nullish(),
+  // 协议同意:这里只校验类型,「必须为 true」的判定交给 assertLegalConsent,
+  // 这样未勾选时客户端拿到的是 LEGAL_CONSENT_REQUIRED 而不是泛泛的 INVALID_PARAMS
+  ...legalConsentSchema.shape,
 })
 
 const loginSchema = z.object({

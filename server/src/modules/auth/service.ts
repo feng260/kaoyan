@@ -5,8 +5,13 @@ import { prisma, num } from '../../shared/prisma'
 import { signAccessToken, sha256, randomToken, uuid } from '../../shared/jwt'
 import { env, smtpConfigured } from '../../config/env'
 import { ApiError } from '../../middlewares/error'
+import { assertLegalConsent } from './consent'
 
 const now = () => Date.now()
+
+/** 协议与同意门禁的实现放在 consent.ts(不依赖 Prisma,可直接单测),这里只做转发 */
+export { POLICY_VERSION, POLICY_EFFECTIVE_DATE, assertLegalConsent } from './consent'
+export type { LegalConsentInput } from './consent'
 
 export interface TokenPair {
   access: string
@@ -41,18 +46,30 @@ async function issueTokens(userGuid: string, deviceId: number, rememberMe: boole
 }
 
 /** email 允许 null:客户端"没填邮箱"时下发的是 null 而非省略键(见 routes.ts registerSchema) */
-export async function register(input: { username: string; password: string; email?: string | null }): Promise<PublicUser> {
+export async function register(input: {
+  username: string
+  password: string
+  email?: string | null
+  termsAccepted?: boolean | null
+  privacyAccepted?: boolean | null
+}): Promise<PublicUser> {
+  // 同意门禁放在服务层而非路由层:这是唯一的注册入口,谁调都绕不过去。
+  assertLegalConsent(input)
   const exists = await prisma.user.findFirst({
     where: { OR: [{ username: input.username }, ...(input.email ? [{ email: input.email }] : [])] },
   })
   if (exists) throw new ApiError(409, 'CONFLICT', '用户名或邮箱已被注册')
   try {
+    const acceptedAt = new Date(now())
     const user = await prisma.user.create({
       data: {
         guid: uuid(),
         username: input.username,
         email: input.email ?? null,
         passwordHash: await bcrypt.hash(input.password, 12),
+        // 同意时间落库:日后要证明"用户当时同意了哪一版协议"时,这是唯一的凭据
+        termsAcceptedAt: acceptedAt,
+        privacyAcceptedAt: acceptedAt,
         createdAt: now(),
       },
     })

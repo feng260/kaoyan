@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>研钟 · 隐私政策</title>
+<style>
+  :root { --ink:#1f2328; --sub:#5b6570; --line:#e6e8eb; --bg:#fbfbfc; --accent:#8a6a3f; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font: 16px/1.75 -apple-system, "Noto Sans CJK SC", "Microsoft YaHei", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 20px 80px; }
+  h1 { font-size: 26px; margin: 0 0 6px; letter-spacing:.5px; }
+  h2 { font-size: 18px; margin: 36px 0 10px; padding-left: 10px; border-left: 3px solid var(--accent); }
+  .meta { color: var(--sub); font-size: 14px; }
+  .lead { background:#fff; border:1px solid var(--line); border-radius:8px; padding:14px 16px; color:var(--sub); font-size:15px; }
+  table { width:100%; border-collapse: collapse; margin: 12px 0; font-size:15px; background:#fff; }
+  th, td { border:1px solid var(--line); padding:8px 10px; text-align:left; vertical-align: top; }
+  th { background:#f4f5f7; font-weight:600; }
+  p, li { margin: 8px 0; }
+  ul { padding-left: 22px; }
+  footer { margin-top:48px; padding-top:16px; border-top:1px solid var(--line); color:var(--sub); font-size:13px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>研钟 · 隐私政策</h1>
+  <p class="meta">版本 2026-09 &nbsp;·&nbsp; 生效日期 2026-09-25</p>
+  <p class="lead">
+    这份政策回答一个问题：研钟到底收集了你的什么数据，存在哪里，用来做什么。
+    结论是——只收集让「多设备同步同一份学习记录」这件事跑起来所必需的数据，
+    不做用户画像，不接第三方广告或统计 SDK。
+  </p>
+
+  <h2>一、我们收集哪些数据</h2>
+  <p>以下数据全部来自你主动填写或使用过程中产生，不存在后台静默采集：</p>
+  <table>
+    <thead>
+      <tr><th>类别</th><th>具体字段</th><th>为什么要它</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>账号</td>
+        <td>用户名、密码的加盐哈希、邮箱（可选）</td>
+        <td>登录与找回密码。密码只保存哈希，我们无法还原出你的明文密码。</td>
+      </tr>
+      <tr>
+        <td>设备</td>
+        <td>设备标识、设备名称、平台、最近登录 IP、最近活跃时间</td>
+        <td>让你在「设备管理」里看到有哪些设备登录过，并能单独踢掉某台。</td>
+      </tr>
+      <tr>
+        <td>备考档案</td>
+        <td>目标类型、考试日期、每日可用时长、固定学习时段、薄弱科目</td>
+        <td>据它生成与考试日期对齐的复习计划。</td>
+      </tr>
+      <tr>
+        <td>学习记录</td>
+        <td>科目、倒计时节点、任务、番茄钟记录、日/周/月复盘、偏好设置</td>
+        <td>这是产品的主体功能，也是跨设备同步的内容。</td>
+      </tr>
+      <tr>
+        <td>计划</td>
+        <td>计划版本、阶段划分、每日学习条目及完成状态</td>
+        <td>记录你的计划进度，并在多设备之间保持一致。</td>
+      </tr>
+    </tbody>
+  </table>
+  <p>我们<strong>不收集</strong>：通讯录、短信、相册、精确位置、设备上已安装的其他应用列表，也没有接入任何第三方广告或统计分析 SDK。</p>
+
+  <h2>二、数据存在哪里</h2>
+  <p>
+    数据存储在本服务自己的数据库中（自建服务器，MySQL）。
+    除为完成登录、同步所必需的服务器处理外，不会把数据传给我们之外的任何一方。
+    备份文件同样保存在我们自己的服务器上，不投递到第三方网盘或对象存储。
+  </p>
+
+  <h2>三、数据用来做什么</h2>
+  <ul>
+    <li>提供核心功能：登录、同步、计划生成、设备管理。</li>
+    <li>保障服务安全：限制异常频繁的请求、排查故障、发现账号被盗用的迹象。</li>
+    <li>除此之外不做任何用途。不做用户画像，不做广告定向，不做数据买卖。</li>
+  </ul>
+
+  <h2>四、你的权利</h2>
+  <ul>
+    <li><strong>导出</strong>：在「我的」页面导出全部数据，得到一份完整的 JSON 文件。</li>
+    <li><strong>更正</strong>：备考档案、任务、记录都可以随时在 App 内修改。</li>
+    <li><strong>删除</strong>：可以注销账号，服务端会删除账号及其全部学习数据，不可恢复。</li>
+    <li><strong>撤回同意</strong>：注销账号即视为撤回对数据处理的全部同意。</li>
+  </ul>
+
+  <h2>五、保留期限</h2>
+  <p>
+    账号存在期间，数据随账号保留；注销后即被删除。
+    服务器上为容灾保留的数据库备份按日轮换，覆盖周期结束后其中的历史数据也随之自然消失。
+  </p>
+
+  <h2>六、安全措施</h2>
+  <ul>
+    <li>密码以 bcrypt 加盐哈希存储，服务端不保存明文。</li>
+    <li>登录使用短期访问令牌加可轮换的刷新令牌；刷新令牌只存哈希，被重复使用时会立即失效。</li>
+    <li>不同用户的数据在服务端按账号标识隔离，接口层面强制校验归属。</li>
+  </ul>
+  <p>但请理解：没有任何系统能保证绝对安全。请使用与其他网站不同的密码。</p>
+
+  <h2>七、未成年人</h2>
+  <p>
+    如果你是未成年人，请在监护人知情并同意的情况下使用本服务。
+    我们不会主动收集未成年人的额外信息。
+  </p>
+
+  <h2>八、政策更新</h2>
+  <p>
+    政策更新时会修改本页的版本号与生效日期。涉及实质变化时，会在 App 内提示你重新确认。
+    届时你也可以选择注销账号。
+  </p>
+
+  <h2>九、联系我们</h2>
+  <p>对本政策有疑问，或想行使上述权利，请通过 App 内反馈入口联系我们。</p>
+
+  <footer>
+    研钟 · 隐私政策 &nbsp;|&nbsp; 版本 2026-09 &nbsp;|&nbsp; 详见 <a href="/legal/terms">用户协议</a>
+  </footer>
+</main>
+</body>
+</html>

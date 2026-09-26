@@ -12,6 +12,8 @@ tags:
   - name: devices
   - name: sync
   - name: settings
+  - name: planning
+  - name: account
   - name: ws
 paths:
   /api/v1/auth/register:
@@ -24,13 +26,18 @@ paths:
           application/json:
             schema:
               type: object
-              required: [username, password]
+              required: [username, password, termsAccepted, privacyAccepted]
               properties:
                 username: { type: string, minLength: 3, maxLength: 32 }
                 password: { type: string, minLength: 8, maxLength: 64 }
-                email: { type: string, format: email }
+                email: { type: string, format: email, nullable: true }
+                # 必须为 true,否则 400 LEGAL_CONSENT_REQUIRED。
+                # 允许 null 是为了兼容客户端 explicitNulls 下发的 {"termsAccepted": null}
+                termsAccepted: { type: boolean, nullable: true, description: 已阅读并同意《用户协议》 }
+                privacyAccepted: { type: boolean, nullable: true, description: 已阅读并同意《隐私政策》 }
       responses:
         "201": { description: 创建成功,返回 user }
+        "400": { description: 未勾选协议(LEGAL_CONSENT_REQUIRED)或参数校验失败 }
         "409": { description: 用户名或邮箱已存在 }
   /api/v1/auth/login:
     post:
