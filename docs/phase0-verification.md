@@ -34,12 +34,24 @@
 
 ### Android 单测
 
-` :app:testDebugUnitTest` 已完成 Kotlin 与测试源码编译，但 Gradle Test Executor 启动阶段失败，错误为测试 worker 的标准输入管道被关闭，随后报告 `ClassNotFoundException: worker.org.gradle.process.internal.worker.GradleWorkerMain`。这不是业务编译错误；需要在本机关闭占用 Gradle worker 的进程或清理 Gradle worker 缓存后重新执行：
+` :app:testDebugUnitTest` 已完成 Kotlin 与测试源码编译（`PlanSelectionTest` 等已随提交入库），但 Gradle Test Executor 启动阶段失败，报告 `ClassNotFoundException: worker.org.gradle.process.internal.worker.GradleWorkerMain`，并伴随测试 worker 标准输入管道被关闭。
+
+已定位到环境根因：本机 Gradle 用户目录位于含中文的路径（`C:\Users\陈喜俊\.gradle`，`USERPROFILE` 与 `TEMP` 同样含中文），Gradle worker 在 Windows 下拼装 `java -cp` 命令行时对该路径编码处理异常，导致找不到 worker 主类。这是本机环境问题，不是业务编译错误。
+
+两条可选验证路径（都未在本轮执行）：
 
 ```powershell
+# 方式一：把 Gradle 用户目录指向纯 ASCII 路径后复跑(会重新下载 Gradle 8.9 与依赖)
+$env:GRADLE_USER_HOME='C:\gradle-home'
 cd YanZhong
 .\gradlew.bat :app:testDebugUnitTest --no-daemon
 ```
+
+```powershell
+# 方式二：换一台用户目录为纯 ASCII 的机器/CI 复跑,结论最干净
+```
+
+在单测通过之前，Phase 0 的客户端验证结论是「编译与 APK 通过、单测待环境复跑」。
 
 ### 线上切换
 

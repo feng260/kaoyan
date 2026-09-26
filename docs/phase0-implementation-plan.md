@@ -24,7 +24,7 @@
 | Task 6 备份与部署准备 | 已完成 | `server/scripts/backup-mysql.sh`、`restore-mysql-drill.sh`、`server/deploy/Caddyfile.example`、`server/docs/deploy.md`、`server/docs/phase0-rollout-checklist.md`；脚本 `bash -n` 通过 |
 | Task 7 端到端验收 | 已完成 | `docs/phase0-verification.md`；服务端验证、Android 编译、本地 API 冒烟 21/21 已完成，域名 HTTPS 切换与真实恢复演练待线上执行 |
 
-**仅剩一件事待确认**：Step 5 的提交动作（按逻辑分组 commit）尚未执行，等待确认后一次性提交。
+**本轮收尾已完成**：Step 5 已按逻辑分组提交（见下方 Step 5 表格）。剩余为线上动作——域名 HTTPS 切换、真实 MySQL 恢复演练、Android 单测环境复跑。
 
 三点实现与初稿的偏差，以代码为准：计划数据落在独立的 `plans`/`plan_stages`/`plan_items`，**不写回 `subjects`/`tasks`**，避免与 `clientGuid` 墓碑同步互相污染；档案接口路径是 `/api/v1/profile`，不是 `/onboarding`；冒烟脚本入库为 `server/scripts/phase0-api-smoke.mjs`，通过 `npm run smoke:api` 执行。
 
@@ -465,6 +465,17 @@ Against a local or explicitly configured test server, verify registration consen
 
 Record passed checks, skipped checks, cloud prerequisites, current HTTP internal-test limitation, and the exact next server commands.
 
-- [ ] **Step 5: Commit the implementation in logical commits**
+- [x] **Step 5: Commit the implementation in logical commits**
 
 Use separate commits for server planning, Android onboarding, legal/account data, and operations documentation. Do not include generated secrets, production dumps, APKs, or local machine configuration.
+
+已完成，按逻辑拆为 6 个提交（未包含 `.env`、生产备份、APK 与本机配置）：
+
+| 提交 | 内容 |
+| --- | --- |
+| `9080acf` | `feat(planning)` 备考档案与规则版计划生成模块（含数据模型与测试工具） |
+| `8b75b7c` | `feat(account)` 协议同意、数据导出与账号注销 |
+| `1baeb07` | `feat(server)` 挂载计划与账号路由并开放协议静态页 |
+| `38cd245` | `feat(app)` 问卷引导、协议组件与服务端计划展示 |
+| `184a9e2` | `chore(ops)` 备份恢复脚本、Caddy 模板与上线清单 |
+| `e2fe7e6` | `docs` Phase 0 方案、执行计划与验收记录 |
