@@ -1,0 +1,10 @@
+{
+  // 测试文件不进 dist(生产包不该带测试),但仍要过类型检查:
+  // tsx 只做转译不做类型校验,少了这个配置,测试里的类型错误会一路溜到运行时。
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

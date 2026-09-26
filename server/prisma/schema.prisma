@@ -23,7 +23,13 @@ model User {
   // 找回密码:一次性 token 的 SHA-256(不存明文)
   resetTokenHash    String?
   resetTokenExpiry  BigInt?
+  // 协议确认:注册时勾选,时间落在这里(注册早于备考档案,档案表考试日期非空)
+  termsAcceptedAt   DateTime?
+  privacyAcceptedAt DateTime?
   createdAt         BigInt
+
+  profile UserProfile?
+  plans   Plan[]
 
   @@map("users")
 }
@@ -197,6 +203,87 @@ model UserSetting {
   @@unique([userGuid, key])
   @@index([userGuid, updatedAt])
   @@map("user_settings")
+}
+
+// ---------- 备考档案与计划(Phase 0) ----------
+// 说明:这几张表是服务端权威资源,不进 clientGuid 增量同步协议,
+//      日期按「天」存储(UTC 零点),避免时区把边界日算错。
+
+model UserProfile {
+  id               Int       @id @default(autoincrement())
+  userGuid         String    @unique @db.VarChar(36)
+  targetType       String    @default("考研") @db.VarChar(16) // 目标类型:考研/专升本/考公/法考/其他
+  examDate         DateTime // 考试日期(UTC 零点)
+  dailyMinutes     Int // 每日可用学习时长(分钟)
+  studyWindowsJson String?   @db.Text // JSON 数组:固定学习时段
+  foundation       String?   @db.VarChar(16) // 基础情况:零基础/一般/较好
+  weakSubjectsJson String?   @db.Text // JSON 数组:薄弱科目
+  onboardingDoneAt DateTime? // 问卷完成时间
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user  User   @relation(fields: [userGuid], references: [guid], onDelete: Cascade)
+  plans Plan[]
+
+  @@map("user_profiles")
+}
+
+model Plan {
+  id         Int      @id @default(autoincrement())
+  userGuid   String   @db.VarChar(36)
+  profileId  Int
+  title      String   @db.VarChar(64)
+  targetType String   @db.VarChar(16)
+  source     String   @default("rule") @db.VarChar(16) // 计划来源:rule(规则版)/ai(后续版本)
+  status     String   @default("active") @db.VarChar(16) // active/archived
+  startDate  DateTime
+  examDate   DateTime
+  version    Int      @default(1)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  user    User        @relation(fields: [userGuid], references: [guid], onDelete: Cascade)
+  profile UserProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  stages  PlanStage[]
+  items   PlanItem[]
+
+  @@unique([userGuid, version])
+  @@index([userGuid, status])
+  @@map("plans")
+}
+
+model PlanStage {
+  id        Int      @id @default(autoincrement())
+  planId    Int
+  name      String   @db.VarChar(32)
+  startDate DateTime
+  endDate   DateTime
+  sortOrder Int
+
+  plan  Plan       @relation(fields: [planId], references: [id], onDelete: Cascade)
+  items PlanItem[]
+
+  @@index([planId, sortOrder])
+  @@map("plan_stages")
+}
+
+model PlanItem {
+  id        Int      @id @default(autoincrement())
+  planId    Int
+  stageId   Int
+  subject   String   @db.VarChar(32)
+  title     String   @db.VarChar(64)
+  planDate  DateTime
+  minutes   Int
+  priority  Int      @default(0) // 0基础/1强化/2冲刺
+  status    String   @default("pending") @db.VarChar(16) // pending/done/skipped
+  sortOrder Int      @default(0)
+
+  plan  Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
+  stage PlanStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
+
+  @@index([planId, planDate])
+  @@map("plan_items")
 }
 
 // ---------- 应用更新分发 ----------
