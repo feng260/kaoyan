@@ -452,8 +452,8 @@
         <section id="security">
           <h2><span class="sec-no">04</span>安全设计</h2>
           <ul class="feature-list">
-            <li><strong>认证：</strong>JWT access token（默认 2h）+ refresh token 轮换；rememberMe 30 天 / 默认 7 天，续期按完整有效期判断。</li>
-            <li><strong>限流：</strong>敏感端点 5 次 / 15 分钟，全局 60 次 / 分钟；<code>/refresh</code> 额外 strictLimit。</li>
+            <li><strong>认证：</strong>JWT access token（默认 2h）+ refresh token 轮换；rememberMe 30 天 / 默认 7 天，续期按完整有效期判断；注销账号后已签发的 access token 立即失效（每次鉴权校验用户仍存在）。</li>
+            <li><strong>限流：</strong>敏感端点 5 次 / 15 分钟，全局 60 次 / 分钟；<code>/refresh</code> 额外 strictLimit；注销与登录/注册各自独立配额桶，避免互相挤占。</li>
             <li><strong>代理信任：</strong><code>app.proxy</code> 由 TRUST_PROXY 环境变量控制，直接暴露端口时关闭，防止伪造 XFF 绕过限流。</li>
             <li><strong>目录穿越防护：</strong><code>/docs/:file</code> 采用基准目录 + <code>path.relative</code> 包含校验，杜绝读取 .env 等敏感文件。</li>
             <li><strong>CORS：</strong>按 Origin 回写白名单；注册撞唯一约束（P2002）返回 409 而非 500。</li>
