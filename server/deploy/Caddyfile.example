@@ -1,0 +1,11 @@
+# Replace api.example.com with the real DNS name before enabling Caddy.
+# Caddy manages TLS certificates automatically when ports 80/443 are reachable.
+api.example.com {
+    reverse_proxy 127.0.0.1:3000 {
+        # Never forward a client-supplied IP chain as a trusted proxy address.
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+        # WebSocket Upgrade and Connection headers are handled automatically.
+    }
+}

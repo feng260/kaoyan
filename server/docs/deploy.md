@@ -134,12 +134,28 @@ App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接�
 
 ## 八、切换到域名 + HTTPS
 
-1. 域名解析到服务器 IP，装 Caddy 或 Nginx 反代 `127.0.0.1:3000`，签好证书。
-2. 改 `docker-compose.yml`：`TRUST_PROXY` 改为 `"true"`；`ports` 改为 `"127.0.0.1:3000:3000"`，
-   只允许本机反代访问，不再对公网直接暴露 3000。
-3. 云安全组关闭 3000 入站，只保留 80/443。
-4. App 端两处同步改：`data/remote/Api.kt` 的 `DEFAULT_SERVER_URL` 改为 `https://<域名>`，
-   并从 `res/xml/network_security_config.xml` 删掉该 IP 的明文许可。
+上线前按 [Phase 0 执行清单](phase0-rollout-checklist.md) 记录旧镜像、备份与回滚负责人。
+以下命令在服务器上执行，`<域名>` 必须替换为实际 DNS 名称；需要服务器与域名管理权限，
+仅准备模板不代表已完成线上切换。
+
+1. DNS A/AAAA 指向服务器；云安全组及主机防火墙开放 TCP 80/443（若启用 IPv6 也要检查），先保留现有 3000 供内测验证。
+2. 安装 Caddy，复制 `deploy/Caddyfile.example` 到 `/etc/caddy/Caddyfile` 并替换 `api.example.com`，执行
+   `sudo caddy validate --config /etc/caddy/Caddyfile`、`sudo systemctl reload caddy`；检查
+   `curl -fsS https://<域名>/healthz`、证书、登录及 WebSocket。Caddy 自动转发 WebSocket Upgrade，
+   模板会覆写客户端提供的 `X-Forwarded-For`。
+3. 将 `docker-compose.yml` 中 API `ports` 改为 `"127.0.0.1:3000:3000"` 并
+   `sudo docker compose up -d --build api`；确认本机 HTTPS 正常、外部不能直连 3000 后，
+   从安全组和主机防火墙移除 3000 公网入站规则。
+4. **只有在代理覆写来源 IP 且 3000 已限本机访问后**，才将 Compose 的 `TRUST_PROXY` 改为 `"true"`，
+   重建 API 并验证真实 IP、登录限流和 WebSocket；此前保持 `false`。仅改 `.env` 不生效，
+   因为 Compose 直接设置了该变量。
+5. 验证 `https://<域名>/docs`、`/admin`、`/api/v1/app/latest` 和已发布 APK 的
+   `/api/v1/app/download/<versionCode>`（带 `Range` 请求）。将 Android `data/remote/Api.kt` 的
+   `DEFAULT_SERVER_URL` 改为 `https://<域名>`，从 `res/xml/network_security_config.xml`
+   移除旧公网 IP 的明文许可，重新发布和真机冒烟。旧包仍指向 IP 时需安排迁移窗口。
+
+切换失败时以清单中记录的旧镜像标签/ID 回滚 API，保留两个数据卷；数据库 schema 不兼容时
+先停止写入并评估恢复，不能将演练脚本指向生产库。
 
 ## 九、运维
 
@@ -149,9 +165,46 @@ App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接�
 | 重启 API | `sudo docker compose restart api` |
 | 更新代码后重新部署 | `sudo git pull && sudo docker compose up -d --build` |
 | 停止全部服务 | `sudo docker compose down`（**不要加 `-v`，会连数据卷一起删**） |
-| 备份数据库 | `sudo docker compose exec mysql mysqldump -uroot -p yanzhong > backup_$(date +%F).sql` |
-| 恢复数据库 | `sudo docker compose exec -T mysql mysql -uroot -p yanzhong < backup.sql` |
+| 立即备份数据库 | `sudo /opt/kaoyan/server/scripts/backup-mysql.sh` |
+| 隔离恢复演练 | `sudo /opt/kaoyan/server/scripts/restore-mysql-drill.sh /var/backups/yanzhong/mysql/<备份名>.sql.gz` |
 | 进数据库命令行 | `sudo docker compose exec mysql mysql -uroot -p yanzhong` |
+
+### 自动备份与恢复演练
+
+`backup-mysql.sh` 默认写入 `/var/backups/yanzhong/mysql`，文件名含 UTC 时间与进程号；
+创建压缩 dump 后先检验 gzip，再原子改名。它使用 Compose 内的 MySQL 密码，失败时返回非零，
+在同目录 `backup.log` 记录 UTC 时间；只清理该目录中超过 `RETENTION_DAYS` 天的
+`yanzhong-*.sql.gz` 文件，默认保留 14 天。备份目录应在受控存储上，定期异地复制并限制访问。
+脚本的可选环境变量：`BACKUP_DIR`、`RETENTION_DAYS`（正整数）、`COMPOSE_PROJECT_DIR`
+（默认脚本上级目录）；运行用户须有 Docker 权限和备份目录写权限。
+
+```bash
+cd /opt/kaoyan/server
+sudo chmod 700 scripts/backup-mysql.sh scripts/restore-mysql-drill.sh
+sudo install -d -m 700 /var/backups/yanzhong/mysql
+sudo scripts/backup-mysql.sh
+sudo gzip -t /var/backups/yanzhong/mysql/yanzhong-*.sql.gz
+sudo crontab -e
+```
+
+在打开的 root crontab 编辑器里加入以下一行（每日 02:15）：
+
+```cron
+15 2 * * * /opt/kaoyan/server/scripts/backup-mysql.sh
+```
+
+cron 邮件/监控应对非零退出码告警，
+定期检查 `backup.log` 与磁盘容量。每次重大 schema 变更前再手动备份并记下文件校验值。
+
+```bash
+sudo /opt/kaoyan/server/scripts/restore-mysql-drill.sh /var/backups/yanzhong/mysql/<备份名>.sql.gz
+```
+
+演练脚本先检验压缩包，然后用 `mysql:8` 建立无网络、无端口映射、无生产卷的临时容器；
+导入后运行 `SELECT 1` 与 `SELECT COUNT(*) FROM yanzhong.users`，退出时仅删除该临时容器
+及匿名卷。脚本不支持生产恢复，即使设置 `ALLOW_PRODUCTION_RESTORE=YES` 也会拒绝；
+真正生产恢复需单独审批、停止写入、确认目标和备份，并遵循事故恢复流程。脚本只验证语法
+不等于已完成实际恢复演练，执行时需服务器可用且 Docker 已拉取 `mysql:8` 镜像。
 
 数据落在两个命名卷里：`mysql-data`（数据库）、`releases-data`（上传的 APK）。
 容器重建不影响数据，但 `docker compose down -v` 会清空。
