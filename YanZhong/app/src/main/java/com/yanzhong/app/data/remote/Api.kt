@@ -43,8 +43,21 @@ data class DeviceFullDto(
 @Serializable
 data class TokensDto(val access: String, val refresh: String, val expiresIn: Long)
 
+/**
+ * 注册请求。
+ *
+ * [termsAccepted] / [privacyAccepted] 是服务端的必填项：它既用来留档（同意时间点），
+ * 也是"数据属于我自己"这句话的凭证。客户端在提交前会明确校验这两个布尔值，
+ * 而不是靠服务端 400 才弹提示——那样用户填了半天密码才被拒，很败好感。
+ */
 @Serializable
-data class RegisterReq(val username: String, val password: String, val email: String? = null)
+data class RegisterReq(
+    val username: String,
+    val password: String,
+    val email: String? = null,
+    val termsAccepted: Boolean = false,
+    val privacyAccepted: Boolean = false
+)
 
 /** 服务端 POST /auth/register 返回 { user: {...} }，与登录响应保持同样的信封结构。 */
 @Serializable
@@ -102,6 +115,113 @@ data class SettingsResp(val settings: Map<String, kotlinx.serialization.json.Jso
 @Serializable
 data class PutSettingsReq(val settings: Map<String, kotlinx.serialization.json.JsonElement>)
 
+// ---------- 备考档案与计划 ----------
+//
+// 这一组数据是服务端权威的（不在 clientGuid 墓碑同步协议里），
+// 所以字段形状严格对齐服务端 PublicProfile / PublicPlan，宁可直接照抄也不要"猜"。
+// 日期一律是 YYYY-MM-DD 字符串，服务端已经把它们归一到 UTC 零点。
+
+/** 对齐服务端 SUPPORTED_TARGET_TYPES */
+val TARGET_TYPES = listOf("考研", "专升本", "考公", "法考", "其他")
+
+/** 对齐服务端 STUDY_WINDOWS */
+val STUDY_WINDOWS = listOf("早晨", "上午", "下午", "晚上", "深夜")
+
+/** 对齐服务端 FOUNDATION_LEVELS */
+val FOUNDATION_LEVELS = listOf("零基础", "一般", "较好")
+
+/** GET /profile 返回的档案；onboardingDoneAt 非空才算"填过" */
+@Serializable
+data class ProfileDto(
+    val targetType: String,
+    val examDate: String,
+    val dailyMinutes: Int,
+    val studyWindows: List<String> = emptyList(),
+    val foundation: String? = null,
+    val weakSubjects: List<String> = emptyList(),
+    val onboardingDoneAt: Long? = null,
+    val updatedAt: Long? = null
+) {
+    /** 是否完成过首次问卷；老账号可能只有部分字段，所以两个条件都要满足 */
+    val isComplete: Boolean get() = onboardingDoneAt != null && examDate.isNotBlank()
+}
+
+/** PUT /profile 的请求体，字段与服务端 profileInputSchema 一一对应 */
+@Serializable
+data class ProfileReq(
+    val targetType: String,
+    val examDate: String,
+    val dailyMinutes: Int,
+    val studyWindows: List<String>,
+    val foundation: String,
+    val weakSubjects: List<String>
+)
+
+@Serializable
+data class ProfileResp(val profile: ProfileDto? = null, val serverTime: Long = 0)
+
+/** 计划里的一个阶段（基础 / 强化 / 冲刺） */
+@Serializable
+data class PlanStageDto(
+    val id: Long,
+    val name: String,
+    val startDate: String,
+    val endDate: String,
+    val sortOrder: Int = 0
+)
+
+/** 计划里的一天一件事 */
+@Serializable
+data class PlanItemDto(
+    val id: Long,
+    val stageId: Long = 0,
+    val subject: String,
+    val title: String,
+    val planDate: String,
+    val minutes: Int = 0,
+    val priority: Int = 0,
+    val status: String = "pending",
+    val sortOrder: Int = 0
+)
+
+@Serializable
+data class PlanProgressDto(
+    val totalItems: Int = 0,
+    val pendingItems: Int = 0,
+    val doneItems: Int = 0,
+    val totalMinutes: Int = 0,
+    val totalDays: Int = 0
+)
+
+/** 服务端下发的计划。[stale] 表示档案改过但计划还没重建，界面要提示"重新生成"而不是装作没变。 */
+@Serializable
+data class PlanDto(
+    val id: Long,
+    val title: String,
+    val targetType: String = "",
+    val source: String = "",
+    val status: String = "",
+    val startDate: String,
+    val examDate: String,
+    val version: Int = 1,
+    val stale: Boolean = false,
+    val stages: List<PlanStageDto> = emptyList(),
+    val items: List<PlanItemDto> = emptyList(),
+    val progress: PlanProgressDto = PlanProgressDto(),
+    val createdAt: Long? = null,
+    val updatedAt: Long? = null
+)
+
+@Serializable
+data class PlanResp(val plan: PlanDto? = null, val serverTime: Long = 0)
+
+/** POST /account/delete 的请求体：confirm 必须与用户名完全一致，password 是本人密码 */
+@Serializable
+data class DeleteAccountReq(val confirm: String, val password: String)
+
+@Serializable
+data class DeleteAccountResp(val deleted: Int = 0, val serverTime: Long = 0)
+
 // ---------- API 接口 ----------
 
 interface YanzhongApi {
@@ -157,6 +277,36 @@ interface YanzhongApi {
 
     @PUT("api/v1/settings")
     suspend fun putSettings(@Body body: PutSettingsReq): SyncResult
+
+    /** 读取备考档案；没填过时 profile 为 null（不是报错），界面据此决定要不要弹问卷 */
+    @GET("api/v1/profile")
+    suspend fun getProfile(): ProfileResp
+
+    /** 保存备考档案（只写档案，不生成计划） */
+    @PUT("api/v1/profile")
+    suspend fun putProfile(@Body body: ProfileReq): ProfileResp
+
+    /**
+     * 依据当前档案重新生成计划。
+     * 服务端会覆盖旧计划并把结果推给同一账号的其他设备（planChanged）。
+     */
+    @POST("api/v1/plans/generate")
+    suspend fun generatePlan(): PlanResp
+
+    /** 取当前有效计划；没有计划时 plan 为 null */
+    @GET("api/v1/plans/active")
+    suspend fun getActivePlan(): PlanResp
+
+    /**
+     * 全量导出账号数据。直接返回服务端 JSON（含账号、档案、计划、同步数据），
+     * 客户端原样落盘即可，不需要理解内部结构——所以这里用 JsonElement 而不是建一堆 DTO。
+     */
+    @GET("api/v1/account/export")
+    suspend fun exportAccount(): kotlinx.serialization.json.JsonElement
+
+    /** 注销账号：不可撤销，服务端要求「完整用户名 + 密码」双重确认 */
+    @POST("api/v1/account/delete")
+    suspend fun deleteAccount(@Body body: DeleteAccountReq): DeleteAccountResp
 }
 
 // ---------- 网络装配 ----------

@@ -69,11 +69,24 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun register(username: String, password: String, email: String?) {
+    fun register(username: String, password: String, email: String?, consentChecked: Boolean) {
         viewModelScope.launch {
+            if (!consentChecked) {
+                _ui.update { it.copy(message = "注册前先勾一下协议那一行") }
+                return@launch
+            }
             _ui.update { it.copy(busy = true, message = "") }
             val result = runCatching {
-                ApiClient.api().register(RegisterReq(username, password, email?.takeIf { it.isNotBlank() }))
+                ApiClient.api().register(
+                    RegisterReq(
+                        username = username,
+                        password = password,
+                        email = email?.takeIf { it.isNotBlank() },
+                        // 服务端硬校验:少一个就是 400 LEGAL_CONSENT_REQUIRED
+                        termsAccepted = true,
+                        privacyAccepted = true
+                    )
+                )
             }
             result.fold({
                 _ui.update { it.copy(busy = false, message = "注册成功,请登录") }

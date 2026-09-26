@@ -24,7 +24,12 @@ data class LoginUiState(
     val busy: Boolean = false,
     val message: String = "",
     val messageIsError: Boolean = false,
-    val serverUrl: String = DEFAULT_SERVER_URL
+    val serverUrl: String = DEFAULT_SERVER_URL,
+    /**
+     * 注册时必须勾选,登录不需要。默认不勾——同意这种事不能被默认选中,
+     * 那是替用户做决定,也是最容易被投诉的写法。
+     */
+    val consentChecked: Boolean = false
 )
 
 /** 登录和注册使用 ApiClient 的内置地址或设备上已保存的地址。 */
@@ -102,13 +107,24 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(message = "请输入正确的邮箱地址", messageIsError = true) }
                 return
             }
+            if (!s.consentChecked) {
+                _ui.update { it.copy(message = "先勾一下上面那行,我们才好把数据存到服务器", messageIsError = true) }
+                return
+            }
         }
         viewModelScope.launch {
             _ui.update { it.copy(busy = true, message = "") }
             if (s.registerMode) {
                 runCatching {
                     ApiClient.api().register(
-                        RegisterReq(username, s.password, s.email.trim().takeIf { it.isNotEmpty() })
+                        RegisterReq(
+                            username = username,
+                            password = s.password,
+                            email = s.email.trim().takeIf { it.isNotEmpty() },
+                            // 服务端对这两个字段是硬校验:缺了直接 400 LEGAL_CONSENT_REQUIRED
+                            termsAccepted = true,
+                            privacyAccepted = true
+                        )
                     )
                 }.fold({
                     _ui.update {

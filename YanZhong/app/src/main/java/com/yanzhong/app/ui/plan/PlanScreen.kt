@@ -26,6 +26,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -43,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yanzhong.app.data.db.RepeatRule
+import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.ui.theme.AppIcons
@@ -63,6 +65,9 @@ private val TABS = listOf("本周", "日模板", "全程", "军规·资料")
 fun PlanScreen(padding: PaddingValues) {
     val vm: PlanViewModel = viewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
+    val serverPlan by vm.serverPlan.collectAsStateWithLifecycle()
+    val planLoading by vm.planLoading.collectAsStateWithLifecycle()
+    val planUnavailable by vm.planUnavailable.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
 
     val weekStart = state.weekStart
@@ -93,9 +98,9 @@ fun PlanScreen(padding: PaddingValues) {
         item {
             com.yanzhong.app.ui.theme.PageHeader(
                 title = "计划",
-                subtitle = "468 天作战计划 · 408 / 数学二 / 英语二 / 政治"
+                subtitle = if (serverPlan == null) "本地 468 天作战计划" else "我的备考计划"
             ) {
-                if (weekLabel != null) {
+                if (serverPlan == null && weekLabel != null) {
                     Surface(
                         shape = RoundedCornerShape(999.dp),
                         color = MaterialTheme.colorScheme.primaryContainer
@@ -111,7 +116,24 @@ fun PlanScreen(padding: PaddingValues) {
             }
         }
 
+        item(key = "server-plan") {
+            when {
+                serverPlan != null -> ServerPlanSummary(serverPlan!!, todayDate, planLoading, vm::refreshPlan)
+                planUnavailable -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("暂无云端计划，当前展示本地 468 天计划", modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = vm::refreshPlan) { Text("重试") }
+                }
+                else -> Text("正在获取云端计划，本地计划仍可使用",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+
         item(key = "tabs") {
+            Text("本地 468 天计划 · 参考", style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
             TabRow(selectedTabIndex = tab) {
                 TABS.forEachIndexed { index, label ->
                     Tab(
@@ -204,6 +226,63 @@ fun PlanScreen(padding: PaddingValues) {
             }
         }
     }
+    }
+}
+
+@Composable
+private fun ServerPlanSummary(plan: PlanDto, today: LocalDate, loading: Boolean, onRefresh: () -> Unit) {
+    val current = plan.currentStage(today)
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(plan.title, style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                TextButton(onClick = onRefresh, enabled = !loading) { Text(if (loading) "刷新中" else "刷新") }
+            }
+            if (plan.stale) {
+                Text("档案已修改，当前计划尚未重新生成", color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall)
+            }
+            Text("考期 ${plan.examDate}", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            plan.stages.sortedBy { it.sortOrder }.forEach { stage ->
+                val active = stage.id == current?.id
+                Column(Modifier.fillMaxWidth()) {
+                    Text(stage.name + if (active) " · 当前阶段" else "",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                    Text("${stage.startDate} – ${stage.endDate}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (current != null) {
+                Text("当前阶段 · 近期事项", style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold)
+                val upcoming = plan.upcomingItems(current, today)
+                if (upcoming.isEmpty()) {
+                    Text("当前阶段暂无待完成的近期事项", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    upcoming.forEach { item ->
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(item.title, style = MaterialTheme.typography.bodyMedium)
+                            Text("${item.planDate} · ${item.subject} · ${item.minutes} 分钟",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            } else {
+                Text("当前日期不在计划阶段内", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 

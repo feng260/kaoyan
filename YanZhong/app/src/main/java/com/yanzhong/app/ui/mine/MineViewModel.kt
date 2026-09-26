@@ -8,6 +8,9 @@ import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.data.prefs.PomodoroPlan
+import com.yanzhong.app.data.remote.ApiClient
+import com.yanzhong.app.data.remote.DeleteAccountReq
+import com.yanzhong.app.data.remote.TokenStore
 import com.yanzhong.app.data.repo.ExportPayload
 import com.yanzhong.app.timer.streakDays
 import kotlinx.coroutines.Dispatchers
@@ -159,6 +162,70 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
             onDone(result.getOrElse { "导入失败:${it.message}" })
+        }
+    }
+
+    // ---------------- 账号与安全 ----------------
+
+    /**
+     * 把服务端的账号全量数据导出到 SAF uri。
+     *
+     * 与 [exportToUri] 的区别:那个导的是**本机库**,这个导的是**服务器上属于你的那份**。
+     * 两者内容高度重合,但不能互相替代——换机时人真正想要的是"服务器上那份备份",
+     * 因为它包含别台设备同步上去、本机还没拉下来的东西。
+     */
+    fun exportAccountToUri(uri: Uri, onDone: (String) -> Unit) {
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val payload = ApiClient.api().exportAccount()
+                    val text = Json { prettyPrint = true }.encodeToString(payload)
+                    getApplication<Application>().contentResolver.openOutputStream(uri)
+                        ?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
+                        ?: throw IllegalStateException("无法打开导出文件")
+                    "已导出账号数据,共 ${text.length} 字符"
+                }
+            }
+            onDone(result.getOrElse { "导出失败:${it.readableMessage()}" })
+        }
+    }
+
+    /**
+     * 注销账号。
+     *
+     * 只有服务端确认删除了才清本地凭证——顺序反了就糟了:网络一抖,
+     * 用户以为账号没了,其实服务端还好好留着;或者反过来,服务端删干净了,
+     * 本地还存着一份 token,下次启动拿着废 token 反复撞墙。
+     */
+    fun deleteAccount(username: String, password: String, onDone: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            val result = runCatching {
+                ApiClient.api().deleteAccount(
+                    DeleteAccountReq(confirm = username.trim(), password = password)
+                )
+            }
+            result.fold(
+                onSuccess = { resp ->
+                    TokenStore.clearAll()
+                    onDone(true, "账号已注销,服务端清理了 ${resp.deleted} 条记录")
+                },
+                onFailure = { e -> onDone(false, "注销失败:${e.readableMessage()}") }
+            )
+        }
+    }
+
+    /** 服务器返回的错误体对用户没什么意义,但去掉它就更没法排查;折中:取前 80 字 */
+    private fun Throwable.readableMessage(): String {
+        val http = this as? retrofit2.HttpException
+        return when {
+            this is java.net.SocketTimeoutException -> "连接超时"
+            this is java.net.ConnectException -> "连不上服务器"
+            this is java.net.UnknownHostException -> "找不到服务器"
+            http != null -> {
+                val body = http.response()?.errorBody()?.string().orEmpty().take(80)
+                "HTTP ${http.code()} $body"
+            }
+            else -> message ?: "未知错误"
         }
     }
 }

@@ -34,6 +34,7 @@ fun CloudSyncScreen(padding: PaddingValues, navController: NavHostController) {
     var password by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
     var rememberMe by remember { mutableStateOf(false) }
+    var consentChecked by remember { mutableStateOf(false) }
     var showRestoreConfirm by remember { mutableStateOf(false) }
 
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -107,6 +108,11 @@ fun CloudSyncScreen(padding: PaddingValues, navController: NavHostController) {
                             Checkbox(checked = rememberMe, onCheckedChange = { rememberMe = it })
                             Text("记住我(30 天免登录)", style = MaterialTheme.typography.bodyMedium)
                         }
+                        com.yanzhong.app.ui.legal.ConsentRow(
+                            checked = consentChecked,
+                            onCheckedChange = { consentChecked = it },
+                            modifier = Modifier.fillMaxWidth()
+                        )
                         Spacer(Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Button(
@@ -116,12 +122,16 @@ fun CloudSyncScreen(padding: PaddingValues, navController: NavHostController) {
                                 modifier = Modifier.weight(1f)
                             ) { Text("登录") }
                             OutlinedButton(
-                                onClick = { vm.register(username, password, email) },
+                                onClick = { vm.register(username, password, email, consentChecked) },
                                 enabled = !state.busy && username.length >= 3 && password.length >= 8,
                                 shape = RoundedCornerShape(999.dp),
                                 modifier = Modifier.weight(1f)
                             ) { Text("注册") }
                         }
+                        com.yanzhong.app.ui.legal.PolicyLinksRow(
+                            prefix = "",
+                            modifier = Modifier.fillMaxWidth()
+                        )
                     }
                 } else {
                     // 已登录:设备管理 + 增量同步 + 备份 + 状态 WS

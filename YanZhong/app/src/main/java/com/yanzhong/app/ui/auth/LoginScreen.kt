@@ -196,11 +196,25 @@ fun LoginScreen() {
                     }
                 }
                 Spacer(Modifier.height(18.dp))
-                Text(
-                    if (state.registerMode) "注册即表示你同意仅将账号用于学习数据同步"
-                    else "没有账号？点击上方“注册”即可创建",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant,
+                if (state.registerMode) {
+                    // 协议放在注册这一侧:登录的人早就同意了,不必每次再问一遍
+                    com.yanzhong.app.ui.legal.ConsentRow(
+                        checked = state.consentChecked,
+                        onCheckedChange = { checked ->
+                            vm.update { it.copy(consentChecked = checked, message = "", messageIsError = false) }
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                    )
+                } else {
+                    Text(
+                        "没有账号？点击上方“注册”即可创建",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                    )
+                }
+                com.yanzhong.app.ui.legal.PolicyLinksRow(
+                    prefix = "政策原文在",
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
                 )
                 TextButton(

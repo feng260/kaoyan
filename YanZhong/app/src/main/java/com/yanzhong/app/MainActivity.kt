@@ -50,12 +50,12 @@ class MainActivity : ComponentActivity() {
                 .map { it.themeMode }
                 .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
             YanZhongTheme(themeMode = themeMode) {
-                // 启动登录门:未登录→登录页,已登录→主界面,检查中→品牌过场
+                // 启动两道门:①登录 ②备考档案。两段都过完才进主界面
                 val auth by app.authState.collectAsStateWithLifecycle()
                 when (auth) {
                     null -> AuthChecking()
                     false -> LoginScreen()
-                    else -> YanZhongAppRoot()
+                    else -> ProfileGate()
                 }
             }
         }
@@ -80,6 +80,40 @@ class MainActivity : ComponentActivity() {
                 Spacer(Modifier.height(16.dp))
                 CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp)
             }
+        }
+    }
+
+    /**
+     * 第二道门:备考档案。
+     *
+     * 分流规则只有一条底线——**服务端出问题绝不挡住本机学习**。
+     * 所以只有两种情况会让用户停下来填问卷或做选择:
+     *   1. 档案确实不完整(服务端明确说缺);
+     *   2. 档案存好了但计划没排出来,需要当场告诉他一句。
+     * 单纯的网络不通走 FALLBACK 且 awaitingChoice=false,直接放行进主界面,
+     * 重试入口留在「我的」页——高铁上打开 App 的人不该看见一个问卷。
+     */
+    @androidx.compose.runtime.Composable
+    private fun ProfileGate() {
+        val vm: com.yanzhong.app.ui.onboarding.OnboardingViewModel =
+            androidx.lifecycle.viewmodel.compose.viewModel()
+
+        // 先清零再读状态:顺序反了就会有一帧用上一位用户的结论放行。
+        // remember 在这里正好当"本次进门只跑一次"用——ProfileGate 会随退出登录
+        // 离开组合树,下次登录重新进入时这段代码自然重跑。
+        androidx.compose.runtime.remember { vm.beginSession() }
+
+        val state by vm.state.collectAsStateWithLifecycle()
+
+        when (state.phase) {
+            com.yanzhong.app.ui.onboarding.OnboardingPhase.LOADING -> AuthChecking()
+            com.yanzhong.app.ui.onboarding.OnboardingPhase.EDITING,
+            com.yanzhong.app.ui.onboarding.OnboardingPhase.SUBMITTING ->
+                com.yanzhong.app.ui.onboarding.OnboardingScreen(vm)
+            com.yanzhong.app.ui.onboarding.OnboardingPhase.FALLBACK ->
+                if (state.awaitingChoice) com.yanzhong.app.ui.onboarding.OnboardingFallbackScreen(vm)
+                else YanZhongAppRoot()
+            com.yanzhong.app.ui.onboarding.OnboardingPhase.SUCCESS -> YanZhongAppRoot()
         }
     }
 
