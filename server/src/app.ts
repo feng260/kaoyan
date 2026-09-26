@@ -8,6 +8,8 @@ import { env } from './config/env'
 import authRoutes from './modules/auth/routes'
 import userRoutes from './modules/user/routes'
 import syncRoutes from './modules/sync/routes'
+import planningRoutes from './modules/planning/routes'
+import accountRoutes from './modules/account/routes'
 import docsRoutes from './modules/docs/routes'
 import appRoutes from './modules/app/routes'
 import adminRoutes from './modules/admin/routes'
@@ -28,6 +30,8 @@ export function createApp(): Koa {
   app.use(authRoutes.routes()).use(authRoutes.allowedMethods())
   app.use(userRoutes.routes()).use(userRoutes.allowedMethods())
   app.use(syncRoutes.routes()).use(syncRoutes.allowedMethods())
+  app.use(planningRoutes.routes()).use(planningRoutes.allowedMethods())
+  app.use(accountRoutes.routes()).use(accountRoutes.allowedMethods())
   app.use(appRoutes.routes()).use(appRoutes.allowedMethods())
   app.use(adminRoutes.routes()).use(adminRoutes.allowedMethods())
   app.use(docsRoutes.routes()).use(docsRoutes.allowedMethods())
@@ -47,6 +51,24 @@ export function createApp(): Koa {
       return
     }
     await next()
+  })
+
+  // 协议静态页:注册页里的链接指向这里,不需要登录也能看(否则「同意」就成了盲签)
+  app.use(async (ctx, next) => {
+    const legal: Record<string, string> = {
+      '/legal/terms': 'terms.html',
+      '/legal/privacy': 'privacy.html',
+    }
+    const file = legal[ctx.path]
+    if (!file) {
+      await next()
+      return
+    }
+    ctx.type = 'html'
+    ctx.set('Cache-Control', 'no-cache') // 协议要按版本看到最新的,不能吃旧缓存
+    // 页面是自包含的:除内联样式外不需要加载任何东西,顺手把 CSP 收到最紧
+    ctx.set('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'")
+    ctx.body = fs.createReadStream(path.resolve(process.cwd(), 'public', file))
   })
 
   // 根路径跳转到 API 文档,避免裸访问 3000 端口时页面空白
