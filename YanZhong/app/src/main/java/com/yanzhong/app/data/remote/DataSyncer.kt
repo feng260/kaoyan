@@ -4,6 +4,7 @@ import android.content.Context
 import com.yanzhong.app.YanZhongApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -44,6 +45,9 @@ class DataSyncer(private val app: YanZhongApp) {
 
     @Volatile private var started = false
 
+    /** 长期协程句柄:start() 重建,stop() 取消,避免重复登录累积多份周期循环 */
+    private var jobs: List<Job> = emptyList()
+
     /** 最近一次从云端应用的设置快照:推送前比对,相同即回声,跳过(防拉取→推送死循环) */
     @Volatile
     private var lastAppliedRemote: Map<String, kotlinx.serialization.json.JsonElement>? = null
@@ -51,55 +55,75 @@ class DataSyncer(private val app: YanZhongApp) {
     fun start() {
         if (started) return
         started = true
-        scope.launch { syncOnce() } // 登录后首拉:云端他端改动全量落本机
-        scope.launch {
-            // 新设备首拉设置:从未推送过(无水位)时才拉,老设备本地为准
-            if (prefs.getLong(SETTINGS_SYNC_KEY, 0L) == 0L) pullSettingsOnce()
-        }
-        scope.launch {
-            app.repository.dirtySignal
-                .debounce(3000L)
-                .collect { if (started) syncOnce() }
-        }
-        scope.launch {
-            // 他端写云实时通知 → 立即拉取(1s 防抖:多资源连推只触发一轮)
-            app.statusSync.notices
-                .debounce(1000L)
-                .collect { notice ->
-                    if (!started) return@collect
-                    when (notice) {
-                        is SyncNotice.DataChanged -> {
-                            if (notice.full) prefs.edit().putLong(SINCE_KEY, 0L).apply()
-                            syncOnce()
+        jobs = listOf(
+            scope.launch { syncOnce() }, // 登录后首拉:云端他端改动全量落本机
+            scope.launch {
+                // 新设备首拉设置:从未推送过(无水位)时才拉,老设备本地为准
+                if (prefs.getLong(SETTINGS_SYNC_KEY, 0L) == 0L) pullSettingsOnce()
+            },
+            scope.launch {
+                app.repository.dirtySignal
+                    .debounce(3000L)
+                    .collect { if (started) syncOnce() }
+            },
+            scope.launch {
+                // 他端写云实时通知 → 立即拉取(1s 防抖:多资源连推只触发一轮)
+                app.statusSync.notices
+                    .debounce(1000L)
+                    .collect { notice ->
+                        if (!started) return@collect
+                        when (notice) {
+                            is SyncNotice.DataChanged -> {
+                                if (notice.full) prefs.edit().putLong(SINCE_KEY, 0L).apply()
+                                syncOnce()
+                            }
+                            is SyncNotice.SettingsChanged -> pullSettingsOnce()
                         }
-                        is SyncNotice.SettingsChanged -> pullSettingsOnce()
                     }
-                }
-        }
-        scope.launch {
-            app.settingsRepo.settings
-                .map { app.settingsRepo.syncMapOf(it) }
-                .distinctUntilChanged()
-                .debounce(5000L)
-                .collect { map ->
-                    if (!started) return@collect
-                    if (map == lastAppliedRemote) return@collect // 云端应用触发的变更,不回推
-                    runCatching {
-                        val resp = ApiClient.api().putSettings(PutSettingsReq(map))
-                        prefs.edit().putLong(SETTINGS_SYNC_KEY, resp.serverTime).apply()
+            },
+            scope.launch {
+                app.settingsRepo.settings
+                    .map { app.settingsRepo.syncMapOf(it) }
+                    .distinctUntilChanged()
+                    .debounce(5000L)
+                    .collect { map ->
+                        if (!started) return@collect
+                        if (map == lastAppliedRemote) return@collect // 云端应用触发的变更,不回推
+                        runCatching {
+                            val resp = ApiClient.api().putSettings(PutSettingsReq(map))
+                            prefs.edit().putLong(SETTINGS_SYNC_KEY, resp.serverTime).apply()
+                        }
                     }
+            },
+            scope.launch {
+                while (true) {
+                    delay(15 * 60_000L)
+                    if (started) syncOnce()
                 }
-        }
-        scope.launch {
-            while (true) {
-                delay(15 * 60_000L)
-                if (started) syncOnce()
             }
-        }
+        )
+    }
+
+    /**
+     * 水位归属校验:同步水位属于某个账号。当前登录账号与水位归属不一致时(换号、先登出再登入他号),
+     * 清空 `since` 与设置水位、丢弃设置快照,下一轮即全量拉取,避免漏拉或被他账号设置覆盖。
+     * 同账号重登时归属一致,水位保留,不重复全量拉取。
+     */
+    private suspend fun ensureWatermarkOwner() {
+        val account = TokenStore.currentAccountGuid() ?: return
+        val owner = prefs.getString(WATERMARK_ACCOUNT_KEY, null)
+        if (owner == account) return
+        prefs.edit()
+            .remove(SINCE_KEY)
+            .remove(SETTINGS_SYNC_KEY)
+            .putString(WATERMARK_ACCOUNT_KEY, account)
+            .apply()
+        lastAppliedRemote = null
     }
 
     /** 拉取云端设置并应用;记录快照防回推 */
     private suspend fun pullSettingsOnce() {
+        ensureWatermarkOwner()
         runCatching {
             val resp = ApiClient.api().getSettings()
             app.settingsRepo.applySyncMap(resp.settings)
@@ -109,6 +133,8 @@ class DataSyncer(private val app: YanZhongApp) {
 
     fun stop() {
         started = false
+        jobs.forEach { it.cancel() }
+        jobs = emptyList()
         _state.value = SyncState()
     }
 
@@ -116,6 +142,7 @@ class DataSyncer(private val app: YanZhongApp) {
     suspend fun syncOnce() {
         mutex.withLock {
             if (TokenStore.currentAccess() == null) return@withLock
+            ensureWatermarkOwner()
             _state.update { it.copy(running = true) }
             var pushed = 0
             val outcome = runCatching {
@@ -145,9 +172,12 @@ class DataSyncer(private val app: YanZhongApp) {
                 applied
             }
             outcome.fold({ applied ->
+                val now = System.currentTimeMillis()
+                // 持久化:应用重启后"我的"页仍能显示上次同步时间
+                TokenStore.saveLastSync(now)
                 _state.update {
                     it.copy(
-                        running = false, lastSyncAt = System.currentTimeMillis(),
+                        running = false, lastSyncAt = now,
                         lastError = null, pushed = pushed, pulled = applied
                     )
                 }
@@ -162,5 +192,6 @@ class DataSyncer(private val app: YanZhongApp) {
     companion object {
         private const val SINCE_KEY = "since"
         private const val SETTINGS_SYNC_KEY = "settings_sync_at"
+        private const val WATERMARK_ACCOUNT_KEY = "watermark_account"
     }
 }
