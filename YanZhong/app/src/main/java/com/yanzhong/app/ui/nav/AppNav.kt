@@ -44,6 +44,7 @@ import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.timer.Phase
 import com.yanzhong.app.ui.focus.FocusScreen
 import com.yanzhong.app.ui.home.HomeScreen
+import com.yanzhong.app.ui.mine.MineDataScreen
 import com.yanzhong.app.ui.mine.MineScreen
 import com.yanzhong.app.ui.plan.PlanScreen
 import com.yanzhong.app.ui.stats.StatsScreen
@@ -63,6 +64,7 @@ object Routes {
     const val APP_PICKER = "apppicker/{subjectId}"
     const val CLOUD = "cloud"
     const val WEBDAV = "webdav"
+    const val DATA = "mine_data"
 
     /** 应用白名单选择页:subjectId=-1 为全局,其余为科目定制 */
     fun appPicker(subjectId: Long) = "apppicker/$subjectId"
@@ -87,7 +89,8 @@ fun YanZhongAppRoot() {
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     val deepPage = currentRoute == Routes.SUPERMODE || currentRoute == Routes.CLOUD ||
-        currentRoute == Routes.WEBDAV || currentRoute?.startsWith("apppicker") == true
+        currentRoute == Routes.WEBDAV || currentRoute == Routes.DATA ||
+        currentRoute?.startsWith("apppicker") == true
     val showNav = !timerRunning && !deepPage
 
     // 应用内更新:启动时检查一次(需已配置服务器),有新版本弹窗 → 下载 → 调起安装
@@ -179,6 +182,7 @@ fun YanZhongAppRoot() {
                     composable(Routes.FOCUS) { FocusScreen(padding) }
                     composable(Routes.STATS) { StatsScreen(padding) }
                     composable(Routes.MINE) { MineScreen(padding, navController) }
+                    composable(Routes.DATA) { MineDataScreen(padding, navController) }
                     composable(Routes.SUPERMODE) {
                         com.yanzhong.app.ui.supermode.SuperModeScreen(padding, navController)
                     }
