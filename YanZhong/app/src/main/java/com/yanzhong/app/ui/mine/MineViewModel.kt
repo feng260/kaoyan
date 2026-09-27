@@ -12,12 +12,14 @@ import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.data.prefs.PomodoroPlan
 import com.yanzhong.app.data.remote.ApiClient
 import com.yanzhong.app.data.remote.DeleteAccountReq
+import com.yanzhong.app.data.remote.SyncState
 import com.yanzhong.app.data.remote.TokenStore
 import com.yanzhong.app.data.repo.ExportPayload
 import com.yanzhong.app.util.TimeUtils
 import java.time.Instant
 import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -32,7 +34,15 @@ data class MineUiState(
     val subjects: List<SubjectEntity> = emptyList(),
     val focusDays: Int = 0,
     val streak: Int = 0,
-    val learningProfile: LearningProfile = LearningProfile()
+    val learningProfile: LearningProfile = LearningProfile(),
+    /** 是否已登录(决定同步卡三态) */
+    val loggedIn: Boolean = false,
+    /** 当前账号用户名;已登录但本地未保存时为空串 */
+    val username: String = "",
+    /** 上次成功同步时间:内存实时值与持久化值取较大者 */
+    val lastSyncAt: Long = 0,
+    /** 增量同步实时状态 */
+    val sync: SyncState = SyncState()
 )
 
 class MineViewModel(app: Application) : AndroidViewModel(app) {
@@ -40,11 +50,27 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = container.repository
     private val settingsRepo = container.settingsRepo
 
+    private data class AccountSnapshot(
+        val loggedIn: Boolean,
+        val username: String,
+        val lastSyncAt: Long
+    )
+
+    private val accountFlow: Flow<AccountSnapshot> = combine(
+        TokenStore.observeLoggedIn(),
+        TokenStore.observeUsername(),
+        TokenStore.observeLastSync()
+    ) { loggedIn, username, lastSyncAt ->
+        AccountSnapshot(loggedIn, username, lastSyncAt)
+    }
+
     val uiState: StateFlow<MineUiState> = combine(
         settingsRepo.settings,
         repo.observeSubjects(),
-        repo.observeSessions()
-    ) { settings, subjects, sessions ->
+        repo.observeSessions(),
+        accountFlow,
+        container.dataSyncer.state
+    ) { settings, subjects, sessions, account, sync ->
         val profile = buildLearningProfile(
             sessions = sessions,
             subjects = subjects,
@@ -56,9 +82,18 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
             subjects = subjects,
             focusDays = profile.activeDays,
             streak = profile.streakDays,
-            learningProfile = profile
+            learningProfile = profile,
+            loggedIn = account.loggedIn,
+            username = account.username,
+            lastSyncAt = maxOf(sync.lastSyncAt, account.lastSyncAt),
+            sync = sync
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MineUiState())
+
+    /** 手动触发一轮增量同步(自动同步已常驻,此处仅用于同步卡"重试/立即同步") */
+    fun syncNow() {
+        viewModelScope.launch { runCatching { container.dataSyncer.syncOnce() } }
+    }
 
     fun setTheme(mode: Int) {
         viewModelScope.launch { settingsRepo.setThemeMode(mode) }
