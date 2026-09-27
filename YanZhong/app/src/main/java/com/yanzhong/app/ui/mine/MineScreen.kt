@@ -1,10 +1,7 @@
 package com.yanzhong.app.ui.mine
 
 import android.app.Activity
-import android.content.Context
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -33,7 +30,6 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -69,8 +65,6 @@ import com.yanzhong.app.data.stats.LearningProfile
 import com.yanzhong.app.util.TimeUtils
 import com.yanzhong.app.data.prefs.ThemeMode
 import com.yanzhong.app.ui.nav.Routes
-import com.yanzhong.app.ui.theme.AmberGold
-import com.yanzhong.app.ui.theme.AmberGoldDeep
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.CoralRed
 import com.yanzhong.app.ui.theme.CoralRedDeep
@@ -105,45 +99,6 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
     var showPomodoroGoalEditor by remember { mutableStateOf(false) }
     /** 删除科目二次确认(连带删除科目下任务与记录,防误触) */
     var deleteSubjectCandidate by remember { mutableStateOf<SubjectEntity?>(null) }
-
-    /**
-     * 注销走的是一条两步确认的路:先说清后果,再让人亲手把用户名和密码敲一遍。
-     * 不做「输个 DELETE」那种仪式感——真想走的人被卡住只会更烦,
-     * 而打算误触的人敲完用户名早就放弃了。
-     */
-    var deleteStep by remember { mutableIntStateOf(0) }
-    var deleteConfirmName by remember { mutableStateOf("") }
-    var deletePassword by remember { mutableStateOf("") }
-
-    // 数据导出:系统文件选择器 SAF,不申请存储权限(PRD 3.11);文件 IO 全在 VM 的 IO 线程
-    val exportLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        vm.exportToUri(uri) { message ->
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    // 账号数据导出:导的是服务器上那份,和上面「本机库」不是一回事
-    val exportAccountLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("application/json")
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        vm.exportAccountToUri(uri) { message ->
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-        }
-    }
-
-    // 计划包 / 恢复包批量导入:SAF 多选文件,只读不写权限
-    val importLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        vm.importFromUris(uris) { message ->
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-        }
-    }
 
     // 夜空为深色:进入本页时状态栏切白色图标,离开恢复
     val view = LocalView.current
@@ -200,14 +155,18 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                         Spacer(Modifier.width(14.dp))
                         Column {
                             Text(
-                                "考研人 · 软件工程",
+                                when {
+                                    !state.loggedIn -> "本机学习档案"
+                                    state.username.isNotBlank() -> state.username
+                                    else -> "已登录"
+                                },
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold,
                                 color = Color.White
                             )
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                "408 + 数学二 + 英语二 + 政治",
+                                formatSubjectSubtitle(state.subjects.map { it.name }),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = Color.White.copy(alpha = 0.78f)
                             )
@@ -241,6 +200,17 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                 ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                item(key = "sync-card") {
+                    SyncStatusCard(
+                        loggedIn = state.loggedIn,
+                        username = state.username,
+                        lastSyncAt = state.lastSyncAt,
+                        sync = state.sync,
+                        onLogin = { navController.navigate(Routes.CLOUD) { launchSingleTop = true } },
+                        onSyncNow = { vm.syncNow() }
+                    )
+                }
+
                 // 快捷功能区(参考图3 三个图标入口)
                 item(key = "quick-entries") {
                     Row(
@@ -281,84 +251,6 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
 
                 item(key = "learning-profile") {
                     LearningProfileCard(state.learningProfile)
-                }
-
-                item(key = "account-heading") {
-                    SectionHeading("账号与安全")
-                }
-
-                item(key = "account") {
-                    SectionCard(
-                        title = "账号与安全",
-                        subtitle = "你在服务器上存了什么、怎么拿走、怎么删干净",
-                        icon = AppIcons.Shield,
-                        accent = MintGreen
-                    ) {
-                        com.yanzhong.app.ui.legal.PolicyLinksRow(
-                            prefix = "我们对数据的承诺写在",
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(14.dp))
-                        Text(
-                            "导出账号数据",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "把服务器上属于你的那份存档取回来。和上面「导出全量 JSON」不同:" +
-                                "那份是本机库,这份含别的设备同步上去、本机还没拉下来的记录。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = { exportAccountLauncher.launch("yanzhong-account.json") },
-                            shape = RoundedCornerShape(999.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                AppIcons.Download,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("导出服务器存档")
-                        }
-                        Spacer(Modifier.height(18.dp))
-                        Text(
-                            "注销账号",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "服务器会删掉你的档案、计划与同步记录,删完就找不回来了。" +
-                                "本机上的学习数据不受影响,想留个底可以先导出。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = {
-                                deleteConfirmName = ""
-                                deletePassword = ""
-                                deleteStep = 1
-                            },
-                            shape = RoundedCornerShape(999.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                AppIcons.Delete,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("注销账号", color = MaterialTheme.colorScheme.error)
-                        }
-                    }
                 }
 
                 item(key = "preferences-heading") {
@@ -576,8 +468,8 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                     }
                 }
 
-                item(key = "data-heading") {
-                    SectionHeading("数据与其他")
+                item(key = "subjects-heading") {
+                    SectionHeading("科目管理")
                 }
 
                 item(key = "subjects") {
@@ -629,90 +521,27 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                     }
                 }
 
-                item(key = "backup") {
-                    SectionCard(title = "备份与导入", icon = AppIcons.DatabaseBackup, accent = AmberGold) {
-                        // 云同步:账号登录 + 多设备数据备份 + 专注状态实时同步
-                        Button(
-                            onClick = {
-                                navController.navigate(com.yanzhong.app.ui.nav.Routes.CLOUD) {
-                                    launchSingleTop = true
+                item(key = "data-entry") {
+                    SectionCard(
+                        title = "数据与账号",
+                        subtitle = "云端同步、备份与恢复、导入导出、账号注销",
+                        icon = AppIcons.DatabaseBackup,
+                        accent = SkyBlue
+                    ) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    navController.navigate(Routes.DATA) { launchSingleTop = true }
                                 }
-                            },
-                            shape = RoundedCornerShape(999.dp),
-                            modifier = Modifier.fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                AppIcons.CloudUpload,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("云同步(多设备)")
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = {
-                                navController.navigate(com.yanzhong.app.ui.nav.Routes.WEBDAV) {
-                                    launchSingleTop = true
-                                }
-                            },
-                            shape = RoundedCornerShape(999.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                AppIcons.CloudDownload,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("WebDAV 云同步")
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                "全量数据(科目 / 节点 / 任务 / 专注记录)导出为 JSON,可导入换机恢复;" +
-                                    "也可批量导入多个计划包,自动生成倒计时节点与周期任务,同名内容去重、重复导入幂等。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(12.dp)
-                            )
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(
-                                onClick = { exportLauncher.launch("yanzhong-backup.json") },
-                                shape = RoundedCornerShape(999.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    AppIcons.Upload,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text("导出全量 JSON")
-                            }
-                            OutlinedButton(
-                                onClick = { importLauncher.launch(arrayOf("application/json", "text/*", "*/*")) },
-                                shape = RoundedCornerShape(999.dp),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Icon(
-                                    AppIcons.Download,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text("批量导入 JSON")
-                            }
+                            Text("打开数据与账号", modifier = Modifier.weight(1f))
+                            Icon(AppIcons.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
-
 
                 item(key = "about") {
                     SectionCard(title = "关于", icon = AppIcons.Info, accent = Subject408Color) {
@@ -746,81 +575,6 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
             },
             dismissButton = {
                 TextButton(onClick = { deleteSubjectCandidate = null }) { Text("取消") }
-            }
-        )
-    }
-
-    /** 注销第一步:把后果讲清楚,别用红字吓人,也别轻描淡写 */
-    if (deleteStep == 1) {
-        AlertDialog(
-            onDismissRequest = { deleteStep = 0 },
-            title = { Text("要注销账号吗?") },
-            text = {
-                Text(
-                    "服务器上的档案、计划、同步记录会一起删掉,删完就没有了。\n" +
-                        "本机上的科目、任务和专注记录都留着,不影响你继续用。"
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { deleteStep = 2 }) {
-                    Text("继续", color = MaterialTheme.colorScheme.error)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteStep = 0 }) { Text("算了") }
-            }
-        )
-    }
-
-    /** 注销第二步:用户名 + 密码都对了服务端才认,这也是唯一的身份核验 */
-    if (deleteStep == 2) {
-        AlertDialog(
-            onDismissRequest = { deleteStep = 0 },
-            title = { Text("最后确认一次") },
-            text = {
-                Column {
-                    Text(
-                        "输入用户名和密码,确认是你本人操作。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = deleteConfirmName,
-                        onValueChange = { deleteConfirmName = it },
-                        label = { Text("用户名") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = deletePassword,
-                        onValueChange = { deletePassword = it },
-                        label = { Text("密码") },
-                        singleLine = true,
-                        visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        val name = deleteConfirmName
-                        val pwd = deletePassword
-                        deleteStep = 0
-                        vm.deleteAccount(name, pwd) { ok, message ->
-                            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                            // 成功时 VM 已清本地凭证,authState 翻 false 会自动退回登录页,
-                            // 这里不用再手动导航;失败就留在原地,账号还是他的
-                            if (!ok) deleteStep = 2
-                        }
-                    },
-                    enabled = deleteConfirmName.isNotBlank() && deletePassword.isNotEmpty()
-                ) { Text("注销账号", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteStep = 0 }) { Text("取消") }
             }
         )
     }
@@ -879,6 +633,77 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
             onDismiss = { showPomodoroGoalEditor = false }
         )
     }
+    }
+}
+
+/**
+ * 同步状态卡:一张卡承载全部同步感知,用户不必进入任何页面就知道数据是否安全。
+ * 未登录 → 说明数据只在本机 + 登录入口;已登录 → 三态(运行中/成功/失败)。
+ * 服务器地址、同步频率等实现细节不在本卡出现。
+ */
+@Composable
+private fun SyncStatusCard(
+    loggedIn: Boolean,
+    username: String,
+    lastSyncAt: Long,
+    sync: com.yanzhong.app.data.remote.SyncState,
+    onLogin: () -> Unit,
+    onSyncNow: () -> Unit
+) {
+    val statusText = when {
+        sync.running -> "正在同步…"
+        sync.lastError != null -> "同步遇到问题"
+        else -> "已同步 · ${formatSyncTime(lastSyncAt, TimeUtils.now())}"
+    }
+    SectionCard(
+        title = if (loggedIn) "自动同步已开启" else "数据只保存在本机",
+        subtitle = if (loggedIn) (username.ifBlank { "已登录" }) else null,
+        icon = AppIcons.CloudUpload,
+        accent = MintGreen
+    ) {
+        Column(Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    statusText,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                if (loggedIn) {
+                    TextButton(
+                        onClick = onSyncNow,
+                        enabled = !sync.running
+                    ) { Text(if (sync.lastError != null) "重试" else "立即同步") }
+                }
+            }
+            if (sync.lastError != null) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    readableSyncError(sync.lastError),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = CoralRedDeep
+                )
+            }
+            if (!loggedIn) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "登录后自动同步，换设备或重装可恢复。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = onLogin,
+                    shape = RoundedCornerShape(999.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("登录并开启同步") }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "不登录也可以正常使用，数据不会丢失。",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
     }
 }
 
