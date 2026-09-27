@@ -59,6 +59,9 @@ class DataSyncer(private val app: YanZhongApp) {
             scope.launch { syncOnce() }, // 登录后首拉:云端他端改动全量落本机
             scope.launch {
                 // 新设备首拉设置:从未推送过(无水位)时才拉,老设备本地为准
+                // 先校验水位归属(换号会清 SETTINGS_SYNC_KEY),再判断;
+                // 否则可能与 syncOnce() 并发读到上一账号的水位而漏拉本账号设置
+                ensureWatermarkOwner()
                 if (prefs.getLong(SETTINGS_SYNC_KEY, 0L) == 0L) pullSettingsOnce()
             },
             scope.launch {
