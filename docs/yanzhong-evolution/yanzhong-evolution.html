@@ -384,9 +384,9 @@
           <p class="kicker">产品与技术演进方案</p>
           <h1>研钟：从个人考研工具到 AI 备考管家</h1>
           <p class="report-intro__summary">
-            服务端已经上线腾讯云并验证在线，账号体系、多端同步、专注守护、管理后台与发版管线这套多用户地基全部就绪，当前的缺口集中在"目标与计划"这一层数据模型、AI 服务层与个人界面。本方案给出四期演进路线：补完地基并完成产品化，再接入 AI 计划与周期报告，以考研为滩头市场，逐步开放给所有备考者。
+            服务端已经上线腾讯云并验证在线，账号体系、多端同步、专注守护、管理后台与发版管线这套多用户地基全部就绪。Phase 0 的七项任务已全部完成代码闭环并入库——计划数据模型、五题问卷、规则版计划生成、个人界面重构与合规收尾均通过本地验收（服务端 62/62 测试、API 冒烟 21/21、Android 单测全过）。Phase 1 的四大件（计划投影、首页今日节奏、离线周报、账号隔离）代码也已落地工作区，只差回归验收与提交。剩余缺口收窄为三件事：线上发布动作（备份演练、域名 HTTPS、线上冒烟）、Phase 1 验收入库，以及 Phase 2 的 AI 服务层。本方案给出四期演进路线：完成发布验收与产品化，再接入 AI 计划与周期报告，以考研为滩头市场，逐步开放给所有备考者。
           </p>
-          <p class="report-intro__meta">依据：研钟代码库现状、线上服务验证与既定工程约定 · v1.1 · 2026-09-25（v1.1 更新：服务端已上线腾讯云）</p>
+          <p class="report-intro__meta">依据：研钟代码库现状、线上服务验证与既定工程约定 · v1.2 · 2026-09-27（v1.2 更新：Phase 0 七任务代码闭环入库；经代码核查，Phase 1 四大件已实施于工作区，待回归验收入库）</p>
         </div>
       </div>
     </header>
@@ -463,8 +463,8 @@
                 </tr>
                 <tr>
                   <td>备考档案与计划数据模型（考什么、哪天考、每天多久）</td>
-                  <td>整个演进方案的地基，AI 生成计划的输入</td>
-                  <td><span class="tag tag--new">待新建</span></td>
+                  <td>整个演进方案的地基，AI 生成计划的输入——user_profiles 与 plans/plan_stages/plan_items 已落地</td>
+                  <td><span class="tag tag--ok">已建成</span></td>
                 </tr>
                 <tr>
                   <td>AI 服务层（计划生成、周期报告）</td>
@@ -473,8 +473,8 @@
                 </tr>
                 <tr>
                   <td>个人界面（学习档案视角）</td>
-                  <td>现在仍是单机思维的设置页，需重写</td>
-                  <td><span class="tag tag--new">待新建</span></td>
+                  <td>MineScreen 已按学习档案、账号与安全、偏好设置三区块重写，LearningProfile 聚合统一 valid 口径</td>
+                  <td><span class="tag tag--ok">已重构</span></td>
                 </tr>
                 <tr>
                   <td>服务器部署</td>
@@ -483,8 +483,8 @@
                 </tr>
                 <tr>
                   <td>合规页面（隐私政策、用户协议）</td>
-                  <td>公开注册的硬性前提</td>
-                  <td><span class="tag tag--new">待新建</span></td>
+                  <td>公开注册的硬性前提——terms/privacy 静态页已上线，注册携带协议同意，导出与注销已接入"我的"页</td>
+                  <td><span class="tag tag--ok">已上线</span></td>
                 </tr>
               </tbody>
             </table>
@@ -608,26 +608,27 @@
           <div class="roadmap">
             <div class="phase">
               <h3>Phase 0 · 地基</h3>
-              <p class="meta">约两周 · 让陌生人能完整用起来 · 代码与内测准备已完成</p>
+              <p class="meta">约两周 · 让陌生人能完整用起来 · 代码闭环已完成并入库，线上发布待验收</p>
               <ul>
                 <li>服务器迁移：已完成——腾讯云 IP+HTTP 内测；域名、HTTPS 与公网明文撤销待执行</li>
                 <li>服务端已提供 `/profile`、计划生成与 active plan 接口；客户端问卷、登录后网关与服务端计划展示已接入</li>
                 <li>新用户计划：规则版按考试日期生成基础、强化、冲刺阶段；本地 468 天计划作为离线与失败兜底</li>
                 <li>隐私政策、用户协议、数据导出、账号注销、MySQL 备份与恢复演练脚本已完成</li>
               </ul>
-              <div class="done"><b>当前完成标志</b>　陌生人流程的代码闭环已具备；线上域名切换、真实恢复演练和 Android Debug 构建验收仍是发布前门槛。</div>
+              <div class="done"><b>当前完成标志</b>　七项任务全部完成并按六个逻辑提交入库：服务端 62/62 测试、本地 API 冒烟 21/21、Android 编译、Debug APK 与 IDEA 单测全部通过。发布前只剩线上清单——备份执行与真实恢复演练、DNS 加 Caddy 加 HTTPS 切换、线上鉴权冒烟与 APK 重发（见 phase0-verification.md 发布前顺序）。</div>
             </div>
             <div class="phase">
               <h3>Phase 1 · 产品化</h3>
-              <p class="meta">约三到四周 · 不接 AI，产品对陌生人已有完整价值</p>
+              <p class="meta">约三到四周 · 不接 AI，产品对陌生人已有完整价值 · 四大件代码已落地工作区，待回归验收入库</p>
               <ul>
-                <li>计划模板引擎（规则版）：按考试日期倒推基础、强化、冲刺三阶段，按每日时长配任务量</li>
-                <li>计划落到 subjects/tasks，首页今日节奏卡直接吃上这条链路</li>
-                <li>"我的"页三区块改造：学习档案、账号与安全、偏好设置</li>
-                <li>规则版周报：从 sessions 统计生成结构化周报页</li>
-                <li>专注接力产品化：给主机/从机跟随机制起名、加新手引导</li>
+                <li>计划模板整理与回归保护：生成器已在 Phase 0 落地，本期锁定阶段边界、科目轮转与确定性输出</li>
+                <li>计划投影：PlanProjector 幂等落地为本地任务（不进墓碑同步），已接入 StudyRepository 刷新链路，Room v7 迁移就位</li>
+                <li>首页今日节奏：TodayPlanSummary 按服务端计划任务聚合，HomeViewModel 已接入，无计划时回退本地逻辑</li>
+                <li>离线规则周报：WeeklyReport 只统计 valid 会话，StatsViewModel 已接入</li>
+                <li>"我的"页三区块改造：学习档案、账号与安全、偏好设置——已提前完成并通过单测验收</li>
+                <li>专注接力产品化：已命名"专注接力"——云同步页区块改名并加首次玩法引导（三步说明，已读仅记设备本地，"玩法说明"可重看），专注页跟随按钮升级为"接力跟随"</li>
               </ul>
-              <div class="done"><b>完成标志</b>　不接任何大模型，一个新用户从注册到周报的完整体验已经成立。</div>
+              <div class="done"><b>当前状态</b>　六大新测试文件（投影/今日摘要/周报/来源字段/同步边界/学习档案）随代码就位，Kotlin 编译通过，但全部改动尚未提交、未跑全量回归、无验收记录。完成标志不变：一个新用户从注册到周报的完整体验成立。</div>
             </div>
             <div class="phase">
               <h3>Phase 2 · 智能化</h3>
@@ -894,13 +895,13 @@ flowchart LR
               <tbody>
                 <tr>
                   <td>schema.prisma 新表</td>
-                  <td>user_profiles、plans、plan_stages、plan_items、ai_usage_logs</td>
+                  <td>user_profiles、plans、plan_stages、plan_items 已落地（users 增协议同意时间戳）；ai_usage_logs 待 Phase 2</td>
                   <td>计划类资源服务端权威：不参与墓碑同步，沿用 updated_at 与 user_guid 隔离</td>
                 </tr>
                 <tr>
                   <td>新路由</td>
-                  <td>/onboarding、/plan、/plan/generate、/report</td>
-                  <td>挂现有鉴权与限流中间件，沿用模块化目录（新增 plan 与 ai 两个模块）</td>
+                  <td>/profile、/plans/generate 与 active plan 已上线；/report 待 Phase 1 周报</td>
+                  <td>挂现有鉴权与限流中间件，沿用模块化目录（新增 planning 模块，planChanged WebSocket 广播多端免手动下拉）</td>
                 </tr>
                 <tr>
                   <td>AI 网关</td>
@@ -929,27 +930,27 @@ flowchart LR
                 <tr>
                   <td>OnboardingScreen</td>
                   <td>登录后首次进入，五题问卷</td>
-                  <td>新增于 ui/，档案存服务端随账号走</td>
+                  <td>已落地 ui/onboarding/ 问卷与状态机，MainActivity 登录 + 档案两道门</td>
                 </tr>
                 <tr>
                   <td>PlanScreen 改造</td>
                   <td>阶段视图与任务模板渲染，支持手动调整与重新生成</td>
-                  <td>现有 ui/plan 重写数据层，界面骨架可留</td>
+                  <td>服务端计划展示已接入（离线回退 468 天计划）；PlanProjector 投影为本地任务已落地，待回归验收</td>
                 </tr>
                 <tr>
                   <td>MineScreen 重写</td>
                   <td>学习档案、账号与安全、偏好三区块</td>
-                  <td>档案区数据来自 sessions 与统计查询，与统计页同源</td>
+                  <td>已落地并过单测验收：档案区数据来自 sessions 与 LearningProfile，与统计页同源</td>
                 </tr>
                 <tr>
                   <td>报告页</td>
                   <td>周报月报渲染结构化 AI 输出</td>
-                  <td>月度复盘已有本地表，报告在其上叠加</td>
+                  <td>月度复盘已有本地表，报告在其上叠加；规则版周报先行</td>
                 </tr>
                 <tr>
                   <td>同步扩展</td>
-                  <td>计划资源以"仅拉取"接入 DataSyncer</td>
-                  <td>按既有 RESOURCES 注册模式扩展一个拉取分支，dirty 机制不启用</td>
+                  <td>计划由独立投影器幂等落地为本地任务，不进入墓碑同步协议</td>
+                  <td>避免与 clientGuid 协议互相污染；计划任务不产生 dirty 标记，本地执行状态与计划元数据分离</td>
                 </tr>
               </tbody>
             </table>
@@ -966,7 +967,7 @@ flowchart LR
           </p>
           <ul>
             <li><strong>AI 成本</strong>按低频场景设计（计划生成月级、报告周级），配额表加已有限流兜底；在拿到真实用户之前不为峰值买单。</li>
-            <li><strong>数据安全</strong>优先级高于一切新功能——服务器已上线而每日备份还没有配置，这是眼下第一笔运维债：在服务器加 cron 每日 mysqldump（命令见 deploy.md 第九节，并先做一次恢复演练），再把导出通道（exportBackup 已有）在界面上露出来。用户的学习记录是不可再生数据。</li>
+            <li><strong>数据安全</strong>优先级高于一切新功能——备份与恢复脚本已备好（server/scripts/，命令见 deploy.md 第九节），但服务器上的每日 cron 与真实恢复演练还没有执行，这仍是第一笔运维债：按发布前顺序先做一次备份与演练，导出通道（exportBackup）已在"我的"页落地。用户的学习记录是不可再生数据。</li>
             <li><strong>明文 HTTP</strong>是内测期的临时状态——登录密码与 JWT 在链路上可被嗅探，完成域名加 HTTPS 切换（deploy.md 第八节）之前不公开分发 APK。</li>
             <li><strong>合规</strong>是公开注册的分水岭：隐私政策、用户协议、账号注销、数据导出，应用商店上架的硬性要求，Phase 0 一次做掉，比事后补便宜得多。</li>
           </ul>
@@ -981,32 +982,32 @@ flowchart LR
             <b>原 Step 1（服务端定新家）已完成</b>　腾讯云上线、公网健康检查通过、客户端默认地址已切换、/admin 管理后台与一键发版管线就绪。下面从新的 Step 1 继续。
           </div>
           <p>
-            前四步按顺序推进，每一步都有独立的验证方式；做完它们，一个陌生用户就能把研钟当产品用起来。第五步是公开注册前的收尾闸门。
+            五个步骤的代码工作已于 2026-09-26 全部完成并按六个逻辑提交入库。剩下的是两段有现成清单的路：发布前线上动作（见 phase0-verification.md 发布前顺序），以及 Phase 1 已落地代码的回归验收与提交（PlanProjector、今日节奏、周报、账号隔离与配套测试均在工作区）。
           </p>
           <div class="stepcard">
             <div class="stepcard__head"><span class="n">Step 1</span><h3>建计划数据模型</h3></div>
             <p>schema.prisma 增加用户档案与计划资源，计划类资源服务端权威、不进墓碑同步，避免与 clientGuid 协议互相污染。服务器更新按 deploy.md：git pull 后 docker compose up -d --build，启动命令会自动同步表结构。</p>
-            <p class="verify"><b>验证</b>服务端测试 60/60 通过，Prisma schema 校验通过；线上 API 冒烟仍待部署环境。</p>
+            <p class="verify"><b>验证</b>服务端测试 62/62 通过，Prisma schema 校验通过；本地 API 冒烟 21/21 覆盖注册同意、档案读写与计划生成，线上冒烟随发布清单执行。</p>
           </div>
           <div class="stepcard">
             <div class="stepcard__head"><span class="n">Step 2</span><h3>问卷与备考档案</h3></div>
             <p>/profile 接口加客户端 OnboardingScreen，两步问卷收集目标、日期、时长、学习时段、基础与薄弱科目，档案存服务端。</p>
-            <p class="verify"><b>验证</b>客户端登录后按档案状态进入问卷或主界面；多设备一致性待线上 API 冒烟。</p>
+            <p class="verify"><b>验证</b>登录后按档案状态进入问卷或主界面已实现，冒烟覆盖注册同意与档案读写；多设备一致性随线上冒烟验证。</p>
           </div>
           <div class="stepcard">
             <div class="stepcard__head"><span class="n">Step 3</span><h3>规则版计划生成</h3></div>
             <p>服务端倒推基础、强化、冲刺三阶段与每日计划项，独立存储于 plans/plan_stages/plan_items，不写回 subjects/tasks，避免污染现有同步协议。</p>
-            <p class="verify"><b>验证</b>规则生成器边界、预算、弱科覆盖、确定性及事务回滚测试通过；客户端 active plan 展示已接入。</p>
+            <p class="verify"><b>验证</b>规则生成器边界、预算、弱科覆盖、确定性及事务回滚测试通过；客户端 active plan 展示已接入，离线回退本地 468 天计划。</p>
           </div>
           <div class="stepcard">
             <div class="stepcard__head"><span class="n">Step 4</span><h3>个人界面重构</h3></div>
             <p>MineScreen 按三区块重写，先做学习档案区的数据查询（总时长、连续天数、科目分布、效率节律）。</p>
-            <p class="verify"><b>验证</b>档案区数字与统计页完全一致，多设备显示无差异。</p>
+            <p class="verify"><b>验证</b>MineScreen 已按学习档案、账号与安全、偏好三区块重写，LearningProfile 聚合统一 valid 口径，IDEA 单测全部通过；多设备显示无差异随线上冒烟确认。</p>
           </div>
           <div class="stepcard">
             <div class="stepcard__head"><span class="n">Step 5</span><h3>上线前收尾</h3></div>
             <p>服务器加 cron 每日 mysqldump 备份（命令见 deploy.md）；隐私政策与用户协议页面已挂进注册流程；域名与 HTTPS 切换按 rollout checklist 执行。</p>
-            <p class="verify"><b>验证</b>备份与恢复脚本语法通过，协议确认已覆盖；真实恢复演练与线上 HTTPS 验证仍是发布前门槛。</p>
+            <p class="verify"><b>验证</b>备份与恢复脚本、Caddy 模板、协议页面与注销/导出已入库，脚本语法通过；真实恢复演练与线上 HTTPS 验证仍是发布前门槛。</p>
           </div>
         </section>
       </main>
@@ -1018,7 +1019,7 @@ flowchart LR
             <li id="cite-1">研钟代码库、server/docs/deploy.md 部署文档与 2026-09-25 线上服务验证：本文对已实现能力（鉴权与令牌轮换、七资源增量同步、WebSocket 状态广播、学霸模式、月度复盘、更新分发、管理后台与发版管线）的盘点依据。</li>
             <li id="cite-2">扇贝考研、番茄ToDo 的公开产品形态（一般性产品认知，未做本轮联网核实，仅作定位方向参照）。</li>
           </ol>
-          <p class="colophon">研钟 · 产品演进方案 v1.1 · 2026-09-25 · v1.1 修订：服务端已上线腾讯云，资产盘点、路线图与执行步骤同步更新 · 实施时以仓库实际约定为准</p>
+          <p class="colophon">研钟 · 产品演进方案 v1.2 · 2026-09-27 · v1.2 修订：Phase 0 七任务代码闭环入库；经代码核查 Phase 1 四大件已实施于工作区（未提交、待回归验收）· 实施时以仓库实际约定为准</p>
         </div>
       </footer>
     </div>
