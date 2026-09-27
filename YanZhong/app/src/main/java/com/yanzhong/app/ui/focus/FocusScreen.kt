@@ -177,13 +177,39 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
             Spacer(Modifier.height(16.dp))
         }
 
+        if (state.todayTasks.isNotEmpty()) {
+            Text(
+                "从今日待办开始",
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            Spacer(Modifier.height(8.dp))
+            state.todayTasks.forEach { task ->
+                val subject = state.subjects.firstOrNull { it.id == task.subjectId }
+                TaskPickRow(
+                    title = task.title,
+                    subjectName = subject?.name ?: "未分类",
+                    subjectColor = subject?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.primary,
+                    onClick = {
+                        when (mode) {
+                            TimerMode.POMODORO -> vm.startForTask(task)
+                            TimerMode.STOPWATCH -> vm.startForTaskStopwatch(task)
+                            TimerMode.COUNTDOWN -> vm.startForTaskCountdown(task, countdownMin)
+                        }
+                    }
+                )
+                Spacer(Modifier.height(12.dp))
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+
         // 三种计时模式(参考番茄ToDo):番茄钟 / 正计时 / 倒计时
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             ModeChip("番茄钟", mode == TimerMode.POMODORO) { mode = TimerMode.POMODORO }
             ModeChip("正计时", mode == TimerMode.STOPWATCH) { mode = TimerMode.STOPWATCH }
             ModeChip("倒计时", mode == TimerMode.COUNTDOWN) { mode = TimerMode.COUNTDOWN }
         }
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(8.dp))
 
         if (mode == TimerMode.POMODORO) {
             Text(
@@ -206,21 +232,6 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
                     )
                 }
             }
-            Spacer(Modifier.height(16.dp))
-
-            SettingSwitchRow(
-                title = "自动串联",
-                subtitle = "休息结束自动开始下一个番茄",
-                checked = state.settings.autoChain,
-                onChange = { vm.toggleAutoChain(it) }
-            )
-            Spacer(Modifier.height(8.dp))
-            SettingSwitchRow(
-                title = "连续专注",
-                subtitle = "跳过休息,继续专注",
-                checked = state.settings.continuousFocus,
-                onChange = { vm.toggleContinuous(it) }
-            )
             Spacer(Modifier.height(16.dp))
 
             Button(
@@ -304,31 +315,43 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
             Spacer(Modifier.height(20.dp))
         }
 
-        if (state.todayTasks.isNotEmpty()) {
-            Text(
-                "从今日待办开始",
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.align(Alignment.Start)
-            )
-            Spacer(Modifier.height(8.dp))
-            state.todayTasks.forEach { task ->
-                val subject = state.subjects.firstOrNull { it.id == task.subjectId }
-                TaskPickRow(
-                    title = task.title,
-                    subjectName = subject?.name ?: "未分类",
-                    subjectColor = subject?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.primary,
-                    onClick = {
-                        when (mode) {
-                            TimerMode.POMODORO -> vm.startForTask(task)
-                            TimerMode.STOPWATCH -> vm.startForTaskStopwatch(task)
-                            TimerMode.COUNTDOWN -> vm.startForTaskCountdown(task, countdownMin)
-                        }
-                    }
-                )
-                Spacer(Modifier.height(12.dp))
+        // 更多设置:默认收起,降低首屏密度;与模式无关的开关集中在此
+        var moreExpanded by remember { mutableStateOf(false) }
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { moreExpanded = !moreExpanded },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("更多设置", modifier = Modifier.weight(1f))
+                    Icon(
+                        if (moreExpanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
+                        contentDescription = null
+                    )
+                }
+                if (moreExpanded) {
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitchRow(
+                        title = "自动串联",
+                        subtitle = "休息结束自动开始下一个番茄",
+                        checked = state.settings.autoChain,
+                        onChange = { vm.toggleAutoChain(it) }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    SettingSwitchRow(
+                        title = "连续专注",
+                        subtitle = "跳过休息,继续专注",
+                        checked = state.settings.continuousFocus,
+                        onChange = { vm.toggleContinuous(it) }
+                    )
+                }
             }
-            Spacer(Modifier.height(24.dp))
         }
+        Spacer(Modifier.height(20.dp))
     }
 }
 
@@ -796,7 +819,7 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
                 if (strictFocus) showEmergencyExit = true else showAbandonConfirm = true
             }) {
                 Text(
-                    "紧急退出 · 本月剩 $quotaLeft 次",
+                    if (strictFocus) "紧急退出 · 本月剩 $quotaLeft 次" else "结束专注",
                     color = MaterialTheme.colorScheme.error
                 )
             }
@@ -841,13 +864,10 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
         val reasons = listOf("被打断", "临时有事", "状态不好", "不想学了")
         AlertDialog(
             onDismissRequest = { showAbandonConfirm = false },
-            title = { Text("紧急退出本次专注?") },
+            title = { Text("结束本次专注？") },
             text = {
                 Column {
-                    Text(
-                        "紧急退出每月只有 ${AppSettings.EMERGENCY_EXIT_QUOTA} 次机会,本次将消耗 1 次(本月剩 $quotaLeft 次)。" +
-                            "已专注的时长会记为中断,不计入统计。"
-                    )
+                    Text("已专注的时长会记为中断,不计入统计。")
                     Spacer(Modifier.height(12.dp))
                     reasons.forEach { r ->
                         FilterChip(
@@ -908,7 +928,7 @@ private fun EmergencyExitDialog(
         text = {
             Column {
                 Text(
-                    "输入 6 位紧急退出密码强制结束本次专注,消耗 1 次月度配额(本月剩 $quotaLeft 次)。" +
+                    "输入 6 位紧急退出密码强制结束本次专注,消耗 1 次月度配额(本月紧急退出剩余 $quotaLeft 次)。" +
                         "系统会记录此次非正常退出,并体现在专注数据报告中。",
                     style = MaterialTheme.typography.bodyMedium
                 )
