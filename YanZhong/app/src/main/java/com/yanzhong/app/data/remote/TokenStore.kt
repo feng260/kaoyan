@@ -14,7 +14,7 @@ import java.util.UUID
 private val Context.cloudStore by preferencesDataStore("cloud_sync")
 
 /**
- * 云同步凭证(DataStore):access/refresh token、设备 UUID、服务器地址、上次同步时间。
+ * 云同步凭证(DataStore):access/refresh token、设备 UUID、服务器地址、上次同步时间、账号用户名。
  * deviceGuid 首次生成后持久,服务端按其幂等登记设备。
  */
 object TokenStore {
