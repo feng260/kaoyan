@@ -69,17 +69,31 @@ fun StatsScreen(padding: PaddingValues) {
         }
 
         item {
-            Row(
-                modifier = Modifier.horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                StatsRange.entries.forEach { range ->
-                    FilterChip(
-                        selected = state.range == range,
-                        onClick = { vm.selectRange(range) },
-                        label = { Text(range.label) }
-                    )
+            Column {
+                Text(
+                    "小结范围",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    StatsRange.entries.forEach { range ->
+                        FilterChip(
+                            selected = state.range == range,
+                            onClick = { vm.selectRange(range) },
+                            label = { Text(range.label) }
+                        )
+                    }
                 }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "筛选作用于上方小结与科目占比；下方长期图表各自标注统计窗口。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
@@ -120,8 +134,16 @@ fun StatsScreen(padding: PaddingValues) {
             }
         }
 
+        item(key = "trend-heading") {
+            Text(
+                "长期趋势（不随小结范围变化）",
+                style = MaterialTheme.typography.headlineMedium,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+
         item {
-            ChartCard(title = "近 14 天净专注趋势") {
+            ChartCard(title = "净专注趋势 · 近 14 天") {
                 TrendLineChart(trend = state.trend)
             }
         }
@@ -368,7 +390,7 @@ private fun ChartCard(title: String, content: @Composable () -> Unit) {
 /** 累计纪录卡:最长单次 / 最佳单日 / 日均 / 累计天数(参考番茄ToDo 累计统计) */
 @Composable
 private fun RecordsCard(records: FocusRecords) {
-    ChartCard(title = "专注纪录 · 累计") {
+    ChartCard(title = "累计纪录") {
         if (records.activeDays == 0) {
             EmptyState(
                 icon = AppIcons.Trophy,
