@@ -65,6 +65,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.prefs.PomodoroPlan
+import com.yanzhong.app.data.stats.LearningProfile
+import com.yanzhong.app.util.TimeUtils
 import com.yanzhong.app.data.prefs.ThemeMode
 import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.ui.theme.AmberGold
@@ -213,8 +215,8 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                     }
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PillTag(text = "共专注 ${state.focusDays} 天", icon = AppIcons.Flame)
-                        PillTag(text = "连续打卡 ${state.streak} 天", icon = AppIcons.TrendingUp)
+                        PillTag(text = "共专注 ${state.learningProfile.activeDays} 天", icon = AppIcons.Flame)
+                        PillTag(text = "连续打卡 ${state.learningProfile.streakDays} 天", icon = AppIcons.TrendingUp)
                     }
                 }
             // 头部底部多留 28dp 夜空,供面板圆角压边
@@ -275,6 +277,92 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                             navController.navigate(Routes.SUPERMODE) { launchSingleTop = true }
                         }
                     }
+                }
+
+                item(key = "learning-profile") {
+                    LearningProfileCard(state.learningProfile)
+                }
+
+                item(key = "account-heading") {
+                    SectionHeading("账号与安全")
+                }
+
+                item(key = "account") {
+                    SectionCard(
+                        title = "账号与安全",
+                        subtitle = "你在服务器上存了什么、怎么拿走、怎么删干净",
+                        icon = AppIcons.Shield,
+                        accent = MintGreen
+                    ) {
+                        com.yanzhong.app.ui.legal.PolicyLinksRow(
+                            prefix = "我们对数据的承诺写在",
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            "导出账号数据",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "把服务器上属于你的那份存档取回来。和上面「导出全量 JSON」不同:" +
+                                "那份是本机库,这份含别的设备同步上去、本机还没拉下来的记录。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = { exportAccountLauncher.launch("yanzhong-account.json") },
+                            shape = RoundedCornerShape(999.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                AppIcons.Download,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("导出服务器存档")
+                        }
+                        Spacer(Modifier.height(18.dp))
+                        Text(
+                            "注销账号",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "服务器会删掉你的档案、计划与同步记录,删完就找不回来了。" +
+                                "本机上的学习数据不受影响,想留个底可以先导出。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(
+                            onClick = {
+                                deleteConfirmName = ""
+                                deletePassword = ""
+                                deleteStep = 1
+                            },
+                            shape = RoundedCornerShape(999.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                AppIcons.Delete,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("注销账号", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+
+                item(key = "preferences-heading") {
+                    SectionHeading("偏好设置")
                 }
 
                 item(key = "theme") {
@@ -488,6 +576,10 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                     }
                 }
 
+                item(key = "data-heading") {
+                    SectionHeading("数据与其他")
+                }
+
                 item(key = "subjects") {
                     SectionCard(title = "科目管理", icon = AppIcons.GraduationCap, accent = MathColor) {
                         state.subjects.forEachIndexed { index, subject ->
@@ -621,82 +713,6 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                     }
                 }
 
-                item(key = "account") {
-                    SectionCard(
-                        title = "账号与安全",
-                        subtitle = "你在服务器上存了什么、怎么拿走、怎么删干净",
-                        icon = AppIcons.Shield,
-                        accent = MintGreen
-                    ) {
-                        // 政策原文放服务端,点开走系统浏览器——能收藏、能转发,改版也只需改服务端
-                        com.yanzhong.app.ui.legal.PolicyLinksRow(
-                            prefix = "我们对数据的承诺写在",
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(14.dp))
-
-                        Text(
-                            "导出账号数据",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "把服务器上属于你的那份存档取回来。和上面「导出全量 JSON」不同:" +
-                                "那份是本机库,这份含别的设备同步上去、本机还没拉下来的记录。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = { exportAccountLauncher.launch("yanzhong-account.json") },
-                            shape = RoundedCornerShape(999.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                AppIcons.Download,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("导出服务器存档")
-                        }
-
-                        Spacer(Modifier.height(18.dp))
-                        Text(
-                            "注销账号",
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "服务器会删掉你的档案、计划与同步记录,删完就找不回来了。" +
-                                "本机上的学习数据不受影响,想留个底可以先导出。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedButton(
-                            onClick = {
-                                deleteConfirmName = ""
-                                deletePassword = ""
-                                deleteStep = 1
-                            },
-                            shape = RoundedCornerShape(999.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.6f)),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                AppIcons.Delete,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.error
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("注销账号", color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                }
 
                 item(key = "about") {
                     SectionCard(title = "关于", icon = AppIcons.Info, accent = Subject408Color) {
@@ -863,6 +879,93 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
             onDismiss = { showPomodoroGoalEditor = false }
         )
     }
+    }
+}
+
+@Composable
+private fun SectionHeading(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleMedium,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
+    )
+}
+
+@Composable
+private fun LearningProfileCard(profile: LearningProfile) {
+    SectionCard(title = "学习档案", icon = AppIcons.TrendingUp, accent = SkyBlue) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ProfileMetric("累计专注", TimeUtils.formatHours(profile.totalFocusMin), Modifier.weight(1f))
+            ProfileMetric("活跃天数", "${profile.activeDays} 天", Modifier.weight(1f))
+            ProfileMetric("连续打卡", "${profile.streakDays} 天", Modifier.weight(1f))
+            ProfileMetric(
+                "峰值时段",
+                profile.peakHour?.let { "${it}:00" } ?: "暂无",
+                Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(16.dp))
+        Text("科目投入", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        if (profile.perSubject.isEmpty()) {
+            Text(
+                "暂无科目投入",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            profile.perSubject.take(3).forEach { subject ->
+                Row(
+                    Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        Modifier.size(10.dp).clip(CircleShape).background(Color(subject.colorArgb))
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(subject.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        TimeUtils.formatHours(subject.totalFocusMin),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Text("最近 7 天", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+            profile.recentDaily.forEach { day ->
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        "${day.date.monthValue}/${day.date.dayOfMonth}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "${day.totalFocusMin}m",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileMetric(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier) {
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 

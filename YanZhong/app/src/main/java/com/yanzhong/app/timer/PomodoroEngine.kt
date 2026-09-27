@@ -667,10 +667,12 @@ class PomodoroEngine(
 }
 
 /** 连续打卡天数:从今天(或昨天)往前数有有效番茄的日子 */
-fun streakDays(activeDays: List<String>): Int {
+fun streakDays(
+    activeDays: List<String>,
+    today: LocalDate = LocalDate.now(ZoneId.systemDefault())
+): Int {
     if (activeDays.isEmpty()) return 0
     val set = activeDays.toSet()
-    val today = LocalDate.now(ZoneId.systemDefault())
     var day = when {
         set.contains(today.toString()) -> today
         set.contains(today.minusDays(1).toString()) -> today.minusDays(1)

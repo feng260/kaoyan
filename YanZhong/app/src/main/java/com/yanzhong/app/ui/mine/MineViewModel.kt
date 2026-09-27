@@ -6,13 +6,17 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.db.SubjectEntity
+import com.yanzhong.app.data.stats.LearningProfile
+import com.yanzhong.app.data.stats.buildLearningProfile
 import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.data.prefs.PomodoroPlan
 import com.yanzhong.app.data.remote.ApiClient
 import com.yanzhong.app.data.remote.DeleteAccountReq
 import com.yanzhong.app.data.remote.TokenStore
 import com.yanzhong.app.data.repo.ExportPayload
-import com.yanzhong.app.timer.streakDays
+import com.yanzhong.app.util.TimeUtils
+import java.time.Instant
+import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -27,7 +31,8 @@ data class MineUiState(
     val settings: AppSettings = AppSettings(),
     val subjects: List<SubjectEntity> = emptyList(),
     val focusDays: Int = 0,
-    val streak: Int = 0
+    val streak: Int = 0,
+    val learningProfile: LearningProfile = LearningProfile()
 )
 
 class MineViewModel(app: Application) : AndroidViewModel(app) {
@@ -38,13 +43,20 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
     val uiState: StateFlow<MineUiState> = combine(
         settingsRepo.settings,
         repo.observeSubjects(),
-        repo.observeActiveDays(0)
-    ) { settings, subjects, activeDays ->
+        repo.observeSessions()
+    ) { settings, subjects, sessions ->
+        val profile = buildLearningProfile(
+            sessions = sessions,
+            subjects = subjects,
+            now = Instant.ofEpochMilli(TimeUtils.now()),
+            zone = ZoneId.systemDefault()
+        )
         MineUiState(
             settings = settings,
             subjects = subjects,
-            focusDays = activeDays.size,
-            streak = streakDays(activeDays)
+            focusDays = profile.activeDays,
+            streak = profile.streakDays,
+            learningProfile = profile
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MineUiState())
 

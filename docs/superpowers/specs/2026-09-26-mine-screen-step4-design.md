@@ -100,3 +100,12 @@ Step 4 只有在以下条件同时满足时才标记完成：
 3. 扩展 `MineUiState` 和 `MineViewModel`。
 4. 重组 `MineScreen` 三个主要区块，迁移现有控件，不改变业务行为。
 5. 运行 Android 编译和相关测试，修复回归后更新 Step 4 验收记录。
+
+## 实施记录
+
+- 实施日期：2026-09-26。
+- 已完成共享学习档案模型、有效会话聚合、连续打卡可测试日期参数、MineViewModel 状态接入和 MineScreen 分区重组。
+- 页面顺序已调整为：学习档案、账号与安全、偏好设置、数据与其他；原有账号导出、账号注销、主题、番茄方案、声音震动、专注模式、科目管理和本地备份导入行为保留。
+- `:app:compileDebugKotlin` 已通过。
+- `LearningProfileTest` 的两处错误断言已根据 IDEA 测试结果修正；用户确认修正后重新运行 `testDebugUnitTest` 全部通过。命令行 Gradle 测试 worker 仍有独立环境问题，详见 `docs/superpowers/verification/2026-09-26-mine-screen-step4-verification.md`。
+- 窄屏和大屏的模拟器/真机人工渲染检查尚未在本次命令行会话完成，待 Android Studio/IDEA 打包运行后确认。
