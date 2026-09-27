@@ -127,6 +127,8 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 TokenStore.saveAccountGuid(resp.user.guid)
                 TokenStore.saveTokens(resp.tokens.access, resp.tokens.refresh)
+                // 持久化用户名:"我的"页头部与同步卡需在重启后仍能显示账号
+                TokenStore.saveUsername(resp.user.username)
                 _ui.update { it.copy(busy = false, loggedIn = true, username = resp.user.username) }
                 refreshDevices()
             }, { e ->
