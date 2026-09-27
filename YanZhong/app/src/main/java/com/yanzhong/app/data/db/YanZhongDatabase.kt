@@ -20,7 +20,7 @@ import java.time.ZonedDateTime
         MonthlyReviewEntity::class,
         SyncTombstoneEntity::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class YanZhongDatabase : RoomDatabase() {
@@ -46,7 +46,14 @@ abstract class YanZhongDatabase : RoomDatabase() {
             YanZhongDatabase::class.java,
             "yanzhong.db"
         )
-            .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+            .addMigrations(
+                MIGRATION_1_2,
+                MIGRATION_2_3,
+                MIGRATION_3_4,
+                MIGRATION_4_5,
+                MIGRATION_5_6,
+                MIGRATION_6_7,
+            )
             .addCallback(object : Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
                     super.onCreate(db)
@@ -142,6 +149,19 @@ abstract class YanZhongDatabase : RoomDatabase() {
                         "clientGuid TEXT NOT NULL PRIMARY KEY, " +
                         "resource TEXT NOT NULL, " +
                         "deletedAt INTEGER NOT NULL)"
+                )
+            }
+        }
+
+        /** v7:计划投影来源键;存量任务保持手工任务语义。 */
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE task ADD COLUMN accountGuid TEXT")
+                db.execSQL("ALTER TABLE task ADD COLUMN planId INTEGER")
+                db.execSQL("ALTER TABLE task ADD COLUMN planItemId INTEGER")
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_task_accountGuid_planId_planItemId " +
+                        "ON task (accountGuid, planId, planItemId)"
                 )
             }
         }

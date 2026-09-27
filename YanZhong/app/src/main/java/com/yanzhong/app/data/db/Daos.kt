@@ -197,8 +197,20 @@ interface TaskDao {
     @Query("SELECT * FROM task WHERE clientGuid = :guid LIMIT 1")
     suspend fun getByClientGuid(guid: String): TaskEntity?
 
-    @Query("SELECT * FROM task WHERE dirty = 1")
+    @Query(
+        "SELECT * FROM task WHERE accountGuid = :accountGuid AND planId = :planId " +
+            "AND planItemId = :planItemId LIMIT 1"
+    )
+    suspend fun getByPlanSource(accountGuid: String, planId: Long, planItemId: Long): TaskEntity?
+
+    @Query("SELECT * FROM task WHERE dirty = 1 AND planId IS NULL")
     suspend fun getDirty(): List<TaskEntity>
+
+    @Query("DELETE FROM task WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
+
+    @Query("DELETE FROM task WHERE accountGuid = :accountGuid AND planId IS NOT NULL")
+    suspend fun deleteByPlanAccount(accountGuid: String)
 
     @Query("UPDATE task SET dirty = 0 WHERE clientGuid IN (:guids)")
     suspend fun markClean(guids: List<String>)

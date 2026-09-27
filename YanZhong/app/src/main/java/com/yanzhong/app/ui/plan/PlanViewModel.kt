@@ -60,9 +60,14 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
             _planLoading.value = true
             _planUnavailable.value = false
             try {
-                _serverPlan.value = if (TokenStore.currentAccess() == null) null
+                val accountGuid = TokenStore.currentAccountGuid()
+                val plan = if (TokenStore.currentAccess() == null || accountGuid.isNullOrBlank()) null
                 else ApiClient.api().getActivePlan().plan
-                _planUnavailable.value = _serverPlan.value == null
+                if (plan != null && accountGuid != null) {
+                    repo.applyPlanProjection(plan, accountGuid)
+                }
+                _serverPlan.value = plan
+                _planUnavailable.value = plan == null
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {

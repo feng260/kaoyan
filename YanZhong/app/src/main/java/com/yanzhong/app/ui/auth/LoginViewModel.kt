@@ -147,6 +147,11 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
                         LoginReq(username, s.password, deviceGuid, Build.MODEL ?: "Android 设备", rememberMe = true)
                     )
                 }.fold({ resp ->
+                    val previousAccount = TokenStore.currentAccountGuid()
+                    if (previousAccount != null && previousAccount != resp.user.guid) {
+                        (getApplication<com.yanzhong.app.YanZhongApp>()).repository.clearPlanProjections(previousAccount)
+                    }
+                    TokenStore.saveAccountGuid(resp.user.guid)
                     TokenStore.saveTokens(resp.tokens.access, resp.tokens.refresh)
                     _ui.update { it.copy(busy = false) }
                 }, { e ->

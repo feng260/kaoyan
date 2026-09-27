@@ -13,6 +13,9 @@ import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.data.db.TaskStatus
 import com.yanzhong.app.data.db.WeeklyReviewEntity
 import com.yanzhong.app.data.db.YanZhongDatabase
+import com.yanzhong.app.data.plan.projectPlanTasks
+import com.yanzhong.app.data.plan.resolvePlanSubjectId
+import com.yanzhong.app.data.plan.stalePlanTaskIds
 import com.yanzhong.app.data.remote.*
 import com.yanzhong.app.util.PersonalPlan
 import com.yanzhong.app.util.TimeUtils
@@ -441,6 +444,38 @@ class StudyRepository(private val db: YanZhongDatabase) {
     }
 
     suspend fun getTask(id: Long): TaskEntity? = db.taskDao().getById(id)
+
+    /** 将服务端 active plan 幂等投影为本地任务,不改写手工任务。 */
+    suspend fun applyPlanProjection(plan: PlanDto, accountGuid: String): Int {
+        val now = TimeUtils.now()
+        var count = 0
+        db.withTransaction {
+            val subjects = db.subjectDao().getAll()
+            val subjectIds = plan.items.map { it.subject }.distinct().associateWith { name ->
+                resolvePlanSubjectId(name, subjects)
+            }
+            val existing = db.taskDao().getAllTasks()
+            val projected = projectPlanTasks(
+                existing = existing,
+                plan = plan,
+                accountGuid = accountGuid,
+                subjectIds = subjectIds,
+                now = now,
+                zone = zone,
+            )
+            val staleIds = stalePlanTaskIds(existing, accountGuid, plan)
+            if (staleIds.isNotEmpty()) db.taskDao().deleteByIds(staleIds)
+            projected.filter { it.planId == plan.id && it.accountGuid == accountGuid }
+                .forEach { db.taskDao().insert(it) }
+            count = projected.count { it.planId == plan.id && it.accountGuid == accountGuid }
+        }
+        return count
+    }
+
+    /** 注销或切换账号时只清理当前账号的计划投影。 */
+    suspend fun clearPlanProjections(accountGuid: String) {
+        db.taskDao().deleteByPlanAccount(accountGuid)
+    }
 
     /** 本周(周一始)任务视图 */
     fun observeWeekView(): Flow<List<TaskEntity>> {
@@ -1045,7 +1080,11 @@ class StudyRepository(private val db: YanZhongDatabase) {
             val taskGuidToId = mutableMapOf<String, Long>()
             c.tasks.forEach { row ->
                 val local = db.taskDao().getByClientGuid(row.clientGuid)
+                val isPlanProjection = local?.planId != null
                 when {
+                    isPlanProjection -> {
+                        taskGuidToId[row.clientGuid] = local.id
+                    }
                     row.isDeleted && local != null -> {
                         db.taskDao().deleteByClientGuid(row.clientGuid)
                         applied++

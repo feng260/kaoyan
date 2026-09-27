@@ -76,7 +76,12 @@ data class CountdownNodeEntity(
 @Serializable
 @Entity(
     tableName = "task",
-    indices = [Index("subjectId"), Index("dueAt"), Index("status")]
+    indices = [
+        Index("subjectId"),
+        Index("dueAt"),
+        Index("status"),
+        Index(value = ["accountGuid", "planId", "planItemId"], unique = true),
+    ]
 )
 data class TaskEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -96,6 +101,10 @@ data class TaskEntity(
     val note: String = "",
     /** 重复模板完成时生成的当日 DONE 实例指向其模板 id,用于「今日已完成」过滤与取消勾选回滚 */
     val repeatParentId: Long? = null,
+    /** 服务端计划投影来源；手工任务三项均为空。 */
+    val accountGuid: String? = null,
+    val planId: Long? = null,
+    val planItemId: Long? = null,
     @ColumnInfo(defaultValue = "") val clientGuid: String = "",
     @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0,
     @ColumnInfo(defaultValue = "1") val dirty: Boolean = true

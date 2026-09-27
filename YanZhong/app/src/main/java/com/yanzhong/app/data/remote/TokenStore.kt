@@ -20,6 +20,7 @@ private val Context.cloudStore by preferencesDataStore("cloud_sync")
 object TokenStore {
     private val KEY_ACCESS = stringPreferencesKey("access")
     private val KEY_REFRESH = stringPreferencesKey("refresh")
+    private val KEY_ACCOUNT_GUID = stringPreferencesKey("account_guid")
     private val KEY_DEVICE_GUID = stringPreferencesKey("device_guid")
     private val KEY_SERVER = stringPreferencesKey("server_url")
     private val KEY_SERVER_VER = intPreferencesKey("server_url_ver")
@@ -39,6 +40,15 @@ object TokenStore {
 
     suspend fun currentAccess(): String? = context().cloudStore.data.first()[KEY_ACCESS]
     suspend fun currentRefresh(): String? = context().cloudStore.data.first()[KEY_REFRESH]
+    suspend fun currentAccountGuid(): String? = context().cloudStore.data.first()[KEY_ACCOUNT_GUID]
+
+    suspend fun saveAccountGuid(guid: String?) {
+        context().cloudStore.edit { prefs ->
+            if (guid.isNullOrBlank()) prefs.remove(KEY_ACCOUNT_GUID)
+            else prefs[KEY_ACCOUNT_GUID] = guid
+        }
+    }
+
     /**
      * 设备上保存的自定义服务器地址;从未保存过(或已按 [SERVER_CONFIG_VERSION] 作废旧值)返回 null。
      * 调用方应回落 [DEFAULT_SERVER_URL],统一走 effectiveServerUrl()。
@@ -100,7 +110,9 @@ object TokenStore {
 
     suspend fun clearAll() {
         context().cloudStore.edit {
-            it.remove(KEY_ACCESS); it.remove(KEY_REFRESH)
+            it.remove(KEY_ACCESS)
+            it.remove(KEY_REFRESH)
+            it.remove(KEY_ACCOUNT_GUID)
         }
     }
 }

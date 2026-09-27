@@ -62,7 +62,17 @@ data class StatsUiState(
     val abandonReasons: List<Pair<String, Int>> = emptyList(),
     val heatmap: List<DayDuration> = emptyList(),   // 近 15 周(105 天)打卡热力
     val records: FocusRecords = FocusRecords(),
-    val weekday: List<WeekdayStat> = emptyList()
+    val weekday: List<WeekdayStat> = emptyList(),
+    val weeklyReport: WeeklyReport = WeeklyReport(
+        weekStart = java.time.LocalDate.MIN,
+        dailyMinutes = List(7) { 0 },
+        totalMinutes = 0,
+        activeDays = 0,
+        subjectMinutes = emptyMap(),
+        peakHour = null,
+        goalMinutes = 0,
+        goalConfigured = false,
+    )
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -135,7 +145,17 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
         val abandoned: Int = 0,
         val abandonReasons: List<Pair<String, Int>> = emptyList(),
         val records: FocusRecords = FocusRecords(),
-        val weekday: List<WeekdayStat> = emptyList()
+        val weekday: List<WeekdayStat> = emptyList(),
+        val weekly: WeeklyReport = WeeklyReport(
+            weekStart = java.time.LocalDate.MIN,
+            dailyMinutes = List(7) { 0 },
+            totalMinutes = 0,
+            activeDays = 0,
+            subjectMinutes = emptyMap(),
+            peakHour = null,
+            goalMinutes = 0,
+            goalConfigured = false,
+        )
     )
 
     private val weekReport = combine(
@@ -160,6 +180,12 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
         val lastMonthEnd = TimeUtils.monthEndOf(monthStart - 1)
         // 累计纪录 + 周几分布(全量 valid 会话,不随 range 切换)
         val zone = ZoneId.systemDefault()
+        val weeklyReport = buildWeeklyReport(
+            sessions = sessions,
+            weekStart = Instant.ofEpochMilli(weekStart).atZone(zone).toLocalDate(),
+            goalMinutes = settings.weeklyGoalHours * 60,
+            zone = zone,
+        )
         val valid = sessions.filter { it.valid }
         val daySums = valid.groupBy { TimeUtils.dayStartOf(it.startedAt) }
             .mapValues { (_, list) -> list.sumOf { it.durationMin } }
@@ -198,7 +224,8 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
                         Instant.ofEpochMilli(it.startedAt).atZone(zone).dayOfWeek.value == wd
                     }.sumOf { it.durationMin }
                 )
-            }
+            },
+            weekly = weeklyReport
         )
     }
 
@@ -229,7 +256,8 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
             abandonReasons = report.abandonReasons,
             heatmap = ctx.heatmap,
             records = report.records,
-            weekday = report.weekday
+            weekday = report.weekday,
+            weeklyReport = report.weekly
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), StatsUiState())
 
