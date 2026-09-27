@@ -25,6 +25,7 @@ object TokenStore {
     private val KEY_SERVER = stringPreferencesKey("server_url")
     private val KEY_SERVER_VER = intPreferencesKey("server_url_ver")
     private val KEY_LAST_SYNC = longPreferencesKey("last_sync")
+    private val KEY_USERNAME = stringPreferencesKey("username")
 
     /**
      * 服务器地址配置版本:内置默认地址(DEFAULT_SERVER_URL)发生迁移时 +1。
@@ -65,6 +66,24 @@ object TokenStore {
         return null
     }
     suspend fun currentLastSync(): Long = context().cloudStore.data.first()[KEY_LAST_SYNC] ?: 0L
+
+    /** 当前账号用户名(未登录或尚未保存为 null) */
+    suspend fun currentUsername(): String? = context().cloudStore.data.first()[KEY_USERNAME]
+
+    /** 用户名(响应式):未登录时为 "" */
+    fun observeUsername(): Flow<String> =
+        context().cloudStore.data.map { it[KEY_USERNAME] ?: "" }
+
+    /** 上次成功同步时间(响应式,毫秒);从未同步为 0 */
+    fun observeLastSync(): Flow<Long> =
+        context().cloudStore.data.map { it[KEY_LAST_SYNC] ?: 0L }
+
+    /** 保存/清除用户名:传 null 或空白即清除 */
+    suspend fun saveUsername(name: String?) {
+        context().cloudStore.edit { prefs ->
+            if (name.isNullOrBlank()) prefs.remove(KEY_USERNAME) else prefs[KEY_USERNAME] = name
+        }
+    }
 
     /** 登录态(响应式):access token 存在即已登录;登录写 token/退出清 token 都会即时翻转启动门 */
     fun observeLoggedIn(): Flow<Boolean> =
@@ -113,6 +132,7 @@ object TokenStore {
             it.remove(KEY_ACCESS)
             it.remove(KEY_REFRESH)
             it.remove(KEY_ACCOUNT_GUID)
+            it.remove(KEY_USERNAME)
         }
     }
 }
