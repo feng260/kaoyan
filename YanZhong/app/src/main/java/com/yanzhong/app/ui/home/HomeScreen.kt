@@ -1,6 +1,7 @@
 package com.yanzhong.app.ui.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -162,6 +163,8 @@ fun HomeScreen(
                 segs.first().time.substringBefore("–") + "–" + segs.last().time.substringAfterLast("–")
             }
     }
+    /** 今日已完成任务 id:节奏卡概览行按任务真实完成态统计,与展开后的任务段一一对应 */
+    val doneTaskIds = remember(state.today.done) { state.today.done.map { it.id }.toSet() }
 
     LaunchedEffect(state.onboardingDone) {
         showOnboarding = !state.onboardingDone
@@ -301,7 +304,8 @@ fun HomeScreen(
                                     tpl = tpl,
                                     rows = rhythmRows,
                                     now = state.now,
-                                    focusMinutes = state.focusMinutes
+                                    focusMinutes = state.focusMinutes,
+                                    doneTaskIds = doneTaskIds
                                 )
                             }
                         }
@@ -354,7 +358,12 @@ fun HomeScreen(
                 PageHeader(
                     title = "今日",
                     subtitle = dateLabel + (state.phase?.let { " · ${it.phase.name}" } ?: "")
-                )
+                ) {
+                    TextButton(onClick = {
+                        editingTask = null
+                        showTaskEditor = true
+                    }) { Text("＋ 添加任务") }
+                }
             }
 
             item {
@@ -378,7 +387,8 @@ fun HomeScreen(
                         tpl = tpl,
                         rows = rhythmRows,
                         now = state.now,
-                        focusMinutes = state.focusMinutes
+                        focusMinutes = state.focusMinutes,
+                        doneTaskIds = doneTaskIds
                     )
                 }
             }
@@ -392,23 +402,6 @@ fun HomeScreen(
                     weekGoalMin = state.weekGoalMin,
                     todayPomodoros = state.todayPomodoros,
                     dailyPomodoroGoal = state.dailyPomodoroGoal
-                )
-            }
-
-            item(key = "review-card") {
-                ReviewCard(
-                    yesterdayReview = state.yesterdayReview,
-                    todayReview = state.todayReview,
-                    weeklyReview = state.weeklyReview,
-                    isSunday = isSunday,
-                    weekDoneTasks = state.weekDoneTasks,
-                    weekMinutes = state.weekMinutes,
-                    weekGoalMin = state.weekGoalMin,
-                    monthlyReview = state.monthlyReview,
-                    isMonthEnd = isMonthEnd,
-                    onOpenDaily = { showDailyReview = true },
-                    onOpenWeekly = { showWeeklyReview = true },
-                    onOpenMonthly = { showMonthlyReview = true }
                 )
             }
 
@@ -449,6 +442,23 @@ fun HomeScreen(
                         showTaskEditor = true
                     },
                     onBatchImport = { showBatchImport = true }
+                )
+            }
+
+            item(key = "review-card") {
+                ReviewCard(
+                    yesterdayReview = state.yesterdayReview,
+                    todayReview = state.todayReview,
+                    weeklyReview = state.weeklyReview,
+                    isSunday = isSunday,
+                    weekDoneTasks = state.weekDoneTasks,
+                    weekMinutes = state.weekMinutes,
+                    weekGoalMin = state.weekGoalMin,
+                    monthlyReview = state.monthlyReview,
+                    isMonthEnd = isMonthEnd,
+                    onOpenDaily = { showDailyReview = true },
+                    onOpenWeekly = { showWeeklyReview = true },
+                    onOpenMonthly = { showMonthlyReview = true }
                 )
             }
             }
@@ -669,8 +679,10 @@ private fun TodayRhythmCard(
     tpl: PersonalPlan.DayTemplate,
     rows: List<PersonalPlan.RhythmRow>,
     now: Long,
-    focusMinutes: Int = 25
+    focusMinutes: Int = 25,
+    doneTaskIds: Set<Long> = emptySet()
 ) {
+    var expanded by remember { mutableStateOf(false) }
     val localNow = remember(now) {
         Instant.ofEpochMilli(now).atZone(ZoneId.systemDefault()).toLocalTime()
     }
@@ -695,6 +707,10 @@ private fun TodayRhythmCard(
     val activeIdx = remember(slots, localNow) { PersonalPlan.activeRhythmIndex(slots, localNow) }
     val totalMinutes = slots.sumOf { it.minutes }
     val totalPomodoros = if (focusMinutes > 0) totalMinutes / focusMinutes else 0
+    // 概览行进度按任务真实完成态统计,分母与展开后的任务段一致
+    val doneSegments = remember(slots, doneTaskIds) {
+        slots.count { it.taskId != null && it.taskId in doneTaskIds }
+    }
 
     Surface(
         shape = MaterialTheme.shapes.large,
@@ -703,78 +719,95 @@ private fun TodayRhythmCard(
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(horizontal = 20.dp, vertical = 14.dp)) {
+            // 概览行:计划名 + 净学习概览 + 已完成/总段数 进度;点击展开/收起各时段明细
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .clickable { expanded = !expanded }
+                    .padding(vertical = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("今日节奏 · ${tpl.name}", style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    if (slots.isEmpty()) "净学习 ${tpl.hours}"
-                    else "净学习 ${formatStudyMinutes(totalMinutes)} · ${totalPomodoros}🍅",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary
+                Column(Modifier.weight(1f)) {
+                    Text(tpl.name, style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        when {
+                            slots.isEmpty() -> "净学习 ${tpl.hours}"
+                            else -> "净学习 ${formatStudyMinutes(totalMinutes)} · ${totalPomodoros}🍅 · 已完成 $doneSegments/${slots.size} 段"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Icon(
+                    if (expanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
                 )
             }
-            Spacer(Modifier.height(6.dp))
-            if (slots.isEmpty()) {
-                Text(
-                    "今日暂无排程任务",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                slots.forEachIndexed { idx, row ->
-                    val active = idx == activeIdx
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(
-                                if (active) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                                else Color.Transparent
-                            )
-                            .padding(horizontal = 6.dp, vertical = if (active) 5.dp else 2.dp)
-                    ) {
-                        Box(
-                            Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(rhythmTagColor(row.tag))
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            row.time,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (active) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = if (active) FontWeight.SemiBold else null,
-                            modifier = Modifier.width(92.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            row.label,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = if (active) FontWeight.SemiBold else null,
-                            color = if (active) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        if (active) {
-                            // 「现在」标记:当前时段锚点
-                            Surface(
-                                shape = RoundedCornerShape(999.dp),
-                                color = MaterialTheme.colorScheme.primary
-                            ) {
-                                Text(
-                                    "现在",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onPrimary,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+            if (expanded) {
+                Spacer(Modifier.height(6.dp))
+                if (slots.isEmpty()) {
+                    Text(
+                        "今日暂无排程任务",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    slots.forEachIndexed { idx, row ->
+                        val active = idx == activeIdx
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(
+                                    if (active) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                                    else Color.Transparent
                                 )
+                                .padding(horizontal = 6.dp, vertical = if (active) 5.dp else 2.dp)
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(8.dp)
+                                    .clip(CircleShape)
+                                    .background(rhythmTagColor(row.tag))
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                row.time,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (active) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = if (active) FontWeight.SemiBold else null,
+                                modifier = Modifier.width(92.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                row.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = if (active) FontWeight.SemiBold else null,
+                                color = if (active) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                            if (active) {
+                                // 「现在」标记:当前时段锚点
+                                Surface(
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = MaterialTheme.colorScheme.primary
+                                ) {
+                                    Text(
+                                        "现在",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                    )
+                                }
                             }
                         }
                     }
