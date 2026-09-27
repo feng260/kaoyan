@@ -150,6 +150,7 @@ class SettingsRepository(private val context: Context) {
         val SUBJECT_WHITELIST = stringPreferencesKey("guard_subject_whitelist")
         val EMERGENCY_MONTH = stringPreferencesKey("emergency_exit_month")
         val EMERGENCY_USED = intPreferencesKey("emergency_exit_used")
+        val RELAY_GUIDE = booleanPreferencesKey("relay_guide_shown")
     }
 
     val settings: Flow<AppSettings> = context.settingsStore.data
@@ -217,6 +218,16 @@ class SettingsRepository(private val context: Context) {
     suspend fun setSilent(on: Boolean) = context.settingsStore.edit { it[Keys.SILENT] = on }
 
     suspend fun setOnboardingDone() = context.settingsStore.edit { it[Keys.ONBOARDING] = true }
+
+    // ---- 专注接力玩法引导(仅设备本地,不进 AppSettings/云同步) ----
+
+    val relayGuideShown: Flow<Boolean> = context.settingsStore.data
+        .catch { e ->
+            if (e is java.io.IOException) emit(emptyPreferences()) else throw e
+        }
+        .map { it[Keys.RELAY_GUIDE] ?: false }
+
+    suspend fun setRelayGuideShown() = context.settingsStore.edit { it[Keys.RELAY_GUIDE] = true }
 
     suspend fun setPlanPackVersion(version: Int) =
         context.settingsStore.edit { it[Keys.PLAN_PACK] = version }

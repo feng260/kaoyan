@@ -171,7 +171,7 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
         )
         Spacer(Modifier.height(16.dp))
 
-        // 多端跟随:同账号其他设备正在专注,可一键跟随同步状态与倒计时
+        // 专注接力:同账号主机设备正在专注,可一键跟随同步状态与倒计时
         if (activePeers.isNotEmpty()) {
             activePeers.forEach { peer -> PeerFocusCard(peer = peer, onFollow = { vm.followPeer(peer) }) }
             Spacer(Modifier.height(16.dp))
@@ -338,7 +338,7 @@ private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
     FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
 }
 
-/** 他端专注卡片(多端跟随入口):设备名 + 任务 + 实时倒计时 + 跟随按钮 */
+/** 接力邀请卡片(专注接力入口):主机设备名 + 任务 + 实时倒计时 + 接力跟随按钮 */
 @Composable
 private fun PeerFocusCard(peer: PeerState, onFollow: () -> Unit) {
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -391,7 +391,7 @@ private fun PeerFocusCard(peer: PeerState, onFollow: () -> Unit) {
                 shape = RoundedCornerShape(999.dp),
                 contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp)
             ) {
-                Text("跟随", style = MaterialTheme.typography.labelLarge)
+                Text("接力跟随", style = MaterialTheme.typography.labelLarge)
             }
         }
     }

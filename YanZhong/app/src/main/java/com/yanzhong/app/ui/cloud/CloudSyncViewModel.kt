@@ -8,7 +8,9 @@ import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.data.remote.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,7 +30,7 @@ data class CloudUiState(
  * - 服务器配置 → 登录/注册 → 设备管理
  * - 全量备份/恢复(新设备迁移)
  * - 增量同步状态(DataSyncer 常驻,自动推拉,此处仅手动触发+展示)
- * - 专注状态实时同步(StatusSyncClient 常驻,此处仅展示他端在线)
+ * - 专注接力(StatusSyncClient 常驻:连接态、他端在线与玩法引导展示)
  */
 class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
     private val json = Json { ignoreUnknownKeys = true }
@@ -44,6 +46,14 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
     /** 专注状态 WS:连接态 + 他端在线快照(StatusSyncClient 已常驻) */
     val wsConnected: StateFlow<Boolean> = (app as YanZhongApp).statusSync.connected
     val peers: StateFlow<List<PeerState>> = (app as YanZhongApp).statusSync.peers
+
+    /** 专注接力玩法引导:已读仅记设备本地,初始 true 避免闪现 */
+    val relayGuideShown: StateFlow<Boolean> = settingsRepo.relayGuideShown
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun dismissRelayGuide() {
+        viewModelScope.launch { settingsRepo.setRelayGuideShown() }
+    }
 
     init {
         viewModelScope.launch {
@@ -111,6 +121,11 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             result.fold({ resp ->
+                val previousAccount = TokenStore.currentAccountGuid()
+                if (previousAccount != null && previousAccount != resp.user.guid) {
+                    repo.clearPlanProjections(previousAccount)
+                }
+                TokenStore.saveAccountGuid(resp.user.guid)
                 TokenStore.saveTokens(resp.tokens.access, resp.tokens.refresh)
                 _ui.update { it.copy(busy = false, loggedIn = true, username = resp.user.username) }
                 refreshDevices()
@@ -123,6 +138,7 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
     fun logout() {
         viewModelScope.launch {
             runCatching { ApiClient.api().logout() }
+            TokenStore.currentAccountGuid()?.let { repo.clearPlanProjections(it) }
             TokenStore.clearAll()
             _ui.update { it.copy(loggedIn = false, username = "", devices = emptyList()) }
         }

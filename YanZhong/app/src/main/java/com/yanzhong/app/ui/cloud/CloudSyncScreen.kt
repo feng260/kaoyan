@@ -19,8 +19,8 @@ import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
 import com.yanzhong.app.util.TimeUtils
 
 /**
- * 云同步页:服务器配置 → 登录/注册 → 设备管理 + 全量备份 + 状态 WS 演示。
- * v1 手动触发;登录后其他设备(平板)恢复即可完成数据迁移。
+ * 云同步页:服务器配置 → 登录/注册 → 设备管理 + 全量备份 + 专注接力(状态实时同步)。
+ * 登录后其他设备(平板)恢复即可完成数据迁移;同账号设备间可发起专注接力。
  */
 @Composable
 fun CloudSyncScreen(padding: PaddingValues, navController: NavHostController) {
@@ -29,6 +29,8 @@ fun CloudSyncScreen(padding: PaddingValues, navController: NavHostController) {
     val syncState by vm.syncState.collectAsState()
     val wsConnected by vm.wsConnected.collectAsState()
     val peers by vm.peers.collectAsState()
+    val relayGuideShown by vm.relayGuideShown.collectAsState()
+    var relayGuideExpanded by remember { mutableStateOf(false) }
     var serverInput by remember(state.serverUrl) { mutableStateOf(state.serverUrl) }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -48,7 +50,7 @@ fun CloudSyncScreen(padding: PaddingValues, navController: NavHostController) {
         ) {
             SubPageHeader(
                 title = "云同步",
-                subtitle = "多设备数据备份与专注状态实时同步",
+                subtitle = "多设备备份与专注接力",
                 onBack = { navController.popBackStack() },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
             )
@@ -134,7 +136,7 @@ fun CloudSyncScreen(padding: PaddingValues, navController: NavHostController) {
                         )
                     }
                 } else {
-                    // 已登录:设备管理 + 增量同步 + 备份 + 状态 WS
+                    // 已登录:设备管理 + 增量同步 + 备份 + 专注接力
                     SectionCard(title = "已登录 · ${state.username}", subtitle = "数据仅自己可见,多设备状态实时同步") {
                         state.devices.forEach { device ->
                             Surface(
@@ -212,13 +214,52 @@ fun CloudSyncScreen(padding: PaddingValues, navController: NavHostController) {
                     }
                     Spacer(Modifier.height(16.dp))
 
-                    SectionCard(title = "专注状态实时同步", subtitle = "同账号设备在线互见,他端专注可跟随") {
+                    SectionCard(title = "专注接力", subtitle = "主机设备专注,同账号其他设备一键跟随") {
+                        // 新手引导:首次进入自动展开,读过仅记设备本地;"玩法说明"可再次展开
+                        val showGuide = !relayGuideShown || relayGuideExpanded
+                        if (showGuide) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                                    Text("怎么玩", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(
+                                        "1. 在常用的那台设备上开始专注,它就是接力主机,状态实时广播",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        "2. 其他设备打开专注页,即可看到主机的任务与倒计时",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        "3. 点\"接力跟随\",这台设备立即对齐主机节奏,暂停/切换/结束同步生效",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (!relayGuideShown) {
+                                        Spacer(Modifier.height(4.dp))
+                                        TextButton(onClick = { vm.dismissRelayGuide() }) { Text("知道了") }
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                        }
                         Text(
                             if (wsConnected) "已连接" else "未连接",
                             style = MaterialTheme.typography.bodyMedium,
                             color = if (wsConnected) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (relayGuideShown) {
+                            TextButton(onClick = { relayGuideExpanded = !relayGuideExpanded }) {
+                                Text(if (relayGuideExpanded) "收起说明" else "玩法说明")
+                            }
+                        }
                         if (peers.isNotEmpty()) {
                             Spacer(Modifier.height(8.dp))
                             peers.forEach { peer ->
@@ -246,7 +287,7 @@ fun CloudSyncScreen(padding: PaddingValues, navController: NavHostController) {
                         } else {
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "其他设备上线后会显示在这里",
+                                "其他设备上线后会出现在这里,专注即可发起接力",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
