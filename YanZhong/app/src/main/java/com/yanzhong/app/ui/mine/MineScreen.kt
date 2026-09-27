@@ -468,10 +468,6 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                     }
                 }
 
-                item(key = "subjects-heading") {
-                    SectionHeading("科目管理")
-                }
-
                 item(key = "subjects") {
                     SectionCard(title = "科目管理", icon = AppIcons.GraduationCap, accent = MathColor) {
                         state.subjects.forEachIndexed { index, subject ->
