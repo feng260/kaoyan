@@ -44,7 +44,6 @@ import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.timer.Phase
 import com.yanzhong.app.ui.focus.FocusScreen
 import com.yanzhong.app.ui.home.HomeScreen
-import com.yanzhong.app.ui.mine.MineDataScreen
 import com.yanzhong.app.ui.mine.MineScreen
 import com.yanzhong.app.ui.plan.PlanScreen
 import com.yanzhong.app.ui.stats.StatsScreen
@@ -62,12 +61,29 @@ object Routes {
     const val MINE = "mine"
     const val SUPERMODE = "supermode"
     const val APP_PICKER = "apppicker/{subjectId}"
-    const val CLOUD = "cloud"
-    const val WEBDAV = "webdav"
-    const val DATA = "mine_data"
+    /** 账号子页:登录/注册、多设备管理、退出与注销 */
+    const val ACCOUNT = "account"
+    /**
+     * 制定/调整备考档案页。
+     *
+     * profileOnly=true 表示"只把档案存下来,不排计划"——首次问卷和 AI 面谈前的补档案走这条路,
+     * 因为真正的计划要等面谈谈完才排得出来。默认 false 保持原有"存档案并重新生成"的行为。
+     */
+    const val PLAN_SETUP = "plan_setup?profileOnly={profileOnly}"
+    /** AI 备考面谈页:聊几轮问清情况,再据此排全程计划 */
+    const val PLAN_INTERVIEW = "plan_interview"
+    /** 全程规划长文档页:AI 排出的 8 章文档,按参考计划的样子分段渲染 */
+    const val PLAN_DOCUMENT = "plan_document"
+    /** 历史计划页:按版本回看已归档的旧计划(只读) */
+    const val PLAN_HISTORY = "plan_history"
+    /** 从 PLAN_SETUP 返回时告诉计划页"计划变了,刷新一下" */
+    const val EXTRA_PLAN_SETUP_DONE = "plan_setup_done"
 
     /** 应用白名单选择页:subjectId=-1 为全局,其余为科目定制 */
     fun appPicker(subjectId: Long) = "apppicker/$subjectId"
+
+    /** 备考档案页的具体去向;必须用这个函数而不是直接拼 PLAN_SETUP,否则查询参数会被当成路径 */
+    fun planSetup(profileOnly: Boolean = false) = "plan_setup?profileOnly=$profileOnly"
 }
 
 private data class TabSpec(
@@ -77,7 +93,7 @@ private data class TabSpec(
 )
 
 @Composable
-fun YanZhongAppRoot() {
+fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
     val navController = rememberNavController()
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as YanZhongApp
     // 只订阅低频的 isRunning:remainingMs 每秒变化,若在根部收集整包状态会引发整树每秒重组
@@ -88,8 +104,9 @@ fun YanZhongAppRoot() {
     // 深层页(学霸模式/白名单选择)隐藏导航,防止误触 tab 丢弃未保存勾选
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
-    val deepPage = currentRoute == Routes.SUPERMODE || currentRoute == Routes.CLOUD ||
-        currentRoute == Routes.WEBDAV || currentRoute == Routes.DATA ||
+    val deepPage = currentRoute == Routes.SUPERMODE || currentRoute == Routes.ACCOUNT ||
+        currentRoute == Routes.PLAN_SETUP || currentRoute == Routes.PLAN_HISTORY ||
+        currentRoute == Routes.PLAN_INTERVIEW || currentRoute == Routes.PLAN_DOCUMENT ||
         currentRoute?.startsWith("apppicker") == true
     val showNav = !timerRunning && !deepPage
 
@@ -174,23 +191,43 @@ fun YanZhongAppRoot() {
             Box(Modifier.fillMaxSize()) {
                 NavHost(
                     navController = navController,
-                    startDestination = Routes.HOME,
+                    startDestination = startDestination,
                     modifier = Modifier.fillMaxSize()
                 ) {
                     composable(Routes.HOME) { HomeScreen(padding, navController) }
-                    composable(Routes.PLAN) { PlanScreen(padding) }
+                    composable(Routes.PLAN) { PlanScreen(padding, navController) }
                     composable(Routes.FOCUS) { FocusScreen(padding) }
                     composable(Routes.STATS) { StatsScreen(padding) }
                     composable(Routes.MINE) { MineScreen(padding, navController) }
-                    composable(Routes.DATA) { MineDataScreen(padding, navController) }
                     composable(Routes.SUPERMODE) {
                         com.yanzhong.app.ui.supermode.SuperModeScreen(padding, navController)
                     }
-                    composable(Routes.CLOUD) {
-                        com.yanzhong.app.ui.cloud.CloudSyncScreen(padding, navController)
+                    composable(Routes.ACCOUNT) {
+                        com.yanzhong.app.ui.account.AccountScreen(padding, navController)
                     }
-                    composable(Routes.WEBDAV) {
-                        com.yanzhong.app.ui.webdav.WebDavScreen(padding, navController)
+                    composable(
+                        Routes.PLAN_SETUP,
+                        arguments = listOf(
+                            androidx.navigation.navArgument("profileOnly") {
+                                type = androidx.navigation.NavType.BoolType
+                                defaultValue = false
+                            }
+                        )
+                    ) { entry ->
+                        com.yanzhong.app.ui.plan.PlanSetupScreen(
+                            padding,
+                            navController,
+                            profileOnly = entry.arguments?.getBoolean("profileOnly") ?: false
+                        )
+                    }
+                    composable(Routes.PLAN_INTERVIEW) {
+                        com.yanzhong.app.ui.plan.PlanInterviewScreen(padding, navController)
+                    }
+                    composable(Routes.PLAN_DOCUMENT) {
+                        com.yanzhong.app.ui.plan.PlanDocumentScreen(padding, navController)
+                    }
+                    composable(Routes.PLAN_HISTORY) {
+                        com.yanzhong.app.ui.plan.PlanHistoryScreen(padding, navController)
                     }
                     composable(
                         Routes.APP_PICKER,

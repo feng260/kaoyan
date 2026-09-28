@@ -12,11 +12,29 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+
+internal class FullPullRequests {
+    private var requested = 0L
+    private var acknowledged = 0L
+
+    @Synchronized fun request() { requested++ }
+    @Synchronized fun snapshot(): Long = requested
+    @Synchronized fun pendingAt(version: Long): Boolean = version > acknowledged
+    @Synchronized fun acknowledge(version: Long) {
+        acknowledged = maxOf(acknowledged, version)
+    }
+    @Synchronized fun reset() {
+        requested = 0L
+        acknowledged = 0L
+    }
+    val pending: Boolean get() = pendingAt(snapshot())
+}
 
 /** 最近一轮同步结果(云同步页展示用) */
 data class SyncState(
@@ -44,6 +62,7 @@ class DataSyncer(private val app: YanZhongApp) {
     private val prefs = app.getSharedPreferences("data_syncer", Context.MODE_PRIVATE)
 
     @Volatile private var started = false
+    private val fullPullRequests = FullPullRequests()
 
     /** 长期协程句柄:start() 重建,stop() 取消,避免重复登录累积多份周期循环 */
     private var jobs: List<Job> = emptyList()
@@ -57,6 +76,7 @@ class DataSyncer(private val app: YanZhongApp) {
         started = true
         jobs = listOf(
             scope.launch { syncOnce() }, // 登录后首拉:云端他端改动全量落本机
+            scope.launch { pullPlanOnce() },
             scope.launch {
                 // 新设备首拉设置:从未推送过(无水位)时才拉,老设备本地为准
                 // 先校验水位归属(换号会清 SETTINGS_SYNC_KEY),再判断;
@@ -70,19 +90,26 @@ class DataSyncer(private val app: YanZhongApp) {
                     .collect { if (started) syncOnce() }
             },
             scope.launch {
-                // 他端写云实时通知 → 立即拉取(1s 防抖:多资源连推只触发一轮)
-                app.statusSync.notices
-                    .debounce(1000L)
-                    .collect { notice ->
-                        if (!started) return@collect
-                        when (notice) {
-                            is SyncNotice.DataChanged -> {
-                                if (notice.full) prefs.edit().putLong(SINCE_KEY, 0L).apply()
-                                syncOnce()
-                            }
-                            is SyncNotice.SettingsChanged -> pullSettingsOnce()
-                        }
+                app.statusSync.notices.filterIsInstance<SyncNotice.DataChanged>()
+                    .map { notice ->
+                        if (notice.full) fullPullRequests.request()
+                        notice
                     }
+                    .debounce(1000L)
+                    .collect {
+                        if (!started) return@collect
+                        syncOnce()
+                    }
+            },
+            scope.launch {
+                app.statusSync.notices.filterIsInstance<SyncNotice.SettingsChanged>()
+                    .debounce(1000L)
+                    .collect { if (started) pullSettingsOnce() }
+            },
+            scope.launch {
+                app.statusSync.notices.filterIsInstance<SyncNotice.PlanChanged>()
+                    .debounce(1000L)
+                    .collect { if (started) pullPlanOnce() }
             },
             scope.launch {
                 app.settingsRepo.settings
@@ -134,9 +161,20 @@ class DataSyncer(private val app: YanZhongApp) {
         }
     }
 
+    private suspend fun pullPlanOnce() {
+        runCatching {
+            val account = TokenStore.currentAccountGuid() ?: return
+            val plan = ApiClient.api().getActivePlan().plan
+            if (!started || TokenStore.currentAccountGuid() != account) return
+            if (plan == null) app.repository.clearPlanProjections(account)
+            else app.repository.applyPlanProjection(plan, account)
+        }
+    }
+
     fun stop() {
         started = false
         jobs.forEach { it.cancel() }
+        fullPullRequests.reset()
         jobs = emptyList()
         _state.value = SyncState()
     }
@@ -146,6 +184,8 @@ class DataSyncer(private val app: YanZhongApp) {
         mutex.withLock {
             if (TokenStore.currentAccess() == null) return@withLock
             ensureWatermarkOwner()
+            val fullPullVersion = fullPullRequests.snapshot()
+            if (fullPullRequests.pendingAt(fullPullVersion)) prefs.edit().putLong(SINCE_KEY, 0L).apply()
             _state.update { it.copy(running = true) }
             var pushed = 0
             val outcome = runCatching {
@@ -172,6 +212,7 @@ class DataSyncer(private val app: YanZhongApp) {
                 val applied = app.repository.applyPull(resp.changes)
                 // 拉取成功才推进水位;失败下轮重拉,不丢变更
                 prefs.edit().putLong(SINCE_KEY, resp.serverTime).apply()
+                fullPullRequests.acknowledge(fullPullVersion)
                 applied
             }
             outcome.fold({ applied ->

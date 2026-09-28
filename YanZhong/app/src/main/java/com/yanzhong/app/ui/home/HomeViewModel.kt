@@ -11,6 +11,13 @@ import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.data.db.WeeklyReviewEntity
 import com.yanzhong.app.data.repo.TodayView
+import com.yanzhong.app.data.plan.isServerPlanItem
+import com.yanzhong.app.data.remote.ApiClient
+import com.yanzhong.app.data.remote.PlanItemStatusReq
+import com.yanzhong.app.data.remote.TokenStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.yanzhong.app.util.PhaseInfo
 import com.yanzhong.app.util.Phases
 import com.yanzhong.app.util.TimeUtils
@@ -66,6 +73,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = container.repository
     private val engine = container.engine
     private val settingsRepo = container.settingsRepo
+    private val planUpdateLock = Mutex()
 
     /** 首页展示的节点下标(左右滑切换,默认置顶节点) */
     private val nodeIndex = MutableStateFlow(0)
@@ -270,29 +278,51 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun completeTask(task: TaskEntity) {
-        viewModelScope.launch { repo.completeTask(task) }
-    }
+    suspend fun completeTask(task: TaskEntity): Boolean = updateTaskCompletion(task, "done")
 
-    fun uncompleteTask(task: TaskEntity) {
-        viewModelScope.launch { repo.uncompleteTask(task) }
+    suspend fun uncompleteTask(task: TaskEntity): Boolean = updateTaskCompletion(task, "pending")
+
+    private suspend fun updateTaskCompletion(task: TaskEntity, status: String): Boolean {
+        if (!task.isServerPlanItem()) {
+            if (status == "done") repo.completeTask(task) else repo.uncompleteTask(task)
+            return true
+        }
+        return try {
+            planUpdateLock.withLock {
+                val account = TokenStore.currentAccountGuid() ?: return@withLock false
+                if (TokenStore.currentAccess() == null) return@withLock false
+                val plan = ApiClient.api().patchPlanItem(task.planItemId!!, PlanItemStatusReq(status)).plan
+                    ?: return@withLock false
+                if (TokenStore.currentAccountGuid() != account) return@withLock false
+                repo.applyPlanProjection(plan, account)
+                true
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun postponeTask(task: TaskEntity) {
+        if (task.isServerPlanItem()) return
         viewModelScope.launch { repo.postponeTask(task) }
     }
 
     fun undoPostpone(task: TaskEntity, oldDue: Long?) {
+        if (task.isServerPlanItem()) return
         viewModelScope.launch { repo.undoPostpone(task, oldDue) }
     }
 
     fun saveTask(task: TaskEntity) {
+        if (task.isServerPlanItem()) return
         viewModelScope.launch {
             if (task.id == 0L) repo.insertTask(task) else repo.updateTask(task)
         }
     }
 
     fun deleteTask(task: TaskEntity) {
+        if (task.isServerPlanItem()) return
         viewModelScope.launch { repo.deleteTask(task) }
     }
 

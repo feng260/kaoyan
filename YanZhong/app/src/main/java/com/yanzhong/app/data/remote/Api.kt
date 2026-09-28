@@ -139,6 +139,8 @@ data class ProfileDto(
     val studyWindows: List<String> = emptyList(),
     val foundation: String? = null,
     val weakSubjects: List<String> = emptyList(),
+    /** AI 面谈产出的考生画像简报；没做过面谈时为 null */
+    val brief: PlanBriefDto? = null,
     val onboardingDoneAt: Long? = null,
     val updatedAt: Long? = null
 ) {
@@ -181,7 +183,8 @@ data class PlanItemDto(
     val minutes: Int = 0,
     val priority: Int = 0,
     val status: String = "pending",
-    val sortOrder: Int = 0
+    val sortOrder: Int = 0,
+    val completedAt: Long? = null
 )
 
 @Serializable
@@ -208,6 +211,8 @@ data class PlanDto(
     val stages: List<PlanStageDto> = emptyList(),
     val items: List<PlanItemDto> = emptyList(),
     val progress: PlanProgressDto = PlanProgressDto(),
+    /** AI 产出的全程规划长文档；旧计划或模型未产出时为 null */
+    val document: PlanDocumentDto? = null,
     val createdAt: Long? = null,
     val updatedAt: Long? = null
 )
@@ -215,12 +220,142 @@ data class PlanDto(
 @Serializable
 data class PlanResp(val plan: PlanDto? = null, val serverTime: Long = 0)
 
+/**
+ * 历史计划列表里的一条摘要。服务端刻意不带 stages/items 明细——
+ * 一份计划动辄上千条计划项，列表页只需要"哪一版、多少天、完成多少"，
+ * 详情在用户点进某一条时再用 getPlanById 单独拉，避免列表接口把内存撑爆。
+ */
+@Serializable
+data class PlanSummaryDto(
+    val id: Long,
+    val title: String,
+    val targetType: String = "",
+    val source: String = "",
+    val status: String = "",
+    val startDate: String,
+    val examDate: String,
+    val version: Int = 1,
+    val totalItems: Int = 0,
+    val doneItems: Int = 0,
+    val totalDays: Int = 0,
+    val createdAt: Long? = null,
+    val updatedAt: Long? = null
+)
+
+@Serializable
+data class PlanHistoryResp(val plans: List<PlanSummaryDto> = emptyList(), val serverTime: Long = 0)
+
+/** 勾选/取消勾选计划项:服务端只认 pending / done 两个值 */
+@Serializable
+data class PlanItemStatusReq(val status: String)
+
 /** POST /account/delete 的请求体：confirm 必须与用户名完全一致，password 是本人密码 */
 @Serializable
 data class DeleteAccountReq(val confirm: String, val password: String)
 
 @Serializable
 data class DeleteAccountResp(val deleted: Int = 0, val serverTime: Long = 0)
+
+// ---------- 计划长文档与 AI 面谈 ----------
+//
+// 与服务端 modules/planning/document.ts 的结构一一对应。
+// 长文档是「可选的加分项」：老计划没有 document，模型偶尔产不出也不阻断每日清单，
+// 所以这里所有集合字段都给默认值、document 在 PlanDto 里可空，界面据此决定是否显示「查看全程规划」。
+
+/** Hero 顶部的一个数据格（如「备考天数 468」「每日 6.5h」） */
+@Serializable
+data class DocStatDto(val label: String = "", val value: String = "")
+
+/** 文档头：徽标 + 主标题（lead/accent/tail 三段，accent 做渐变高亮）+ 副标题 + 科目标签 + 数据格 */
+@Serializable
+data class DocHeroDto(
+    val badge: String = "",
+    val titleLead: String = "",
+    val titleAccent: String = "",
+    val titleTail: String = "",
+    val subtitle: String = "",
+    val subjects: List<String> = emptyList(),
+    val stats: List<DocStatDto> = emptyList()
+)
+
+/** 玻璃拟态卡：标题 + 可选副标题 + 若干要点行 */
+@Serializable
+data class DocCardDto(
+    val icon: String? = null,
+    val title: String = "",
+    val subtitle: String? = null,
+    val lines: List<String> = emptyList()
+)
+
+/** 表格：columns 定列头，rows 每行长度已按 columns 对齐 */
+@Serializable
+data class DocTableDto(
+    val title: String = "",
+    val columns: List<String> = emptyList(),
+    val rows: List<List<String>> = emptyList()
+)
+
+/**
+ * 文档中的一个内容块。服务端是 text | cards | tables 的判别联合，
+ * 这里用 [type] 字段区分，另外两组字段留空——客户端按 type 分支渲染即可。
+ */
+@Serializable
+data class DocBlockDto(
+    val type: String = "text",
+    val text: String? = null,
+    val emph: Boolean = false,
+    val cards: List<DocCardDto> = emptyList(),
+    val tables: List<DocTableDto> = emptyList()
+)
+
+/** 一章：序号 + 标题 + 导语 + 内容块 */
+@Serializable
+data class DocChapterDto(
+    val no: String = "",
+    val title: String = "",
+    val intro: String? = null,
+    val blocks: List<DocBlockDto> = emptyList()
+)
+
+/** 整份计划长文档（对标「468 天考研全程作战计划」） */
+@Serializable
+data class PlanDocumentDto(
+    val title: String = "",
+    val hero: DocHeroDto = DocHeroDto(),
+    val chapters: List<DocChapterDto> = emptyList()
+)
+
+/** AI 面谈产出的考生画像简报：补上问卷问不到的信息，生成计划时作为上下文 */
+@Serializable
+data class PlanBriefDto(
+    val summary: String = "",
+    val goals: List<String> = emptyList(),
+    val constraints: List<String> = emptyList(),
+    val focus: List<String> = emptyList(),
+    val materials: List<String> = emptyList(),
+    val notes: List<String> = emptyList()
+)
+
+/** 面谈消息：role 只认 user / assistant */
+@Serializable
+data class InterviewMessageDto(val role: String, val content: String)
+
+/** POST /plans/interview 请求体。[force] 为 true 时即使轮次不够也强制收尾产出简报 */
+@Serializable
+data class InterviewReq(
+    val messages: List<InterviewMessageDto> = emptyList(),
+    val force: Boolean = false
+)
+
+/** 面谈一轮的结果。[done] 为 true 表示 AI 认为信息够了，[brief] 随之给出 */
+@Serializable
+data class InterviewResp(
+    val reply: String = "",
+    val options: List<String> = emptyList(),
+    val done: Boolean = false,
+    val brief: PlanBriefDto? = null,
+    val serverTime: Long = 0
+)
 
 // ---------- API 接口 ----------
 
@@ -289,13 +424,37 @@ interface YanzhongApi {
     /**
      * 依据当前档案重新生成计划。
      * 服务端会覆盖旧计划并把结果推给同一账号的其他设备（planChanged）。
+     * 该接口可能耗时一两分钟（含长文档生成），调用方请走 [ApiClient.aiApi]。
      */
     @POST("api/v1/plans/generate")
     suspend fun generatePlan(): PlanResp
 
+    /**
+     * AI 面谈一轮：把已有对话发给服务端，拿回 AI 的下一个问题与快捷选项，
+     * 信息够了（done=true）时一并返回考生画像简报。
+     * 同样可能耗时较久，调用方请走 [ApiClient.aiApi]。
+     */
+    @POST("api/v1/plans/interview")
+    suspend fun interview(@Body body: InterviewReq): InterviewResp
+
     /** 取当前有效计划；没有计划时 plan 为 null */
     @GET("api/v1/plans/active")
     suspend fun getActivePlan(): PlanResp
+
+    /** 历史计划列表（含当前 active 与所有 archived），按版本从新到旧，只返回摘要 */
+    @GET("api/v1/plans/history")
+    suspend fun getPlanHistory(): PlanHistoryResp
+
+    /** 按 id 读取某一版计划的完整明细（含 stages/items），用于历史详情只读查看 */
+    @GET("api/v1/plans/{id}")
+    suspend fun getPlanById(@Path("id") id: Long): PlanResp
+
+    /** 回写单个计划项的完成状态,成功返回整份最新计划(服务端会同步广播给同账号其它设备) */
+    @retrofit2.http.PATCH("api/v1/plans/items/{id}")
+    suspend fun patchPlanItem(
+        @Path("id") id: Long,
+        @Body body: PlanItemStatusReq
+    ): PlanResp
 
     /**
      * 全量导出账号数据。直接返回服务端 JSON（含账号、档案、计划、同步数据），
@@ -343,16 +502,45 @@ class AuthInterceptor : Interceptor {
 
 object ApiClient {
     @Volatile private var cached: Pair<String, YanzhongApi>? = null
+    @Volatile private var cachedAi: Pair<String, YanzhongApi>? = null
     private val refreshLock = Any()
 
-    /** 服务器地址变更时自动重建 */
+    /** 普通接口：20s 内必须出结果，卡住就尽快失败给用户反馈 */
     fun api(): YanzhongApi {
         val server = runBlocking { effectiveServerUrl() }
         cached?.let { (s, api) -> if (s == server) return api }
+        val api = build(server, callSeconds = 20, connectSeconds = 10, readSeconds = 60, writeSeconds = 10)
+        cached = server to api
+        return api
+    }
+
+    /**
+     * 长耗时 AI 接口（AI 面谈 / 生成计划，含长文档生成）。
+     *
+     * 为什么要单开一个客户端：OkHttp 的 Chain 只能改 connect/read/write 三项超时，
+     * 改不了「整次调用」的 callTimeout；而 AI 请求动辄一两分钟，会被 20s 的全局上限直接掐死。
+     * 两个客户端共用同一份 token 注入与 401 单飞刷新逻辑，登录态行为保持一致。
+     */
+    fun aiApi(): YanzhongApi {
+        val server = runBlocking { effectiveServerUrl() }
+        cachedAi?.let { (s, api) -> if (s == server) return api }
+        val api = build(server, callSeconds = 200, connectSeconds = 10, readSeconds = 180, writeSeconds = 60)
+        cachedAi = server to api
+        return api
+    }
+
+    private fun build(
+        server: String,
+        callSeconds: Long,
+        connectSeconds: Long,
+        readSeconds: Long,
+        writeSeconds: Long
+    ): YanzhongApi {
         val client = OkHttpClient.Builder()
-            .callTimeout(20, TimeUnit.SECONDS)
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(60, TimeUnit.SECONDS)
+            .callTimeout(callSeconds, TimeUnit.SECONDS)
+            .connectTimeout(connectSeconds, TimeUnit.SECONDS)
+            .readTimeout(readSeconds, TimeUnit.SECONDS)
+            .writeTimeout(writeSeconds, TimeUnit.SECONDS)
             .addInterceptor(AuthInterceptor())
             .authenticator { _: Route?, response: Response ->
                 if (response.request.url.encodedPath.contains("/auth/refresh")) return@authenticator null
@@ -397,9 +585,7 @@ object ApiClient {
             .client(client)
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
-        val api = retrofit.create(YanzhongApi::class.java)
-        cached = server to api
-        return api
+        return retrofit.create(YanzhongApi::class.java)
     }
 
     /** 专注状态 WebSocket:登录后连接,重连成功后回调(hello + presence 恢复) */

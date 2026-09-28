@@ -2,6 +2,7 @@ package com.yanzhong.app.data.plan
 
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
+import com.yanzhong.app.data.db.TaskStatus
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.remote.PlanItemDto
 import org.junit.Assert.assertEquals
@@ -62,6 +63,56 @@ class PlanProjectorTest {
         assertEquals("手工任务", result.first().title)
         assertNull(result.first().planId)
         assertEquals("数学 · 强化训练", result.last().title)
+    }
+
+    @Test
+    fun serverCompletionOverridesLocalStatusAndPreservesPomodoros() {
+        val existing = planTask(id = 11L, planId = 42L, planItemId = 1001L)
+            .copy(completedPomodoros = 3)
+        val completedPlan = plan(1001L, "数学").copy(
+            items = listOf(plan(1001L, "数学").items.single().copy(status = "done"))
+        )
+        val completed = projectPlanTasks(listOf(existing), completedPlan, "account-a",
+            mapOf("数学" to 7L), now = 200L).single()
+        assertEquals(TaskStatus.DONE, completed.status)
+        assertEquals(3, completed.completedPomodoros)
+        assertEquals(completed.dueAt, completed.completedAt)
+
+        val reopened = projectPlanTasks(listOf(completed), plan(1001L, "数学"), "account-a",
+            mapOf("数学" to 7L), now = 300L).single()
+        assertEquals(TaskStatus.TODO, reopened.status)
+        assertNull(reopened.completedAt)
+        assertEquals(3, reopened.completedPomodoros)
+    }
+
+    @Test
+    fun serverCompletionTimeOverridesPlanDayAndLocalTime() {
+        val completedAt = 1_790_000_000_000L
+        val completedPlan = plan(1001L, "数学").copy(
+            items = listOf(plan(1001L, "数学").items.single().copy(
+                status = "done", completedAt = completedAt))
+        )
+        val projected = projectPlanTasks(emptyList(), completedPlan, "account-a",
+            mapOf("数学" to 7L), now = completedAt + 1000L).single()
+        assertEquals(completedAt, projected.completedAt)
+    }
+
+    @Test
+    fun historicalServerCompletionUsesPlanDayNotToday() {
+        val completedPlan = plan(1001L, "数学").copy(
+            items = listOf(plan(1001L, "数学").items.single().copy(status = "done"))
+        )
+        val projected = projectPlanTasks(emptyList(), completedPlan, "account-a",
+            mapOf("数学" to 7L), now = 1_790_000_000_000L).single()
+
+        assertEquals(TaskStatus.DONE, projected.status)
+        assertEquals(projected.dueAt, projected.completedAt)
+    }
+
+    @Test
+    fun onlyServerPlanItemsRequireCloudCompletion() {
+        assertEquals(false, TaskEntity(subjectId = 7L, title = "手工任务").isServerPlanItem())
+        assertEquals(true, planTask(11L, 42L, 1001L).isServerPlanItem())
     }
 
     @Test

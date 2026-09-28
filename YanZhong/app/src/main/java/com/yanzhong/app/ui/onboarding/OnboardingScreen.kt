@@ -136,7 +136,7 @@ fun OnboardingScreen(vm: OnboardingViewModel, modifier: Modifier = Modifier) {
 
 /** 顶部两步指示:用两段横条,比"1/2"更像进度而不像页码 */
 @Composable
-private fun StepDots(step: Int) {
+internal fun StepDots(step: Int) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         repeat(2) { index ->
@@ -155,7 +155,7 @@ private fun StepDots(step: Int) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StepTarget(state: OnboardingUiState, vm: OnboardingViewModel) {
+internal fun StepTarget(state: OnboardingUiState, vm: OnboardingViewModel) {
     val colors = MaterialTheme.colorScheme
     FieldLabel("你要准备的是", "不同考试的节奏差得很远,后面阶段的划分会跟着变")
     Spacer(Modifier.height(10.dp))
@@ -203,7 +203,7 @@ private fun StepTarget(state: OnboardingUiState, vm: OnboardingViewModel) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun StepRhythm(state: OnboardingUiState, vm: OnboardingViewModel) {
+internal fun StepRhythm(state: OnboardingUiState, vm: OnboardingViewModel) {
     val colors = MaterialTheme.colorScheme
     FieldLabel("平时一天能拿出多少时间", "按真实情况填。填多了计划会一直在欠账,反而容易放弃")
     Spacer(Modifier.height(10.dp))
@@ -311,7 +311,8 @@ private fun PrimaryAction(state: OnboardingUiState, vm: OnboardingViewModel) {
     val colors = MaterialTheme.colorScheme
     val lastStep = state.step >= 1
     Button(
-        onClick = { if (lastStep) vm.submit() else vm.next() },
+        // 末步只存档案:一份几百天的计划要先和 AI 聊清楚才排得出来,问卷这一屏不越权替 AI 落笔
+        onClick = { if (lastStep) vm.saveProfileOnly() else vm.next() },
         enabled = !state.busy,
         shape = RoundedCornerShape(12.dp),
         colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
@@ -321,7 +322,7 @@ private fun PrimaryAction(state: OnboardingUiState, vm: OnboardingViewModel) {
             CircularProgressIndicator(color = colors.onPrimary, strokeWidth = 2.dp, modifier = Modifier.size(21.dp))
         } else {
             Text(
-                if (lastStep) "生成我的计划" else "下一步",
+                if (lastStep) "保存档案,去和 AI 聊计划" else "下一步",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold
             )
@@ -337,7 +338,7 @@ private fun PrimaryAction(state: OnboardingUiState, vm: OnboardingViewModel) {
 }
 
 @Composable
-private fun OnboardingMessage(message: String, isError: Boolean) {
+internal fun OnboardingMessage(message: String, isError: Boolean) {
     val colors = MaterialTheme.colorScheme
     Surface(
         shape = RoundedCornerShape(12.dp),

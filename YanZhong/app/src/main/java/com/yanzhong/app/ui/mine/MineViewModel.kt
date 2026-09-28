@@ -1,7 +1,6 @@
 package com.yanzhong.app.ui.mine
 
 import android.app.Application
-import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yanzhong.app.YanZhongApp
@@ -12,22 +11,29 @@ import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.data.prefs.PomodoroPlan
 import com.yanzhong.app.data.remote.ApiClient
 import com.yanzhong.app.data.remote.DeleteAccountReq
-import com.yanzhong.app.data.remote.SyncState
 import com.yanzhong.app.data.remote.TokenStore
-import com.yanzhong.app.data.repo.ExportPayload
 import com.yanzhong.app.util.TimeUtils
 import java.time.Instant
 import java.time.ZoneId
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
+
+/**
+ * 账号登录态。
+ *
+ * Loading 专门用于首帧:DataStore 还没读出凭证时不能急着显示"未登录",
+ * 否则已登录用户会先闪一下未登录文案,看起来像登录态丢了。
+ */
+sealed interface AccountState {
+    data object Loading : AccountState
+    /** 已登录;本地还没存用户名时 username 为空串 */
+    data class LoggedIn(val username: String) : AccountState
+    data object LoggedOut : AccountState
+}
 
 data class MineUiState(
     val settings: AppSettings = AppSettings(),
@@ -35,14 +41,7 @@ data class MineUiState(
     val focusDays: Int = 0,
     val streak: Int = 0,
     val learningProfile: LearningProfile = LearningProfile(),
-    /** 是否已登录(决定同步卡三态) */
-    val loggedIn: Boolean = false,
-    /** 当前账号用户名;已登录但本地未保存时为空串 */
-    val username: String = "",
-    /** 上次成功同步时间:内存实时值与持久化值取较大者 */
-    val lastSyncAt: Long = 0,
-    /** 增量同步实时状态 */
-    val sync: SyncState = SyncState()
+    val account: AccountState = AccountState.Loading
 )
 
 class MineViewModel(app: Application) : AndroidViewModel(app) {
@@ -50,27 +49,19 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = container.repository
     private val settingsRepo = container.settingsRepo
 
-    private data class AccountSnapshot(
-        val loggedIn: Boolean,
-        val username: String,
-        val lastSyncAt: Long
-    )
-
-    private val accountFlow: Flow<AccountSnapshot> = combine(
+    private val accountFlow: Flow<AccountState> = combine(
         TokenStore.observeLoggedIn(),
-        TokenStore.observeUsername(),
-        TokenStore.observeLastSync()
-    ) { loggedIn, username, lastSyncAt ->
-        AccountSnapshot(loggedIn, username, lastSyncAt)
+        TokenStore.observeUsername()
+    ) { loggedIn, username ->
+        if (loggedIn) AccountState.LoggedIn(username) else AccountState.LoggedOut
     }
 
     val uiState: StateFlow<MineUiState> = combine(
         settingsRepo.settings,
         repo.observeSubjects(),
         repo.observeSessions(),
-        accountFlow,
-        container.dataSyncer.state
-    ) { settings, subjects, sessions, account, sync ->
+        accountFlow
+    ) { settings, subjects, sessions, account ->
         val profile = buildLearningProfile(
             sessions = sessions,
             subjects = subjects,
@@ -83,17 +74,9 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
             focusDays = profile.activeDays,
             streak = profile.streakDays,
             learningProfile = profile,
-            loggedIn = account.loggedIn,
-            username = account.username,
-            lastSyncAt = maxOf(sync.lastSyncAt, account.lastSyncAt),
-            sync = sync
+            account = account
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MineUiState())
-
-    /** 手动触发一轮增量同步(自动同步已常驻,此处仅用于同步卡"重试/立即同步") */
-    fun syncNow() {
-        viewModelScope.launch { runCatching { container.dataSyncer.syncOnce() } }
-    }
 
     fun setTheme(mode: Int) {
         viewModelScope.launch { settingsRepo.setThemeMode(mode) }
@@ -151,91 +134,7 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { repo.deleteSubject(subject) }
     }
 
-    /** 全量数据导出到 SAF uri:读库 + 序列化 + 写文件全在 IO 线程,不卡主线程 */
-    fun exportToUri(uri: Uri, onDone: (String) -> Unit) {
-        viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val payload = ExportPayload(
-                        subjects = repo.allSubjects(),
-                        nodes = repo.allNodes(),
-                        tasks = repo.allTasks(),
-                        sessions = repo.allSessions()
-                    )
-                    val json = Json { prettyPrint = true }.encodeToString(payload)
-                    getApplication<Application>().contentResolver.openOutputStream(uri)
-                        ?.use { it.write(json.toByteArray(Charsets.UTF_8)) }
-                        ?: throw IllegalStateException("无法打开导出文件")
-                    "已导出全量数据 JSON"
-                }
-            }
-            onDone(result.getOrElse { "导出失败:${it.message}" })
-        }
-    }
-
-    /**
-     * 批量导入计划包 / 备份包(SAF 多选,读文件 + 解析全在 IO 线程):
-     * 逐个文件合并,同名科目合并、节点任务按名去重,重复导入幂等;单个文件失败不中断后续。
-     */
-    fun importFromUris(uris: List<Uri>, onDone: (String) -> Unit) {
-        if (uris.isEmpty()) return
-        viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val resolver = getApplication<Application>().contentResolver
-                    var subjects = 0
-                    var nodes = 0
-                    var tasks = 0
-                    var skipped = 0
-                    var failed = 0
-                    uris.forEach { uri ->
-                        runCatching {
-                            val json = resolver.openInputStream(uri)
-                                ?.use { it.readBytes().toString(Charsets.UTF_8) }
-                                ?: throw IllegalStateException("无法读取文件")
-                            repo.importJson(json)
-                        }.fold(
-                            onSuccess = { r ->
-                                subjects += r.subjectsAdded
-                                nodes += r.nodesAdded
-                                tasks += r.tasksAdded
-                                skipped += r.skipped
-                            },
-                            onFailure = { failed++ }
-                        )
-                    }
-                    "导入 ${uris.size - failed} 个文件:科目 +$subjects · 节点 +$nodes · 任务 +$tasks · 跳过重复 $skipped" +
-                        if (failed > 0) " · $failed 个失败" else ""
-                }
-            }
-            onDone(result.getOrElse { "导入失败:${it.message}" })
-        }
-    }
-
     // ---------------- 账号与安全 ----------------
-
-    /**
-     * 把服务端的账号全量数据导出到 SAF uri。
-     *
-     * 与 [exportToUri] 的区别:那个导的是**本机库**,这个导的是**服务器上属于你的那份**。
-     * 两者内容高度重合,但不能互相替代——换机时人真正想要的是"服务器上那份备份",
-     * 因为它包含别台设备同步上去、本机还没拉下来的东西。
-     */
-    fun exportAccountToUri(uri: Uri, onDone: (String) -> Unit) {
-        viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    val payload = ApiClient.api().exportAccount()
-                    val text = Json { prettyPrint = true }.encodeToString(payload)
-                    getApplication<Application>().contentResolver.openOutputStream(uri)
-                        ?.use { it.write(text.toByteArray(Charsets.UTF_8)) }
-                        ?: throw IllegalStateException("无法打开导出文件")
-                    "已导出账号数据,共 ${text.length} 字符"
-                }
-            }
-            onDone(result.getOrElse { "导出失败:${it.readableMessage()}" })
-        }
-    }
 
     /**
      * 注销账号。

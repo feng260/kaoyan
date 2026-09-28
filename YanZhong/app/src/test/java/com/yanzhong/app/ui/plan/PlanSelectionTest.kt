@@ -22,6 +22,16 @@ class PlanSelectionTest {
         assertNull(plan().currentStage(LocalDate.parse("2026-11-01")))
     }
 
+    @Test fun dailyItemsIncludeDoneItemsInSortOrder() {
+        val items = listOf(
+            PlanItemDto(1, 1, "数学", "第二项", "2026-09-27", status = "done", sortOrder = 2),
+            PlanItemDto(2, 1, "英语", "第一项", "2026-09-27", sortOrder = 1),
+            PlanItemDto(3, 1, "政治", "其他日期", "2026-09-28")
+        )
+        assertEquals(listOf("第一项", "第二项"),
+            plan(items).dailyItems(LocalDate.parse("2026-09-27")).map { it.title })
+    }
+
     @Test fun upcomingItemsExcludePastCompletedAndOtherStages() {
         val items = listOf(
             PlanItemDto(1, 2, "数学", "明天", "2026-10-02", sortOrder = 2),
@@ -32,5 +42,24 @@ class PlanSelectionTest {
         )
         assertEquals(listOf("今天", "明天"),
             plan(items).upcomingItems(second, LocalDate.parse("2026-10-01")).map { it.title })
+    }
+
+    @Test fun planDisplayStateKeepsLoadedPlanDuringNetworkFailure() {
+        val loaded = plan()
+        assertEquals(PlanDisplayState.READY, selectPlanDisplayState(true, loaded, true, false))
+        assertEquals(PlanDisplayState.NETWORK_ERROR, selectPlanDisplayState(true, null, true, false))
+        assertEquals(PlanDisplayState.NO_PLAN, selectPlanDisplayState(true, null, false, false))
+        assertEquals(PlanDisplayState.LOGIN_REQUIRED, selectPlanDisplayState(false, null, false, false))
+        assertEquals(PlanDisplayState.LOADING, selectPlanDisplayState(true, null, false, true))
+    }
+
+    @Test fun dailyProgressIncludesCompletedAndPendingItems() {
+        val items = listOf(
+            PlanItemDto(1, 1, "数学", "完成", "2026-09-27", status = "done"),
+            PlanItemDto(2, 1, "英语", "待做", "2026-09-27"),
+            PlanItemDto(3, 1, "政治", "明天", "2026-09-28", status = "done")
+        )
+        assertEquals(1 to 2, plan(items).dailyProgress(LocalDate.parse("2026-09-27")))
+        assertEquals(0 to 0, plan(items).dailyProgress(LocalDate.parse("2026-09-29")))
     }
 }

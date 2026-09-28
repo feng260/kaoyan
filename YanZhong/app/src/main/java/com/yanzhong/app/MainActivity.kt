@@ -113,7 +113,15 @@ class MainActivity : ComponentActivity() {
             com.yanzhong.app.ui.onboarding.OnboardingPhase.FALLBACK ->
                 if (state.awaitingChoice) com.yanzhong.app.ui.onboarding.OnboardingFallbackScreen(vm)
                 else YanZhongAppRoot()
-            com.yanzhong.app.ui.onboarding.OnboardingPhase.SUCCESS -> YanZhongAppRoot()
+            // 刚存完档案但还没有计划:直接落到计划页,那里「和 AI 聊 5 分钟」的入口就在最上面
+            com.yanzhong.app.ui.onboarding.OnboardingPhase.SUCCESS ->
+                YanZhongAppRoot(
+                    startDestination = if (state.profileSaved && state.plan == null) {
+                        com.yanzhong.app.ui.nav.Routes.PLAN
+                    } else {
+                        com.yanzhong.app.ui.nav.Routes.HOME
+                    }
+                )
         }
     }
 

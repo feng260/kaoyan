@@ -25,8 +25,10 @@ import com.composables.icons.lucide.DatabaseBackup
 import com.composables.icons.lucide.Download
 import com.composables.icons.lucide.Eye
 import com.composables.icons.lucide.EyeOff
+import com.composables.icons.lucide.FileText
 import com.composables.icons.lucide.Flame
 import com.composables.icons.lucide.GraduationCap
+import com.composables.icons.lucide.History
 import com.composables.icons.lucide.Hourglass
 import com.composables.icons.lucide.Info
 import com.composables.icons.lucide.Infinity
@@ -35,6 +37,7 @@ import com.composables.icons.lucide.Keyboard
 import com.composables.icons.lucide.Lock
 import com.composables.icons.lucide.LockOpen
 import com.composables.icons.lucide.Medal
+import com.composables.icons.lucide.MessageSquare
 import com.composables.icons.lucide.Moon
 import com.composables.icons.lucide.Music
 import com.composables.icons.lucide.VolumeX
@@ -48,6 +51,7 @@ import com.composables.icons.lucide.Repeat
 import com.composables.icons.lucide.RotateCcw
 import com.composables.icons.lucide.Save
 import com.composables.icons.lucide.Search
+import com.composables.icons.lucide.Send
 import com.composables.icons.lucide.Settings
 import com.composables.icons.lucide.Share
 import com.composables.icons.lucide.Shield
@@ -162,4 +166,10 @@ object AppIcons {
 
     // ---- 科目 ----
     val SubjectDefault: ImageVector = Lucide.BookOpen
+
+    // ---- AI 面谈 / 长文档 ----
+    val Chat: ImageVector = Lucide.MessageSquare
+    val Send: ImageVector = Lucide.Send
+    val Doc: ImageVector = Lucide.FileText
+    val History: ImageVector = Lucide.History
 }

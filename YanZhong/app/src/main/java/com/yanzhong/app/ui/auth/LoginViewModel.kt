@@ -153,6 +153,9 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     TokenStore.saveAccountGuid(resp.user.guid)
                     TokenStore.saveTokens(resp.tokens.access, resp.tokens.refresh)
+                    // 用户名也落盘:否则「我的」页账号卡只能显示通用的"已登录"，
+                    // 而通过账号页登录过的设备却能显示真实用户名，同一个 App 两副面孔。
+                    TokenStore.saveUsername(resp.user.username)
                     _ui.update { it.copy(busy = false) }
                 }, { e ->
                     _ui.update { it.copy(busy = false, message = "登录失败:${e.userMessage()}", messageIsError = true) }

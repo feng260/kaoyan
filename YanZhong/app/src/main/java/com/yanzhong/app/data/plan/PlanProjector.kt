@@ -2,6 +2,7 @@ package com.yanzhong.app.data.plan
 
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
+import com.yanzhong.app.data.db.TaskStatus
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.util.PersonalPlan
 import com.yanzhong.app.data.remote.PlanItemDto
@@ -13,9 +14,11 @@ import java.time.ZoneId
  *
  * 约束:
  * - 只处理当前账号下、来源键属于本次计划的任务,手工任务与其他账号的投影原样保留。
- * - 同一来源键重复投影复用同一条任务,并保留本地执行状态(番茄数/状态/顺延)。
+ * - 同一来源键重复投影复用同一条任务；完成状态以服务端为准，保留本地番茄数。
  * - 已从计划中消失的任务项会被移除。
  */
+fun TaskEntity.isServerPlanItem(): Boolean = planItemId != null
+
 fun projectPlanTasks(
     existing: List<TaskEntity>,
     plan: PlanDto,
@@ -95,6 +98,8 @@ private fun projectedTask(
         accountGuid = accountGuid,
         planId = plan.id,
         planItemId = item.id,
+        status = if (item.status == "done") TaskStatus.DONE else TaskStatus.TODO,
+        completedAt = if (item.status == "done") item.completedAt ?: base.completedAt ?: dueAt else null,
         updatedAt = now,
         dirty = false,
     )

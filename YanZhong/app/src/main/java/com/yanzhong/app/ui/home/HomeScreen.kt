@@ -54,6 +54,7 @@ import androidx.navigation.compose.rememberNavController
 import com.yanzhong.app.data.db.RepeatRule
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
+import com.yanzhong.app.data.plan.isServerPlanItem
 import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.CoralRed
@@ -91,15 +92,20 @@ fun HomeScreen(
 
     /** 完成后可撤销(一次性任务);误触右滑不再造成"看不见"的完成 */
     fun completeWithUndo(task: TaskEntity) {
-        vm.completeTask(task)
-        if (task.repeatRule == RepeatRule.NONE) {
-            scope.launch {
+        scope.launch {
+            if (!vm.completeTask(task)) {
+                snackbarHostState.showSnackbar("更新失败，请重试；完成状态未改变")
+                return@launch
+            }
+            if (task.repeatRule == RepeatRule.NONE) {
                 val result = snackbarHostState.showSnackbar(
                     message = "已完成「${task.title}」",
                     actionLabel = "撤销",
                     duration = SnackbarDuration.Long
                 )
-                if (result == SnackbarResult.ActionPerformed) vm.uncompleteTask(task)
+                if (result == SnackbarResult.ActionPerformed && !vm.uncompleteTask(task)) {
+                    snackbarHostState.showSnackbar("撤销失败，请重试")
+                }
             }
         }
     }
@@ -268,14 +274,18 @@ fun HomeScreen(
                             planSlots = planSlots,
                             onComplete = { completeWithUndo(it) },
                             onPostpone = { postponeWithUndo(it) },
-                            onPostponeRequest = { postponeCandidate = it },
+                            onPostponeRequest = { if (!it.isServerPlanItem()) postponeCandidate = it },
                             onStartFocus = {
                                 vm.startFocusFor(it)
                                 navController.navigate(Routes.FOCUS) { launchSingleTop = true }
                             },
                             onTaskClick = {
-                                editingTask = it
-                                showTaskEditor = true
+                                if (it.isServerPlanItem()) {
+                                    navController.navigate(Routes.PLAN) { launchSingleTop = true }
+                                } else {
+                                    editingTask = it
+                                    showTaskEditor = true
+                                }
                             }
                         )
                     }
@@ -414,14 +424,18 @@ fun HomeScreen(
                 planSlots = planSlots,
                 onComplete = { completeWithUndo(it) },
                 onPostpone = { postponeWithUndo(it) },
-                onPostponeRequest = { postponeCandidate = it },
+                onPostponeRequest = { if (!it.isServerPlanItem()) postponeCandidate = it },
                 onStartFocus = {
                     vm.startFocusFor(it)
                     navController.navigate(Routes.FOCUS) { launchSingleTop = true }
                 },
                 onTaskClick = {
-                    editingTask = it
-                    showTaskEditor = true
+                    if (it.isServerPlanItem()) {
+                        navController.navigate(Routes.PLAN) { launchSingleTop = true }
+                    } else {
+                        editingTask = it
+                        showTaskEditor = true
+                    }
                 }
             )
 
@@ -475,15 +489,16 @@ fun HomeScreen(
     /** 左滑顺延二次确认:防止误触导致任务"凭空消失"(参考番茄ToDo 防误触设计) */
     postponeCandidate?.let { candidate ->
         val isRepeat = candidate.repeatRule != 0
+        val isPlanItem = candidate.isServerPlanItem()
         AlertDialog(
             onDismissRequest = { postponeCandidate = null },
-            title = { Text(if (isRepeat) "无法顺延" else "顺延到明天?") },
+            title = { Text(if (isRepeat || isPlanItem) "无法顺延" else "顺延到明天?") },
             text = {
                 Text(
-                    if (isRepeat) {
-                        "「${candidate.title}」按重复规则自动出现,无法单独顺延。如需调整,请点击任务修改重复规则。"
-                    } else {
-                        "「${candidate.title}」将推迟到明天同一时刻,今日列表将不再显示。"
+                    when {
+                        isPlanItem -> "「${candidate.title}」属于云端计划，不能在首页单独顺延。"
+                        isRepeat -> "「${candidate.title}」按重复规则自动出现,无法单独顺延。如需调整,请点击任务修改重复规则。"
+                        else -> "「${candidate.title}」将推迟到明天同一时刻,今日列表将不再显示。"
                     }
                 )
             },
@@ -491,12 +506,12 @@ fun HomeScreen(
                 TextButton(
                     onClick = {
                         postponeCandidate = null
-                        if (!isRepeat) postponeWithUndo(candidate)
+                        if (!isRepeat && !isPlanItem) postponeWithUndo(candidate)
                     }
-                ) { Text(if (isRepeat) "知道了" else "顺延") }
+                ) { Text(if (isRepeat || isPlanItem) "知道了" else "顺延") }
             },
             dismissButton = {
-                if (!isRepeat) {
+                if (!isRepeat && !isPlanItem) {
                     TextButton(onClick = { postponeCandidate = null }) { Text("取消") }
                 }
             }

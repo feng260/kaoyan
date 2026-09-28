@@ -85,9 +85,18 @@ object TokenStore {
         }
     }
 
-    /** 登录态(响应式):access token 存在即已登录;登录写 token/退出清 token 都会即时翻转启动门 */
+    /**
+     * 登录态(响应式):access token 存在 **且** account_guid 非空才算已登录。
+     *
+     * 这是全 App 唯一的"是否已登录"口径：启动门(MainActivity)、计划页、我的页、
+     * 账号页都订阅这个 Flow。以前各页各写各的判断(有的只看 access，有的还要求 guid
+     * 非空)，会出现"同一台设备上这页说已登录、那页说未登录"的割裂现象。
+     * 登录写 token/guid、退出 clearAll 都会即时翻转所有订阅者。
+     */
     fun observeLoggedIn(): Flow<Boolean> =
-        context().cloudStore.data.map { it[KEY_ACCESS] != null }
+        context().cloudStore.data.map {
+            it[KEY_ACCESS] != null && !it[KEY_ACCOUNT_GUID].isNullOrBlank()
+        }
 
     /** 首次调用生成并持久化设备 UUID */
     suspend fun ensureDeviceGuid(): String {

@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -55,6 +56,8 @@ sealed interface SyncNotice {
     data class DataChanged(val deviceId: Long, val resource: String?, val full: Boolean) : SyncNotice
     /** 他端更新了云端设置 */
     data class SettingsChanged(val deviceId: Long) : SyncNotice
+    /** 他端重新生成计划或更新了计划项 */
+    data class PlanChanged(val deviceId: Long) : SyncNotice
 }
 
 /**
@@ -79,6 +82,8 @@ class StatusSyncClient(private val app: YanZhongApp) {
     val notices: kotlinx.coroutines.flow.SharedFlow<SyncNotice> = _notices.asSharedFlow()
 
     @Volatile private var started = false
+    private val connectionLock = Any()
+    private var connectionVersion = 0L
     @Volatile private var ws: WebSocket? = null
     @Volatile private var myDeviceId = -1L
     @Volatile private var backoffMs = 1000L
@@ -117,15 +122,18 @@ class StatusSyncClient(private val app: YanZhongApp) {
     }
 
     fun stop() {
-        started = false
+        synchronized(connectionLock) {
+            started = false
+            connectionVersion++
+            ws?.close(1000, "logout")
+            ws = null
+            _connected.value = false
+        }
         workScope?.cancel()
         workScope = null
         reconnectJob?.cancel()
         reconnectJob = null
-        runCatching { ws?.close(1000, "logout") }
-        ws = null
         _peers.value = emptyList()
-        _connected.value = false
         myDeviceId = -1L
     }
 
@@ -169,35 +177,72 @@ class StatusSyncClient(private val app: YanZhongApp) {
         if (!started) return
         workScope?.launch {
             val access = TokenStore.currentAccess() ?: return@launch
+            if (!started) return@launch
             val server = effectiveServerUrl()
             val wsUrl = server.replaceFirst("http", "ws") + "/ws?token=" + access
             val request = Request.Builder().url(wsUrl).build()
-            http.newWebSocket(
+            val version = synchronized(connectionLock) {
+                if (!started) return@launch
+                ++connectionVersion
+            }
+            val socket = http.newWebSocket(
                 request,
                 object : WebSocketListener() {
                     override fun onOpen(webSocket: WebSocket, response: Response) {
+                        val active = synchronized(connectionLock) {
+                            if (!started || version != connectionVersion) false
+                            else {
+                                ws = webSocket
+                                _connected.value = true
+                                true
+                            }
+                        }
+                        if (!active) {
+                            webSocket.close(1000, "logout")
+                            return
+                        }
                         backoffMs = 1000L
-                        _connected.value = true
-                        webSocket.send(
-                            """{"type":"hello","deviceName":"${Build.MODEL ?: "Android 设备"}"}"""
-                        )
+                        webSocket.send(JsonObject(mapOf(
+                            "type" to JsonPrimitive("hello"),
+                            "deviceName" to JsonPrimitive(Build.MODEL ?: "Android 设备")
+                        )).toString())
+                        webSocket.send(buildPayload(app.engine.state.value))
                     }
 
                     override fun onMessage(webSocket: WebSocket, text: String) {
-                        handleEvent(text)
+                        if (synchronized(connectionLock) { started && version == connectionVersion }) handleEvent(text)
                     }
 
                     override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                        _connected.value = false
-                        if (code == 4001) refreshAndReconnect() else scheduleReconnect()
+                        val active = synchronized(connectionLock) {
+                            if (version != connectionVersion || !started) false
+                            else {
+                                ws = null
+                                _connected.value = false
+                                true
+                            }
+                        }
+                        if (active) {
+                            if (code == 4001) refreshAndReconnect() else scheduleReconnect()
+                        }
                     }
 
                     override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                        _connected.value = false
-                        scheduleReconnect()
+                        val active = synchronized(connectionLock) {
+                            if (version != connectionVersion || !started) false
+                            else {
+                                ws = null
+                                _connected.value = false
+                                true
+                            }
+                        }
+                        if (active) scheduleReconnect()
                     }
                 }
-            ).also { ws = it }
+            )
+            synchronized(connectionLock) {
+                if (!started || version != connectionVersion) socket.close(1000, "logout")
+            }
         }
     }
 
@@ -252,6 +297,10 @@ class StatusSyncClient(private val app: YanZhongApp) {
                 val deviceId = obj["deviceId"]?.jsonPrimitive?.longOrNull ?: return
                 if (deviceId == myDeviceId) return
                 _notices.tryEmit(SyncNotice.SettingsChanged(deviceId))
+            }
+            "planChanged" -> {
+                val deviceId = obj["deviceId"]?.jsonPrimitive?.longOrNull ?: return
+                if (deviceId != myDeviceId) _notices.tryEmit(SyncNotice.PlanChanged(deviceId))
             }
             "kicked" -> {
                 workScope?.launch {

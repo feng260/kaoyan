@@ -7,6 +7,19 @@ import org.junit.Test
 
 class PlanSyncBoundaryTest {
     @Test
+    fun fullPullNoticeDuringSyncSurvivesEarlierCompletion() {
+        val requests = FullPullRequests()
+        requests.request()
+        val first = requests.snapshot()
+        requests.request()
+        requests.acknowledge(first)
+
+        assertTrue(requests.pending)
+        requests.acknowledge(requests.snapshot())
+        assertTrue(!requests.pending)
+    }
+
+    @Test
     fun dirtyPushSelectionExcludesPlanProjections() {
         val tasks = listOf(
             task(id = 1, dirty = true, planId = null),

@@ -110,12 +110,22 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
      * 登录后调用:问服务端要档案,决定是放行还是弹问卷。
      * 只在"第一次登录"或"用户手动重试"时调用,不做轮询。
      */
-    fun load() {
+    fun load() = loadInternal(manage = false)
+
+    /**
+     * 从「计划」页进来调整备考档案时调用。
+     *
+     * 与登录门的区别只有一点:档案再完整也要停在问卷里,不能自动放行——
+     * 用户是主动来改东西的,直接把他弹回主界面等于没给他改的机会。
+     */
+    fun startManage() = loadInternal(manage = true)
+
+    private fun loadInternal(manage: Boolean) {
         _ui.update { it.copy(phase = OnboardingPhase.LOADING, message = "", messageIsError = false) }
         viewModelScope.launch {
             runCatching { ApiClient.api().getProfile() }.fold({ resp ->
                 val p = resp.profile
-                if (p != null && p.isComplete) {
+                if (p != null && p.isComplete && !manage) {
                     _ui.update { s -> s.copy(phase = OnboardingPhase.SUCCESS, profile = p) }
                 } else {
                     // 老账号可能只有半份档案:能回填的全部回填,别让人重填一遍
@@ -139,7 +149,11 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { s ->
                     s.copy(
                         phase = OnboardingPhase.FALLBACK,
-                        message = "暂时连不上服务器(${e.userMessage()})。你本机的计划不受影响,可以照常学,回头在「我的」里重试就行",
+                        message = if (manage) {
+                            "暂时连不上服务器(${e.userMessage()}),档案没能调出来。网络好了再试一次就行,你自己的计划没受影响"
+                        } else {
+                            "暂时连不上服务器(${e.userMessage()})。你本机的计划不受影响,可以照常学,回头在「我的」里重试就行"
+                        },
                         messageIsError = false
                     )
                 }
@@ -198,6 +212,55 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 只把档案存到服务端,不排计划。
+     *
+     * 首次问卷和 AI 面谈前的"补档案"走这条路:一份几百天的计划得先和 AI 聊清楚才排得出来,
+     * 问卷这一屏只负责把可结构化的那部分(考什么、考期、每天多久)落库,真正的排计划交给面谈。
+     */
+    fun saveProfileOnly() {
+        val s = _ui.value
+        if (s.phase == OnboardingPhase.SUBMITTING) return
+        val err = validate(s, 1)
+        if (err != null) {
+            _ui.update { it.copy(message = err, messageIsError = true) }
+            return
+        }
+        _ui.update { it.copy(phase = OnboardingPhase.SUBMITTING, message = "", messageIsError = false) }
+
+        viewModelScope.launch {
+            val body = ProfileReq(
+                targetType = s.targetType,
+                examDate = s.examDate.trim(),
+                dailyMinutes = s.dailyMinutes,
+                studyWindows = STUDY_WINDOWS.filter { it in s.studyWindows },
+                foundation = s.foundation,
+                weakSubjects = s.weakSubjects.toList()
+            )
+            runCatching { ApiClient.api().putProfile(body) }.fold({ saved ->
+                // 档案落库即完成:计划由「AI 面谈 → 生成」这条独立的路去产生
+                _ui.update {
+                    it.copy(
+                        phase = OnboardingPhase.SUCCESS,
+                        profile = saved.profile,
+                        profileSaved = true,
+                        message = "",
+                        messageIsError = false
+                    )
+                }
+            }, { e ->
+                _ui.update { st ->
+                    st.copy(
+                        phase = OnboardingPhase.EDITING,
+                        step = 1,
+                        message = "档案没存上:${e.userMessage()}。你填的内容都还在,网络好了再点一次就好",
+                        messageIsError = true
+                    )
+                }
+            })
+        }
+    }
+
     /** 只重排计划(档案已在服务端):改完档案想立刻生效时也走这里 */
     fun regenerate() {
         if (_ui.value.phase == OnboardingPhase.SUBMITTING) return
@@ -225,7 +288,8 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun generatePlanInternal() {
-        runCatching { ApiClient.api().generatePlan() }.fold({ resp ->
+        // 走 aiApi():生成含长文档,默认 20s 的 callTimeout 会把请求掐死
+        runCatching { ApiClient.aiApi().generatePlan() }.fold({ resp ->
             _ui.update { it.copy(phase = OnboardingPhase.SUCCESS, plan = resp.plan, message = "", messageIsError = false) }
         }, { e ->
             _ui.update { st ->

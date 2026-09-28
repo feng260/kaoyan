@@ -20,14 +20,25 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,11 +49,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavHostController
+import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.data.db.RepeatRule
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.db.SubjectEntity
@@ -56,19 +70,23 @@ import com.yanzhong.app.util.Phases
 import com.yanzhong.app.util.TimeUtils
 import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.time.ZoneId
 
 private val TABS = listOf("本周", "日模板", "全程", "军规·资料")
 
 /** 计划页:本周任务 / 日模板 / 全程规划 / 军规资料——468 天作战计划的 App 内全景 */
 @Composable
-fun PlanScreen(padding: PaddingValues) {
+fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
     val vm: PlanViewModel = viewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     val serverPlan by vm.serverPlan.collectAsStateWithLifecycle()
     val planLoading by vm.planLoading.collectAsStateWithLifecycle()
-    val planUnavailable by vm.planUnavailable.collectAsStateWithLifecycle()
+    val loggedIn by vm.loggedIn.collectAsStateWithLifecycle()
+    val planError by vm.planError.collectAsStateWithLifecycle()
+    val updatingItemId by vm.updatingItemId.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var referenceExpanded by rememberSaveable { mutableStateOf(false) }
 
     val weekStart = state.weekStart
     val days = (0..6L).map { weekStart + it * 24 * 3600 * 1000 }
@@ -79,6 +97,12 @@ fun PlanScreen(padding: PaddingValues) {
     }
     val weekLabel = remember(todayDate) { PersonalPlan.teachingWeekLabel(todayDate) }
     val expanded = isExpanded()
+
+    // 从"制定/调整备考档案"页回来:计划可能刚被重新生成,静默刷一次
+    LaunchedEffect(Unit) {
+        val handle = navController.currentBackStackEntry?.savedStateHandle
+        if (handle?.remove<Boolean>(Routes.EXTRA_PLAN_SETUP_DONE) == true) vm.refreshPlan()
+    }
 
     // 平板:限宽 720dp 居中
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -98,54 +122,91 @@ fun PlanScreen(padding: PaddingValues) {
         item {
             com.yanzhong.app.ui.theme.PageHeader(
                 title = "计划",
-                subtitle = if (serverPlan == null) "本地 468 天作战计划" else "我的备考计划"
+                subtitle = "AI 按你的备考档案排的计划"
             ) {
-                if (serverPlan == null && weekLabel != null) {
-                    Surface(
-                        shape = RoundedCornerShape(999.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text(
-                            weekLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                        )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (referenceExpanded && weekLabel != null) {
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer
+                        ) {
+                            Text(
+                                weekLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                    IconButton(onClick = { navController.navigate(Routes.PLAN_HISTORY) }) {
+                        Icon(AppIcons.ClipboardList, contentDescription = "历史计划")
+                    }
+                    IconButton(onClick = vm::refreshPlan, enabled = loggedIn && !planLoading) {
+                        Icon(AppIcons.RotateCcw, contentDescription = "刷新")
                     }
                 }
             }
         }
 
         item(key = "server-plan") {
-            when {
-                serverPlan != null -> ServerPlanSummary(serverPlan!!, todayDate, planLoading, vm::refreshPlan)
-                planUnavailable -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("暂无云端计划，当前展示本地 468 天计划", modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = vm::refreshPlan) { Text("重试") }
-                }
-                else -> Text("正在获取云端计划，本地计划仍可使用",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            when (selectPlanDisplayState(loggedIn, serverPlan, planError != null, planLoading)) {
+                PlanDisplayState.READY -> ServerPlanSummary(
+                    plan = serverPlan!!,
+                    today = todayDate,
+                    updatingItemId = updatingItemId,
+                    onToggle = vm::toggleItem,
+                    onOpenSetup = { navController.navigate(Routes.planSetup()) },
+                    onOpenDocument = { navController.navigate(Routes.PLAN_DOCUMENT) },
+                    onOpenHistory = { navController.navigate(Routes.PLAN_HISTORY) }
+                )
+                PlanDisplayState.LOGIN_REQUIRED -> PlanActionCard(
+                    icon = AppIcons.CloudUpload,
+                    title = "登录后就有了云端计划",
+                    desc = "计划存在账号里,换台设备登录还是同一份,手机上勾掉的打卡会自动同步过去。",
+                    primaryLabel = "前往登录",
+                    onPrimary = { navController.navigate(Routes.ACCOUNT) }
+                )
+                PlanDisplayState.NO_PLAN -> PlanActionCard(
+                    icon = AppIcons.Chat,
+                    title = "还没有计划",
+                    desc = "一份几百天的全程计划,靠两页问卷是排不出来的。先和 AI 聊几句——" +
+                        "它问清你的目标院校、每天能学多久、哪科最弱,再照着一整份规划书的样子给你排。",
+                    primaryLabel = "和 AI 聊 5 分钟,制定计划",
+                    onPrimary = { navController.navigate(Routes.PLAN_INTERVIEW) },
+                    secondaryLabel = "看历史计划",
+                    onSecondary = { navController.navigate(Routes.PLAN_HISTORY) }
+                )
+                PlanDisplayState.NETWORK_ERROR -> PlanActionCard(
+                    icon = AppIcons.Info,
+                    title = "没能读到云端计划",
+                    desc = planError ?: "网络异常,稍后再试一次。你已经勾掉的打卡不会丢。",
+                    primaryLabel = "重试",
+                    onPrimary = vm::refreshPlan
+                )
+                PlanDisplayState.LOADING -> PlanLoadingCard()
             }
         }
 
         item(key = "tabs") {
-            Text("本地 468 天计划 · 参考", style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TabRow(selectedTabIndex = tab) {
-                TABS.forEachIndexed { index, label ->
-                    Tab(
-                        selected = tab == index,
-                        onClick = { tab = index },
-                        text = { Text(label, maxLines = 1) }
-                    )
+            Surface(onClick = { referenceExpanded = !referenceExpanded }, modifier = Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("本地固定 468 天计划 · 仅供参考", modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleSmall)
+                    Icon(if (referenceExpanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
+                        contentDescription = if (referenceExpanded) "收起参考" else "展开参考")
+                }
+            }
+            if (referenceExpanded) {
+                TabRow(selectedTabIndex = tab) {
+                    TABS.forEachIndexed { index, label ->
+                        Tab(selected = tab == index, onClick = { tab = index },
+                            text = { Text(label, maxLines = 1) })
+                    }
                 }
             }
         }
 
-        when (tab) {
+        if (referenceExpanded) when (tab) {
             // ---------- 本周 ----------
             0 -> {
                 phaseInfo?.let { info ->
@@ -229,59 +290,195 @@ fun PlanScreen(padding: PaddingValues) {
     }
 }
 
+/**
+ * 计划页的主操作卡:登录 / 还没计划 / 读不到计划 三种情况共用。
+ *
+ * 之前这些状态只有一行小字加一个 TextButton,藏在标题下面,用户找不到"去哪制定计划";
+ * 换成整卡 + 实心主按钮,把唯一该做的动作摆到最显眼的位置。
+ */
 @Composable
-private fun ServerPlanSummary(plan: PlanDto, today: LocalDate, loading: Boolean, onRefresh: () -> Unit) {
-    val current = plan.currentStage(today)
+private fun PlanActionCard(
+    icon: ImageVector,
+    title: String,
+    desc: String,
+    primaryLabel: String,
+    onPrimary: () -> Unit,
+    secondaryLabel: String? = null,
+    onSecondary: (() -> Unit)? = null
+) {
+    val colors = MaterialTheme.colorScheme
     Surface(
-        shape = MaterialTheme.shapes.medium,
+        shape = MaterialTheme.shapes.large,
+        color = colors.surface,
+        tonalElevation = 1.dp,
+        shadowElevation = 3.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(icon, contentDescription = null, tint = colors.primary, modifier = Modifier.size(30.dp))
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+            Text(desc, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+            Spacer(Modifier.height(2.dp))
+            Button(
+                onClick = onPrimary,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) {
+                Text(primaryLabel, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            }
+            if (secondaryLabel != null && onSecondary != null) {
+                TextButton(onClick = onSecondary, modifier = Modifier.fillMaxWidth()) {
+                    Text(secondaryLabel)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlanLoadingCard() {
+    Surface(
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 1.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(plan.title, style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                TextButton(onClick = onRefresh, enabled = !loading) { Text(if (loading) "刷新中" else "刷新") }
-            }
-            if (plan.stale) {
-                Text("档案已修改，当前计划尚未重新生成", color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            Text("考期 ${plan.examDate}", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
-            plan.stages.sortedBy { it.sortOrder }.forEach { stage ->
-                val active = stage.id == current?.id
-                Column(Modifier.fillMaxWidth()) {
-                    Text(stage.name + if (active) " · 当前阶段" else "",
+        Row(
+            Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            Text("正在获取云端计划…", style = MaterialTheme.typography.bodyMedium)
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ServerPlanSummary(
+    plan: PlanDto,
+    today: LocalDate,
+    updatingItemId: Long?,
+    onToggle: (com.yanzhong.app.data.remote.PlanItemDto) -> Unit,
+    onOpenSetup: () -> Unit,
+    onOpenDocument: () -> Unit,
+    onOpenHistory: () -> Unit
+) {
+    var selectedDateText by rememberSaveable(plan.id) { mutableStateOf(today.toString()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val selectedDate = LocalDate.parse(selectedDateText)
+    val current = plan.currentStage(today)
+    val (done, total) = plan.dailyProgress(selectedDate)
+    val busy = updatingItemId != null
+    if (showDatePicker) {
+        val picker = rememberDatePickerState(
+            initialSelectedDateMillis = selectedDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
+        )
+        DatePickerDialog(onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    picker.selectedDateMillis?.let {
+                        selectedDateText = Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString()
+                    }
+                    showDatePicker = false
+                }) { Text("确定") }
+            }, dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text("取消") }
+            }) { DatePicker(state = picker) }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(plan.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+
+        // 档案改过但计划还没重建:用醒目横幅说明"为什么内容和档案对不上",按钮直奔重新生成
+        if (plan.stale) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "备考档案改过了,这份计划还是按老档案排的",
                         style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Normal,
-                        color = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
-                    Text("${stage.startDate} – ${stage.endDate}",
-                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        "重新生成会出一份新计划,旧的会归档留住。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
+
+        // 主操作:任何时候都能从这里去改档案 / 重新生成,这是这一页的中心入口
+        Button(
+            onClick = onOpenSetup,
+            enabled = !busy,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp)
+        ) {
+            Icon(AppIcons.Sparkles, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                if (plan.stale) "重新生成计划" else "调整档案并重新生成",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+
+        // AI 排出来的那份 8 章规划书:目标、阶段、各科、作息、启动周、资料、军规、时间线
+        if (plan.document != null) {
+            OutlinedButton(
+                onClick = onOpenDocument,
+                enabled = !busy,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) {
+                Icon(AppIcons.Doc, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "查看全程规划文档",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        Text("考期 ${plan.examDate} · 总进度 ${plan.progress.doneItems}/${plan.progress.totalItems}",
+            style = MaterialTheme.typography.bodyMedium)
+        Text("当前阶段：${current?.name ?: "当前日期不在计划阶段内"}",
+            style = MaterialTheme.typography.titleSmall)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("${if (selectedDate == today) "今日" else "日期"} · $selectedDate",
+                style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            TextButton(onClick = { selectedDateText = today.toString() }, enabled = selectedDate != today) {
+                Text("回到今天")
+            }
+            TextButton(onClick = { showDatePicker = true }) { Text("选日期") }
+        }
+        Text("当日完成 $done / $total", style = MaterialTheme.typography.bodyMedium)
+        LinearProgressIndicator(progress = { if (total == 0) 0f else done.toFloat() / total },
+            modifier = Modifier.fillMaxWidth())
+        if (total == 0) Text("这一天暂无计划项", style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        plan.dailyItems(selectedDate).forEach { item ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(checked = item.status == "done", onCheckedChange = { onToggle(item) },
+                    enabled = !busy)
+                Column(Modifier.weight(1f)) {
+                    Text(item.title, style = MaterialTheme.typography.bodyMedium)
+                    Text("${item.subject} · ${item.minutes} 分钟", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (current != null) {
-                Text("当前阶段 · 近期事项", style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold)
-                val upcoming = plan.upcomingItems(current, today)
-                if (upcoming.isEmpty()) {
-                    Text("当前阶段暂无待完成的近期事项", style = MaterialTheme.typography.bodySmall)
-                } else {
-                    upcoming.forEach { item ->
-                        Column(Modifier.fillMaxWidth()) {
-                            Text(item.title, style = MaterialTheme.typography.bodyMedium)
-                            Text("${item.planDate} · ${item.subject} · ${item.minutes} 分钟",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-            } else {
-                Text("当前日期不在计划阶段内", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+        }
+
+        TextButton(onClick = onOpenHistory, modifier = Modifier.fillMaxWidth()) {
+            Icon(AppIcons.ClipboardList, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("历史计划")
         }
     }
 }

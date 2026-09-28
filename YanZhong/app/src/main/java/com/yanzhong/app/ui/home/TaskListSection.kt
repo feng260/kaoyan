@@ -48,6 +48,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
+import com.yanzhong.app.data.plan.isServerPlanItem
 import com.yanzhong.app.ui.theme.AmberGold
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.Subject408Color
@@ -179,9 +180,15 @@ private fun TaskRow(
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             when (value) {
-                SwipeToDismissBoxValue.StartToEnd -> { onComplete(); true }
-                // 左滑不直接顺延,弹确认框;返回 false 让卡片回弹
-                SwipeToDismissBoxValue.EndToStart -> { onPostponeRequest(); false }
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    onComplete()
+                    !task.isServerPlanItem()
+                }
+                // 云端计划项不能本地顺延；左滑直接回弹
+                SwipeToDismissBoxValue.EndToStart -> {
+                    if (!task.isServerPlanItem()) onPostponeRequest()
+                    false
+                }
                 else -> false
             }
         }

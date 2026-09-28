@@ -58,3 +58,11 @@ val NightMountainNear = Color(0xFF1F2C52)
 // ---- 统计页渐变横幅(参考图1 蓝色渐变累计卡)----
 val StatBannerStart = Color(0xFF5865F2)
 val StatBannerEnd = Color(0xFF7B9AF8)
+
+// ---- 参考计划(468 天全程作战计划)设计语言 ----
+val PlanAccent = Color(0xFF4F46E5)   // --accent 靛蓝
+val PlanAccent2 = Color(0xFF7C3AED)  // --accent2 紫
+val PlanTeal = Color(0xFF0D9488)     // --c-en 青绿
+val PlanInk = Color(0xFF1C2240)      // --ink
+val PlanMuted = Color(0xFF5F6A8A)    // --muted
+val PlanBg = Color(0xFFF2F4FB)       // --bg

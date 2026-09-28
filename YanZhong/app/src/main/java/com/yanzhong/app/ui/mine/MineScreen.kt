@@ -1,21 +1,20 @@
 package com.yanzhong.app.ui.mine
 
-import android.app.Activity
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -25,7 +24,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -36,7 +34,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -44,48 +41,48 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.prefs.PomodoroPlan
-import com.yanzhong.app.data.stats.LearningProfile
-import com.yanzhong.app.util.TimeUtils
 import com.yanzhong.app.data.prefs.ThemeMode
+import com.yanzhong.app.data.stats.LearningProfile
 import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.ui.theme.AppIcons
-import com.yanzhong.app.ui.theme.CoralRed
-import com.yanzhong.app.ui.theme.CoralRedDeep
 import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
+import com.yanzhong.app.ui.theme.CoralRed
 import com.yanzhong.app.ui.theme.EnglishColor
-import com.yanzhong.app.ui.theme.MintGreen
-import com.yanzhong.app.ui.theme.MintGreenDeep
 import com.yanzhong.app.ui.theme.MathColor
-import com.yanzhong.app.ui.theme.NightMountainFar
-import com.yanzhong.app.ui.theme.NightMountainNear
-import com.yanzhong.app.ui.theme.NightSkyBottom
-import com.yanzhong.app.ui.theme.NightSkyMid
-import com.yanzhong.app.ui.theme.NightSkyTop
-import com.yanzhong.app.ui.theme.PillTag
+import com.yanzhong.app.ui.theme.MintGreen
+import com.yanzhong.app.ui.theme.PlanAccent
+import com.yanzhong.app.ui.theme.PlanAccent2
+import com.yanzhong.app.ui.theme.PlanInk
+import com.yanzhong.app.ui.theme.PlanMuted
 import com.yanzhong.app.ui.theme.PoliticsColor
 import com.yanzhong.app.ui.theme.SkyBlue
-import com.yanzhong.app.ui.theme.SkyBlueDeep
-import com.yanzhong.app.ui.theme.SectionCard
 import com.yanzhong.app.ui.theme.Subject408Color
+import com.yanzhong.app.util.TimeUtils
 
-/** 我的页:沉浸式头部 + 快捷入口 + 设置列表(PRD 4.2 ⑤,视觉参考番茄ToDo 我的页) */
+/**
+ * 我的页:对齐《468 天全程作战计划》的设计语言——靛蓝/紫渐变 hero + 玻璃拟态卡 +
+ * 带序号的分区标题。这一页是整个「学习档案」的门面,不堆功能,只做分区清晰的收纳。
+ */
 @Composable
 fun MineScreen(padding: PaddingValues, navController: NavHostController) {
     val vm: MineViewModel = viewModel()
@@ -100,380 +97,266 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
     /** 删除科目二次确认(连带删除科目下任务与记录,防误触) */
     var deleteSubjectCandidate by remember { mutableStateOf<SubjectEntity?>(null) }
 
-    // 夜空为深色:进入本页时状态栏切白色图标,离开恢复
-    val view = LocalView.current
-    DisposableEffect(view) {
-        val window = (view.context as? Activity)?.window
-        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
-        val original = controller?.isAppearanceLightStatusBars
-        controller?.isAppearanceLightStatusBars = false
-        onDispose { if (original != null) controller.isAppearanceLightStatusBars = original }
-    }
+    val palette = minePalette()
 
-    // 注意:根必须用 Column —— Box 中 fillMaxSize 的面板会盖住整个头部
-    // 平板:限宽 720dp 居中;background 填充面板上移 28dp 留出的底部缝隙
     Box(
         Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        PlanAccent.copy(alpha = 0.12f),
+                        PlanAccent2.copy(alpha = 0.06f),
+                        MaterialTheme.colorScheme.background
+                    )
+                )
+            ),
         contentAlignment = Alignment.TopCenter
     ) {
-    Column(
-        Modifier
-            .widthIn(max = CONTENT_MAX_WIDTH)
-            .fillMaxWidth()
-    ) {
-        // 沉浸式头部:Canvas 绘制夜空 + 月亮 + 山脉(不加图片资源,drawable 只留必要文件)
-        Box(Modifier.fillMaxWidth()) {
-            NightSkyCanvas(Modifier.matchParentSize())
-            Column(Modifier.fillMaxWidth()) {
-                Column(
-                    Modifier
-                        .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 20.dp, vertical = 16.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 头像:白描边圆底 + 学士帽
-                        Box(
-                            Modifier
-                                .size(62.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.18f))
-                                .padding(2.dp)
-                                .clip(CircleShape)
-                                .background(Color.White.copy(alpha = 0.25f)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                AppIcons.GraduationCap,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(30.dp)
-                            )
-                        }
-                        Spacer(Modifier.width(14.dp))
-                        Column {
-                            Text(
-                                when {
-                                    !state.loggedIn -> "本机学习档案"
-                                    state.username.isNotBlank() -> state.username
-                                    else -> "已登录"
-                                },
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.White
-                            )
-                            Spacer(Modifier.height(2.dp))
-                            Text(
-                                formatSubjectSubtitle(state.subjects.map { it.name }),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color.White.copy(alpha = 0.78f)
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        PillTag(text = "共专注 ${state.learningProfile.activeDays} 天", icon = AppIcons.Flame)
-                        PillTag(text = "连续打卡 ${state.learningProfile.streakDays} 天", icon = AppIcons.TrendingUp)
-                    }
-                }
-            // 头部底部多留 28dp 夜空,供面板圆角压边
-            Spacer(Modifier.height(28.dp))
-            }
-        }
-
-        // 白色大圆角面板:上移 28dp 与夜空衔接(参考图3 顶部弧形过渡)
-        Surface(
-            color = MaterialTheme.colorScheme.background,
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        LazyColumn(
             modifier = Modifier
+                .widthIn(max = CONTENT_MAX_WIDTH)
                 .fillMaxSize()
-                .offset(y = (-28).dp)
+                .statusBarsPadding(),
+            contentPadding = PaddingValues(
+                start = 20.dp,
+                end = 20.dp,
+                top = 10.dp,
+                bottom = padding.calculateBottomPadding() + 72.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            LazyColumn(
-                contentPadding = PaddingValues(
-                    start = 20.dp,
-                    end = 20.dp,
-                    top = 8.dp,
-                    bottom = padding.calculateBottomPadding() + 72.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                item(key = "sync-card") {
-                    SyncStatusCard(
-                        loggedIn = state.loggedIn,
-                        username = state.username,
-                        lastSyncAt = state.lastSyncAt,
-                        sync = state.sync,
-                        onLogin = { navController.navigate(Routes.CLOUD) { launchSingleTop = true } },
-                        onSyncNow = { vm.syncNow() }
-                    )
-                }
+            item(key = "hero") { MineHero(state, palette) }
 
-                // 快捷功能区(参考图3 三个图标入口)
-                item(key = "quick-entries") {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(top = 16.dp, bottom = 4.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly
+            item(key = "head-profile") {
+                MineSectionHead("01", "学习档案", "AI 排计划要用的两份底稿", palette)
+            }
+
+            item(key = "account-card") {
+                AccountCard(
+                    account = state.account,
+                    palette = palette,
+                    onOpen = { navController.navigate(Routes.ACCOUNT) { launchSingleTop = true } }
+                )
+            }
+
+            // 备考档案:AI 制定计划的唯一输入,放在账号卡下面,一眼可见入口
+            item(key = "exam-profile") {
+                MineCard(
+                    title = "备考档案",
+                    subtitle = "AI 按这份档案排计划",
+                    icon = AppIcons.Target,
+                    accent = SkyBlue,
+                    palette = palette
+                ) {
+                    MineEntryRow(
+                        text = "查看或调整备考条件(考试科目、目标院校、每日时间)",
+                        palette = palette
                     ) {
-                        QuickEntry(
-                            icon = AppIcons.Hourglass,
-                            label = "未来倒计时",
-                            colors = listOf(SkyBlue, SkyBlueDeep)
-                        ) {
-                            navController.navigate(Routes.HOME) {
-                                launchSingleTop = true
-                                popUpTo(Routes.HOME) { saveState = true }
-                            }
-                        }
-                        QuickEntry(
-                            icon = AppIcons.TrendingUp,
-                            label = "专注历史",
-                            colors = listOf(MintGreen, MintGreenDeep)
-                        ) {
-                            navController.navigate(Routes.STATS) {
-                                launchSingleTop = true
-                                popUpTo(Routes.HOME) { saveState = true }
-                            }
-                        }
-                        QuickEntry(
-                            icon = AppIcons.Shield,
-                            label = "学霸模式",
-                            colors = listOf(CoralRed, CoralRedDeep)
-                        ) {
-                            navController.navigate(Routes.SUPERMODE) { launchSingleTop = true }
+                        navController.navigate(Routes.planSetup()) { launchSingleTop = true }
+                    }
+                }
+            }
+
+            item(key = "head-stats") {
+                MineSectionHead("02", "数据总览", "最近的专注投入", palette)
+            }
+
+            item(key = "learning-profile") {
+                LearningProfileCard(state.learningProfile, palette)
+            }
+
+            item(key = "head-prefs") {
+                MineSectionHead("03", "偏好设置", "番茄钟与提醒", palette)
+            }
+
+            item(key = "theme") {
+                MineCard(title = "主题", icon = AppIcons.Palette, accent = SkyBlue, palette = palette) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf(
+                            ThemeMode.LIGHT to "浅色",
+                            ThemeMode.DARK to "深色",
+                            ThemeMode.SYSTEM to "跟随系统"
+                        ).forEach { (mode, label) ->
+                            FilterChip(
+                                selected = state.settings.themeMode == mode,
+                                onClick = { vm.setTheme(mode) },
+                                label = { Text(label) }
+                            )
                         }
                     }
                 }
+            }
 
-                item(key = "learning-profile") {
-                    LearningProfileCard(state.learningProfile)
-                }
-
-                item(key = "preferences-heading") {
-                    SectionHeading("偏好设置")
-                }
-
-                item(key = "theme") {
-                    SectionCard(title = "主题", icon = AppIcons.Palette, accent = SkyBlue) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            listOf(
-                                ThemeMode.LIGHT to "浅色",
-                                ThemeMode.DARK to "深色",
-                                ThemeMode.SYSTEM to "跟随系统"
-                            ).forEach { (mode, label) ->
-                                FilterChip(
-                                    selected = state.settings.themeMode == mode,
-                                    onClick = { vm.setTheme(mode) },
-                                    label = { Text(label) }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                item(key = "plans") {
-                    SectionCard(title = "番茄方案", icon = AppIcons.Timer, accent = CoralRed) {
-                        state.settings.plans.forEachIndexed { index, plan ->
-                            val selected = plan.name == state.settings.currentPlanName
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)) else null,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { vm.setCurrentPlan(plan.name) }
-                            ) {
-                                Row(
-                                    Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            plan.name,
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            color = if (selected) MaterialTheme.colorScheme.primary
-                                            else MaterialTheme.colorScheme.onSurface
-                                        )
-                                        Text(
-                                            "专注 ${plan.focusMin} · 短休 ${plan.shortBreakMin} · " +
-                                                "长休 ${plan.longBreakMin} · 每轮 ${plan.longBreakInterval}🍅",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                    if (selected) {
-                                        Icon(
-                                            AppIcons.Check,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                    }
-                                }
-                            }
-                            if (index < state.settings.plans.size - 1) Spacer(Modifier.height(8.dp))
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        TextButton(onClick = { showPlanEditor = true }) { Text("编辑方案参数") }
-                    }
-                }
-
-                item(key = "focus-pref") {
-                    SectionCard(title = "专注偏好", icon = AppIcons.Sliders, accent = MintGreen) {
-                        // 学霸模式入口(参考番茄ToDo 学霸模式)
+            item(key = "plans") {
+                MineCard(
+                    title = "番茄方案",
+                    subtitle = "选一套,或改到顺手为止",
+                    icon = AppIcons.Timer,
+                    accent = CoralRed,
+                    palette = palette
+                ) {
+                    state.settings.plans.forEachIndexed { index, plan ->
+                        val selected = plan.name == state.settings.currentPlanName
                         Surface(
                             shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)),
+                            color = if (selected) PlanAccent.copy(alpha = 0.10f) else palette.tile,
+                            border = if (selected) BorderStroke(1.dp, PlanAccent.copy(alpha = 0.45f))
+                            else BorderStroke(1.dp, palette.tileBorder),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable { navController.navigate(Routes.SUPERMODE) }
+                                .clickable { vm.setCurrentPlan(plan.name) }
                         ) {
                             Row(
                                 Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    AppIcons.Shield,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text("学霸模式", style = MaterialTheme.typography.bodyLarge)
                                     Text(
-                                        when {
-                                            !state.settings.superModeOn -> "专注期间拦截非白名单应用 · 未开启"
-                                            state.settings.superModeStrict -> "严格锁定 · 已开启"
-                                            else -> "白名单放行 ${state.settings.whitelist.size} 个应用 · 已开启"
-                                        },
+                                        plan.name,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                                        color = if (selected) PlanAccent else palette.ink
+                                    )
+                                    Text(
+                                        "专注 ${plan.focusMin} · 短休 ${plan.shortBreakMin} · " +
+                                            "长休 ${plan.longBreakMin} · 每轮 ${plan.longBreakInterval}🍅",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = palette.muted
                                     )
                                 }
-                                Icon(
-                                    AppIcons.ChevronRight,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp)
-                                )
+                                if (selected) {
+                                    Icon(
+                                        AppIcons.Check,
+                                        contentDescription = null,
+                                        tint = PlanAccent,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             }
                         }
-                        Spacer(Modifier.height(12.dp))
-                        SwitchRow("自动串联(休息结束自动开始下一个)", state.settings.autoChain, AppIcons.Repeat) {
-                            vm.setAutoChain(it)
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        SwitchRow("连续专注(跳过休息)", state.settings.continuousFocus, AppIcons.InfinityLoop) {
-                            vm.setContinuousFocus(it)
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        SwitchRow("静音模式", state.settings.silentMode, AppIcons.VolumeX) {
-                            vm.setSilent(it)
-                        }
-                        if (state.settings.silentMode) {
-                            Text(
-                                "已静音:阶段切换不震动、不出声,横幅与弹窗提醒不受影响",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(start = 28.dp, bottom = 4.dp)
+                        if (index < state.settings.plans.size - 1) Spacer(Modifier.height(8.dp))
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(onClick = { showPlanEditor = true }) { Text("编辑方案参数") }
+                }
+            }
+
+            item(key = "focus-pref") {
+                MineCard(title = "专注偏好", icon = AppIcons.Sliders, accent = MintGreen, palette = palette) {
+                    // 学霸模式入口(参考番茄ToDo 学霸模式)
+                    Surface(
+                        shape = RoundedCornerShape(14.dp),
+                        color = PlanAccent.copy(alpha = 0.10f),
+                        border = BorderStroke(1.dp, PlanAccent.copy(alpha = 0.35f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { navController.navigate(Routes.SUPERMODE) }
+                    ) {
+                        Row(
+                            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                AppIcons.Shield,
+                                contentDescription = null,
+                                tint = PlanAccent,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("学霸模式", style = MaterialTheme.typography.bodyLarge, color = palette.ink)
+                                Text(
+                                    when {
+                                        !state.settings.superModeOn -> "专注期间拦截非白名单应用 · 未开启"
+                                        state.settings.superModeStrict -> "严格锁定 · 已开启"
+                                        else -> "白名单放行 ${state.settings.whitelist.size} 个应用 · 已开启"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = palette.muted
+                                )
+                            }
+                            Icon(
+                                AppIcons.ChevronRight,
+                                contentDescription = null,
+                                tint = palette.muted,
+                                modifier = Modifier.size(20.dp)
                             )
                         }
-                        Spacer(Modifier.height(4.dp))
-                        SwitchRow(
-                            "阶段切换震动", state.settings.vibrationOn, AppIcons.Vibrate,
-                            dim = state.settings.silentMode
-                        ) {
-                            vm.setVibration(it)
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        SwitchRow(
-                            "阶段切换音效", state.settings.soundOn, AppIcons.Music,
-                            dim = state.settings.silentMode
-                        ) {
-                            vm.setSound(it)
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    AppIcons.Target,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text("每周目标净学习", style = MaterialTheme.typography.bodyLarge)
-                                    Text(
-                                        "今日页与统计页周报的达标线",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Spacer(Modifier.width(8.dp))
-                                TextButton(onClick = { showGoalEditor = true }) {
-                                    Text("${state.settings.weeklyGoalHours} 小时")
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Row(
-                                Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    AppIcons.Target,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                                Spacer(Modifier.width(10.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text("每日番茄目标", style = MaterialTheme.typography.bodyLarge)
-                                    Text(
-                                        "今日页番茄数的达标线",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Spacer(Modifier.width(8.dp))
-                                TextButton(onClick = { showPomodoroGoalEditor = true }) {
-                                    Text("${state.settings.dailyPomodoroGoal} 个")
-                                }
-                            }
-                        }
                     }
+                    Spacer(Modifier.height(12.dp))
+                    SwitchRow("自动串联(休息结束自动开始下一个)", state.settings.autoChain, palette, AppIcons.Repeat) {
+                        vm.setAutoChain(it)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    SwitchRow("连续专注(跳过休息)", state.settings.continuousFocus, palette, AppIcons.InfinityLoop) {
+                        vm.setContinuousFocus(it)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    SwitchRow("静音模式", state.settings.silentMode, palette, AppIcons.VolumeX) {
+                        vm.setSilent(it)
+                    }
+                    if (state.settings.silentMode) {
+                        Text(
+                            "已静音:阶段切换不震动、不出声,横幅与弹窗提醒不受影响",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.muted,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 28.dp, bottom = 4.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    SwitchRow(
+                        "阶段切换震动", state.settings.vibrationOn, palette, AppIcons.Vibrate,
+                        dim = state.settings.silentMode
+                    ) {
+                        vm.setVibration(it)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    SwitchRow(
+                        "阶段切换音效", state.settings.soundOn, palette, AppIcons.Music,
+                        dim = state.settings.silentMode
+                    ) {
+                        vm.setSound(it)
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    MineGoalRow(
+                        title = "每周目标净学习",
+                        subtitle = "今日页与统计页周报的达标线",
+                        value = "${state.settings.weeklyGoalHours} 小时",
+                        palette = palette,
+                        onClick = { showGoalEditor = true }
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    MineGoalRow(
+                        title = "每日番茄目标",
+                        subtitle = "今日页番茄数的达标线",
+                        value = "${state.settings.dailyPomodoroGoal} 个",
+                        palette = palette,
+                        onClick = { showPomodoroGoalEditor = true }
+                    )
                 }
+            }
 
-                item(key = "subjects") {
-                    SectionCard(title = "科目管理", icon = AppIcons.GraduationCap, accent = MathColor) {
+            item(key = "head-subjects") {
+                MineSectionHead("04", "科目管理", "番茄钟里的分类维度", palette)
+            }
+
+            item(key = "subjects") {
+                MineCard(title = "科目", icon = AppIcons.GraduationCap, accent = MathColor, palette = palette) {
+                    if (state.subjects.isEmpty()) {
+                        Text(
+                            "还没有科目,先添加几个再开始专注",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = palette.muted
+                        )
+                    } else {
                         state.subjects.forEachIndexed { index, subject ->
                             Surface(
                                 shape = RoundedCornerShape(14.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                color = palette.tile,
+                                border = BorderStroke(1.dp, palette.tileBorder),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Row(
@@ -490,6 +373,7 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                                     Text(
                                         subject.name,
                                         style = MaterialTheme.typography.bodyLarge,
+                                        color = palette.ink,
                                         modifier = Modifier.weight(1f)
                                     )
                                     IconButton(onClick = { deleteSubjectCandidate = subject }) {
@@ -503,51 +387,34 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                             }
                             if (index < state.subjects.size - 1) Spacer(Modifier.height(8.dp))
                         }
-                        Spacer(Modifier.height(4.dp))
-                        Row(Modifier.fillMaxWidth()) {
-                            TextButton(
-                                onClick = { showSubjectEditor = true },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("＋ 添加科目") }
-                            TextButton(
-                                onClick = { showSubjectBatch = true },
-                                modifier = Modifier.weight(1f)
-                            ) { Text("批量添加") }
-                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(Modifier.fillMaxWidth()) {
+                        TextButton(
+                            onClick = { showSubjectEditor = true },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("＋ 添加科目") }
+                        TextButton(
+                            onClick = { showSubjectBatch = true },
+                            modifier = Modifier.weight(1f)
+                        ) { Text("批量添加") }
                     }
                 }
+            }
 
-                item(key = "data-entry") {
-                    SectionCard(
-                        title = "数据与账号",
-                        subtitle = "云端同步、备份与恢复、导入导出、账号注销",
-                        icon = AppIcons.DatabaseBackup,
-                        accent = SkyBlue
-                    ) {
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    navController.navigate(Routes.DATA) { launchSingleTop = true }
-                                }
-                                .padding(vertical = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("打开数据与账号", modifier = Modifier.weight(1f))
-                            Icon(AppIcons.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
+            item(key = "head-about") {
+                MineSectionHead("05", "关于", null, palette)
+            }
 
-                item(key = "about") {
-                    SectionCard(title = "关于", icon = AppIcons.Info, accent = Subject408Color) {
-                        Text("研钟 YanZhong 1.0.0-m1", style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            "学什么用扇贝,怎么学、学得怎么样用研钟。\n本地数据 · 零广告 · 零社区",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+            item(key = "about") {
+                MineCard(title = "研钟 YanZhong", icon = AppIcons.Info, accent = Subject408Color, palette = palette) {
+                    Text("版本 1.0.0-m1", style = MaterialTheme.typography.bodyLarge, color = palette.ink)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "学什么用扇贝,怎么学、学得怎么样用研钟。\n本地数据 · 零广告 · 零社区",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = palette.muted
+                    )
                 }
             }
         }
@@ -629,259 +496,523 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
             onDismiss = { showPomodoroGoalEditor = false }
         )
     }
-    }
 }
+
+// ---------- 设计基元:深浅两套玻璃拟态配色 ----------
 
 /**
- * 同步状态卡:一张卡承载全部同步感知,用户不必进入任何页面就知道数据是否安全。
- * 未登录 → 说明数据只在本机 + 登录入口;已登录 → 三态(运行中/成功/失败)。
- * 服务器地址、同步频率等实现细节不在本卡出现。
+ * 我的页配色。玻璃拟态卡在浅色/深色下需要两套参数,统一从主题背景亮度判断,
+ * 只在这一个地方做分支,下面所有组件都拿同一份 palette,避免颜色各自为政。
  */
+private data class MinePalette(
+    val dark: Boolean,
+    val glass: Color,
+    val border: Color,
+    val ink: Color,
+    val muted: Color,
+    val tile: Color,
+    val tileBorder: Color
+)
+
 @Composable
-private fun SyncStatusCard(
-    loggedIn: Boolean,
-    username: String,
-    lastSyncAt: Long,
-    sync: com.yanzhong.app.data.remote.SyncState,
-    onLogin: () -> Unit,
-    onSyncNow: () -> Unit
+private fun minePalette(): MinePalette {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    return if (dark) {
+        MinePalette(
+            dark = true,
+            glass = Color.White.copy(alpha = 0.06f),
+            border = Color.White.copy(alpha = 0.10f),
+            ink = Color(0xFFE6E7F0),
+            muted = Color(0xFFA8ABC8),
+            tile = Color.White.copy(alpha = 0.05f),
+            tileBorder = Color.White.copy(alpha = 0.08f)
+        )
+    } else {
+        MinePalette(
+            dark = false,
+            glass = Color.White.copy(alpha = 0.74f),
+            border = Color.White,
+            ink = PlanInk,
+            muted = PlanMuted,
+            tile = Color.White.copy(alpha = 0.62f),
+            tileBorder = Color(0x141C2240)
+        )
+    }
+}
+
+/** 玻璃拟态卡:圆角 20dp + 半透明底 + 1dp 亮边,对标参考文档的 .card */
+@Composable
+private fun MineCard(
+    title: String,
+    subtitle: String? = null,
+    icon: ImageVector? = null,
+    accent: Color = PlanAccent,
+    palette: MinePalette,
+    content: @Composable () -> Unit
 ) {
-    val statusText = when {
-        sync.running -> "正在同步…"
-        sync.lastError != null -> "同步遇到问题"
-        else -> "已同步 · ${formatSyncTime(lastSyncAt, TimeUtils.now())}"
-    }
-    SectionCard(
-        title = if (loggedIn) "自动同步已开启" else "数据只保存在本机",
-        subtitle = if (loggedIn) (username.ifBlank { "已登录" }) else null,
-        icon = AppIcons.CloudUpload,
-        accent = MintGreen
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = palette.glass,
+        border = BorderStroke(1.dp, palette.border),
+        shadowElevation = if (palette.dark) 0.dp else 2.dp,
+        modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(18.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    statusText,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f)
-                )
-                if (loggedIn) {
-                    TextButton(
-                        onClick = onSyncNow,
-                        enabled = !sync.running
-                    ) { Text(if (sync.lastError != null) "重试" else "立即同步") }
-                }
-            }
-            if (sync.lastError != null) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    readableSyncError(sync.lastError),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = CoralRedDeep
-                )
-            }
-            if (!loggedIn) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "登录后自动同步，换设备或重装可恢复。",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = onLogin,
-                    shape = RoundedCornerShape(999.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("登录并开启同步") }
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    "不登录也可以正常使用，数据不会丢失。",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SectionHeading(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.titleMedium,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurface,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp)
-    )
-}
-
-@Composable
-private fun LearningProfileCard(profile: LearningProfile) {
-    SectionCard(title = "学习档案", icon = AppIcons.TrendingUp, accent = SkyBlue) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ProfileMetric("累计专注", TimeUtils.formatHours(profile.totalFocusMin), Modifier.weight(1f))
-            ProfileMetric("活跃天数", "${profile.activeDays} 天", Modifier.weight(1f))
-            ProfileMetric("连续打卡", "${profile.streakDays} 天", Modifier.weight(1f))
-            ProfileMetric(
-                "峰值时段",
-                profile.peakHour?.let { "${it}:00" } ?: "暂无",
-                Modifier.weight(1f)
-            )
-        }
-        Spacer(Modifier.height(16.dp))
-        Text("科目投入", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
-        if (profile.perSubject.isEmpty()) {
-            Text(
-                "暂无科目投入",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        } else {
-            profile.perSubject.take(3).forEach { subject ->
-                Row(
-                    Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                if (icon != null) {
                     Box(
-                        Modifier.size(10.dp).clip(CircleShape).background(Color(subject.colorArgb))
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(subject.name, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(accent.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(icon, contentDescription = null, tint = accent, modifier = Modifier.size(18.dp))
+                    }
+                    Spacer(Modifier.width(12.dp))
+                }
+                Column(Modifier.weight(1f)) {
                     Text(
-                        TimeUtils.formatHours(subject.totalFocusMin),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.SemiBold
+                        title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = palette.ink
                     )
+                    if (!subtitle.isNullOrBlank()) {
+                        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = palette.muted)
+                    }
                 }
             }
-        }
-        Spacer(Modifier.height(14.dp))
-        Text("最近 7 天", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            profile.recentDaily.forEach { day ->
-                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        "${day.date.monthValue}/${day.date.dayOfMonth}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "${day.totalFocusMin}m",
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            }
+            Spacer(Modifier.height(14.dp))
+            content()
         }
     }
 }
 
+/** 分区标题:mono 序号 + 大号标题 + 一行说明,对标参考文档的 .sec-head */
 @Composable
-private fun ProfileMetric(label: String, value: String, modifier: Modifier = Modifier) {
-    Column(modifier) {
-        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+private fun MineSectionHead(no: String, title: String, lead: String?, palette: MinePalette) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.Bottom
+    ) {
         Text(
-            label,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            no,
+            style = MaterialTheme.typography.titleMedium,
+            fontFamily = FontFamily.Monospace,
+            fontWeight = FontWeight.Bold,
+            color = PlanAccent
         )
-    }
-}
-
-/** 夜空插画:渐变星空 + 月亮 + 两层山脉剪影(参考图3 我的页背景,纯代码绘制) */
-@Composable
-private fun NightSkyCanvas(modifier: Modifier = Modifier) {
-    Canvas(modifier) {
-        val w = size.width
-        val h = size.height
-        drawRect(
-            brush = Brush.verticalGradient(
-                listOf(NightSkyTop, NightSkyMid, NightSkyBottom)
-            ),
-            size = size
-        )
-        // 星星:固定坐标散布,大小/透明度交替
-        val stars = listOf(
-            0.10f to 0.16f, 0.24f to 0.09f, 0.36f to 0.22f, 0.52f to 0.12f,
-            0.66f to 0.20f, 0.78f to 0.07f, 0.90f to 0.16f, 0.62f to 0.32f,
-            0.16f to 0.34f, 0.44f to 0.05f
-        )
-        stars.forEachIndexed { i, (sx, sy) ->
-            drawCircle(
-                color = Color.White.copy(alpha = if (i % 3 == 0) 0.9f else 0.5f),
-                radius = if (i % 2 == 0) 2.4f else 1.7f,
-                center = Offset(w * sx, h * sy)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                title,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.ExtraBold,
+                color = palette.ink
             )
+            if (!lead.isNullOrBlank()) {
+                Text(lead, style = MaterialTheme.typography.bodySmall, color = palette.muted)
+            }
         }
-        // 月亮 + 光晕
-        val moon = Offset(w * 0.80f, h * 0.20f)
-        drawCircle(Color.White.copy(alpha = 0.10f), radius = 64f, center = moon)
-        drawCircle(Color.White.copy(alpha = 0.20f), radius = 44f, center = moon)
-        drawCircle(Color(0xFFFDF3DC), radius = 27f, center = moon)
-        // 远山
-        val far = Path().apply {
-            moveTo(0f, h)
-            lineTo(0f, h * 0.68f)
-            lineTo(w * 0.16f, h * 0.46f)
-            lineTo(w * 0.34f, h * 0.72f)
-            lineTo(w * 0.52f, h * 0.52f)
-            lineTo(w * 0.74f, h * 0.76f)
-            lineTo(w * 0.90f, h * 0.60f)
-            lineTo(w, h * 0.74f)
-            lineTo(w, h)
-            close()
-        }
-        drawPath(far, NightMountainFar)
-        // 近山
-        val near = Path().apply {
-            moveTo(0f, h)
-            lineTo(0f, h * 0.84f)
-            lineTo(w * 0.22f, h * 0.66f)
-            lineTo(w * 0.48f, h * 0.86f)
-            lineTo(w * 0.70f, h * 0.72f)
-            lineTo(w, h * 0.90f)
-            lineTo(w, h)
-            close()
-        }
-        drawPath(near, NightMountainNear)
     }
 }
 
-/** 快捷入口:渐变圆底图标 + 文字(参考图3 头像下方三入口) */
+/** 卡片内的可点行:标题行 + 右箭头,用于「备考档案」这类跳转入口 */
 @Composable
-private fun QuickEntry(
-    icon: ImageVector,
-    label: String,
-    colors: List<Color>,
+private fun MineEntryRow(text: String, palette: MinePalette, onClick: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick)
+            .background(palette.tile)
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(text, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, color = palette.ink)
+        Icon(AppIcons.ChevronRight, contentDescription = null, tint = palette.muted, modifier = Modifier.size(20.dp))
+    }
+}
+
+/** 卡片内的数值行:左标题/说明,右侧可点数值按钮 */
+@Composable
+private fun MineGoalRow(
+    title: String,
+    subtitle: String,
+    value: String,
+    palette: MinePalette,
     onClick: () -> Unit
 ) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+    Surface(
+        shape = RoundedCornerShape(14.dp),
+        color = palette.tile,
+        border = BorderStroke(1.dp, palette.tileBorder),
+        modifier = Modifier.fillMaxWidth()
     ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                AppIcons.Target,
+                contentDescription = null,
+                tint = palette.muted,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, color = palette.ink)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = palette.muted)
+            }
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = onClick) { Text(value) }
+        }
+    }
+}
+
+// ---------- Hero ----------
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun MineHero(state: MineUiState, palette: MinePalette) {
+    val profile = state.learningProfile
+    val username = when (val account = state.account) {
+        is AccountState.LoggedIn -> account.username.ifBlank { "已登录" }
+        AccountState.LoggedOut -> "本机学习档案"
+        // 首帧未定:留空比闪一下"未登录"更稳
+        AccountState.Loading -> ""
+    }
+    val titleBrush = if (palette.dark) {
+        Brush.linearGradient(listOf(Color(0xFF818CF8), Color(0xFFC4B5FD)))
+    } else {
+        Brush.linearGradient(listOf(PlanAccent, PlanAccent2))
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp, bottom = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // 徽标胶囊:左上角小圆点 + 文案,和规划文档 hero 是同一套
+        Surface(
+            shape = RoundedCornerShape(999.dp),
+            color = PlanAccent.copy(alpha = 0.08f),
+            border = BorderStroke(1.dp, PlanAccent.copy(alpha = 0.22f))
+        ) {
+            Row(
+                Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(
+                    Modifier
+                        .size(7.dp)
+                        .clip(CircleShape)
+                        .background(Brush.linearGradient(listOf(PlanAccent, PlanAccent2)))
+                )
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    "研钟 · 学习档案",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = PlanAccent
+                )
+            }
+        }
+
+        Spacer(Modifier.height(18.dp))
+
+        // 头像:靛蓝→紫渐变圆 + 白学士帽
         Box(
             Modifier
-                .size(52.dp)
+                .size(76.dp)
                 .clip(CircleShape)
-                .background(Brush.linearGradient(colors)),
+                .background(Brush.linearGradient(listOf(PlanAccent, PlanAccent2))),
             contentAlignment = Alignment.Center
         ) {
             Icon(
-                imageVector = icon,
-                contentDescription = label,
+                AppIcons.GraduationCap,
+                contentDescription = null,
                 tint = Color.White,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(36.dp)
             )
         }
-        Spacer(Modifier.height(6.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium)
+
+        Spacer(Modifier.height(14.dp))
+
+        if (username.isNotBlank()) {
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(brush = titleBrush)) { append(username) }
+                },
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.ExtraBold,
+                color = palette.ink,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(Modifier.height(4.dp))
+        }
+
+        if (state.subjects.isEmpty()) {
+            Text(
+                "尚未设置科目 · 点下方「科目管理」补齐",
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.muted,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
+        } else {
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                state.subjects.forEach { subject ->
+                    Surface(
+                        shape = RoundedCornerShape(999.dp),
+                        color = Color(subject.colorArgb)
+                    ) {
+                        Text(
+                            subject.name,
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .widthIn(max = 560.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MineStatCell("累计专注", TimeUtils.formatHours(profile.totalFocusMin), palette, Modifier.weight(1f))
+                MineStatCell("活跃天数", "${profile.activeDays} 天", palette, Modifier.weight(1f))
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                MineStatCell("连续打卡", "${profile.streakDays} 天", palette, Modifier.weight(1f))
+                MineStatCell(
+                    "峰值时段",
+                    profile.peakHour?.let { "${it}:00" } ?: "暂无",
+                    palette,
+                    Modifier.weight(1f)
+                )
+            }
+        }
     }
 }
+
+/** 玻璃数据格:大字数值 + 小字标签,对标参考文档 hero 里的 .stats 单元 */
+@Composable
+private fun MineStatCell(label: String, value: String, palette: MinePalette, modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = palette.glass,
+        border = BorderStroke(1.dp, palette.border),
+        shadowElevation = if (palette.dark) 0.dp else 1.dp,
+        modifier = modifier
+    ) {
+        Column(
+            Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                value,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = palette.ink,
+                maxLines = 1
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.muted,
+                textAlign = TextAlign.Center
+            )
+        }
+    }
+}
+
+// ---------- 账号卡 ----------
+
+/**
+ * 账号卡:一个入口进去管理账号,不在主页堆登录表单与同步按钮。
+ * 登录态未定(首帧)时既不显示"已登录"也不显示"未登录",避免误报。
+ */
+@Composable
+private fun AccountCard(
+    account: AccountState,
+    palette: MinePalette,
+    onOpen: () -> Unit
+) {
+    val title = when (account) {
+        is AccountState.LoggedIn -> account.username.ifBlank { "已登录" }
+        AccountState.LoggedOut -> "未登录"
+        AccountState.Loading -> "账号"
+    }
+    val subtitle = when (account) {
+        is AccountState.LoggedIn -> "计划与每日进度已存服务端 · 多设备共用"
+        AccountState.LoggedOut -> "数据只保存在本机"
+        AccountState.Loading -> "正在读取登录状态…"
+    }
+    MineCard(
+        title = title,
+        subtitle = subtitle,
+        icon = AppIcons.CloudUpload,
+        accent = MintGreen,
+        palette = palette
+    ) {
+        MineEntryRow(
+            text = when (account) {
+                is AccountState.LoggedIn -> "管理账号与登录设备"
+                AccountState.LoggedOut -> "登录后计划与进度自动保存到服务端"
+                AccountState.Loading -> " "
+            },
+            palette = palette,
+            onClick = onOpen
+        )
+    }
+}
+
+// ---------- 数据总览 ----------
+
+@Composable
+private fun LearningProfileCard(profile: LearningProfile, palette: MinePalette) {
+    MineCard(title = "学习数据", icon = AppIcons.TrendingUp, accent = SkyBlue, palette = palette) {
+        Text(
+            "科目投入",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.ink
+        )
+        Spacer(Modifier.height(8.dp))
+        if (profile.perSubject.isEmpty()) {
+            Text("暂无科目投入", style = MaterialTheme.typography.bodySmall, color = palette.muted)
+        } else {
+            profile.perSubject.take(3).forEach { subject ->
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(Modifier.size(10.dp).clip(CircleShape).background(Color(subject.colorArgb)))
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        subject.name,
+                        Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = palette.ink
+                    )
+                    Text(
+                        TimeUtils.formatHours(subject.totalFocusMin),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = palette.ink
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "最近 7 天",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = palette.ink
+        )
+        Spacer(Modifier.height(10.dp))
+        val maxMin = profile.recentDaily.maxOfOrNull { it.totalFocusMin }?.coerceAtLeast(1) ?: 1
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            profile.recentDaily.forEach { day ->
+                Column(
+                    Modifier.weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Box(Modifier.height(64.dp), contentAlignment = Alignment.BottomCenter) {
+                        val barHeight = if (day.totalFocusMin <= 0) 4.dp
+                        else (6f + 46f * day.totalFocusMin / maxMin).dp
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(barHeight)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    if (day.totalFocusMin <= 0) SolidColor(palette.tileBorder)
+                                    else Brush.verticalGradient(listOf(PlanAccent, PlanAccent2))
+                                )
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "${day.date.monthValue}/${day.date.dayOfMonth}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.muted
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ---------- 开关行 ----------
+
+/** 设置开关行:可选前置图标,置灰表示被上级开关覆盖(如静音模式压制),仍可预改设置 */
+@Composable
+private fun SwitchRow(
+    label: String,
+    checked: Boolean,
+    palette: MinePalette,
+    icon: ImageVector? = null,
+    dim: Boolean = false,
+    onChange: (Boolean) -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable { onChange(!checked) }
+            .padding(vertical = 5.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .weight(1f)
+                .then(if (dim) Modifier.alpha(0.45f) else Modifier)
+        ) {
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = palette.muted,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+            }
+            Text(label, style = MaterialTheme.typography.bodyLarge, color = palette.ink)
+        }
+        Switch(checked = checked, onCheckedChange = onChange)
+    }
+}
+
+// ---------- 弹窗 ----------
 
 /** 每日番茄目标数编辑(参考番茄ToDo,允许 1–30) */
 @Composable
@@ -945,45 +1076,6 @@ private fun GoalEditorDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
     )
-}
-
-/** 分组卡:彩色圆底图标 + 标题(参考图3 列表项图标色彩编码) */
-@Composable
-private fun SwitchRow(
-    label: String,
-    checked: Boolean,
-    icon: ImageVector? = null,
-    /** 置灰提示被上级开关覆盖(如静音模式压制),仍可预改设置 */
-    dim: Boolean = false,
-    onChange: (Boolean) -> Unit
-) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable { onChange(!checked) }
-            .padding(vertical = 5.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .weight(1f)
-                .graphicsLayer { alpha = if (dim) 0.45f else 1f }
-        ) {
-            if (icon != null) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-            }
-            Text(label, style = MaterialTheme.typography.bodyLarge)
-        }
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
 }
 
 @Composable

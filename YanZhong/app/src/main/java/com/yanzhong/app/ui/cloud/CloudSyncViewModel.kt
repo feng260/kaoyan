@@ -4,17 +4,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yanzhong.app.YanZhongApp
-import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.data.remote.*
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.serialization.json.Json
 
 data class CloudUiState(
     val serverUrl: String = "",
@@ -26,56 +20,25 @@ data class CloudUiState(
 )
 
 /**
- * 云同步页 VM:
- * - 服务器配置 → 登录/注册 → 设备管理
- * - 全量备份/恢复(新设备迁移)
- * - 增量同步状态(DataSyncer 常驻,自动推拉,此处仅手动触发+展示)
- * - 专注接力(StatusSyncClient 常驻:连接态、他端在线与玩法引导展示)
+ * 账号页 VM:登录/注册、设备管理、退出。
+ *
+ * 同步是后台常驻行为(DataSyncer / StatusSyncClient),不需要用户理解或手动触发,
+ * 因此这里不暴露任何"立即同步""备份恢复""专注接力"之类的入口。
  */
 class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
-    private val json = Json { ignoreUnknownKeys = true }
     private val repo = (app as YanZhongApp).repository
-    private val settingsRepo = (app as YanZhongApp).settingsRepo
-    private val syncer = (app as YanZhongApp).dataSyncer
     private val _ui = MutableStateFlow(CloudUiState())
     val ui: StateFlow<CloudUiState> = _ui
-
-    /** 增量同步:自动推拉的状态(登录后常驻,本页手动触发一轮) */
-    val syncState: StateFlow<SyncState> = syncer.state
-
-    /** 专注状态 WS:连接态 + 他端在线快照(StatusSyncClient 已常驻) */
-    val wsConnected: StateFlow<Boolean> = (app as YanZhongApp).statusSync.connected
-    val peers: StateFlow<List<PeerState>> = (app as YanZhongApp).statusSync.peers
-
-    /** 专注接力玩法引导:已读仅记设备本地,初始 true 避免闪现 */
-    val relayGuideShown: StateFlow<Boolean> = settingsRepo.relayGuideShown
-        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
-
-    fun dismissRelayGuide() {
-        viewModelScope.launch { settingsRepo.setRelayGuideShown() }
-    }
 
     init {
         viewModelScope.launch {
             val server = effectiveServerUrl()
             val access = TokenStore.currentAccess()
             _ui.update { it.copy(serverUrl = server, loggedIn = access != null) }
-            if (access != null) refreshDevices()
-        }
-    }
-
-    fun saveServer(url: String) {
-        viewModelScope.launch {
-            TokenStore.saveServer(url)
-            _ui.update { it.copy(serverUrl = url, message = "服务器已保存") }
-        }
-    }
-
-    /** 丢弃设备上保存的自定义地址,回到内置默认服务器 */
-    fun resetServer() {
-        viewModelScope.launch {
-            TokenStore.clearServer()
-            _ui.update { it.copy(serverUrl = DEFAULT_SERVER_URL, message = "已恢复默认服务器地址") }
+            if (access != null) {
+                _ui.update { it.copy(username = TokenStore.currentUsername().orEmpty()) }
+                refreshDevices()
+            }
         }
     }
 
@@ -160,43 +123,6 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             runCatching { ApiClient.api().revokeDevice(id) }
             refreshDevices()
-        }
-    }
-
-    /** 手动触发一轮增量同步(自动调度常驻,这里供用户立即执行) */
-    fun syncNow() {
-        viewModelScope.launch {
-            runCatching { syncer.syncOnce() }
-        }
-    }
-
-    /** 上传本地全量数据到云端:本地实体 → 同步行(BackupUpload) → POST /backup/restore */
-    fun backupToCloud() {
-        viewModelScope.launch {
-            _ui.update { it.copy(busy = true, message = "") }
-            runCatching {
-                val payload = withContext(Dispatchers.IO) { repo.buildBackupUpload() }
-                ApiClient.api().restoreBackup(payload)
-            }.fold({
-                _ui.update { it.copy(busy = false, message = "已备份到云端") }
-            }, { e ->
-                _ui.update { it.copy(busy = false, message = "备份失败:${e.userMessage()}") }
-            })
-        }
-    }
-
-    /** 从云端下载全量备份并覆盖本地(清空本地后按 clientGuid 重映射重插) */
-    fun restoreFromCloud() {
-        viewModelScope.launch {
-            _ui.update { it.copy(busy = true, message = "") }
-            runCatching {
-                val download = ApiClient.api().backup()
-                withContext(Dispatchers.IO) { repo.restoreFromBackup(download) }
-            }.fold({
-                _ui.update { it.copy(busy = false, message = "已从云端恢复本机数据") }
-            }, { e ->
-                _ui.update { it.copy(busy = false, message = "恢复失败:${e.userMessage()}") }
-            })
         }
     }
 
