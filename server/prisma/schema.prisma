@@ -218,6 +218,7 @@ model UserProfile {
   studyWindowsJson String?   @db.Text // JSON 数组:固定学习时段
   foundation       String?   @db.VarChar(16) // 基础情况:零基础/一般/较好
   weakSubjectsJson String?   @db.Text // JSON 数组:薄弱科目
+  briefJson        String?   @db.Text // AI 面试产出的考生画像简报(PlanBrief)
   onboardingDoneAt DateTime? // 问卷完成时间
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
@@ -239,6 +240,7 @@ model Plan {
   startDate  DateTime
   examDate   DateTime
   version    Int      @default(1)
+  documentJson String? @db.Text // 计划长文档(PlanDocument);旧版本计划可能为空
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -277,6 +279,7 @@ model PlanItem {
   minutes   Int
   priority  Int      @default(0) // 0基础/1强化/2冲刺
   status    String   @default("pending") @db.VarChar(16) // pending/done/skipped
+  completedAt DateTime?
   sortOrder Int      @default(0)
 
   plan  Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)

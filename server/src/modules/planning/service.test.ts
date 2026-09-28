@@ -2,6 +2,11 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createPlanningService, PlanningDb } from './service'
 import { dayStart, addDays, profileInputSchema } from './schemas'
+import { generateRulePlan } from './generator'
+import type { AiPlanningInput } from './aiGenerator'
+import { EventEmitter } from 'node:events'
+import { WsHub } from '../../shared/ws/Hub'
+import type WebSocket from 'ws'
 
 /**
  * 本机没有 Docker,不方便起真实 MySQL,所以用内存假库跑服务层测试:
@@ -27,7 +32,7 @@ const validProfile = (overrides: Row = {}) => ({
   ...overrides,
 })
 
-function createFakeDb(options: { failOnItemInsertOnce?: boolean } = {}) {
+function createFakeDb(options: { failOnItemInsertOnce?: boolean; beforeItemUpdate?: () => Promise<void> } = {}) {
   const state = {
     profiles: [] as Row[],
     plans: [] as Row[],
@@ -55,7 +60,13 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean } = {}) {
   }
 
   const whereMatch = (row: Row, where: Row) =>
-    Object.entries(where).every(([key, value]) => row[key] === value)
+    Object.entries(where).every(([key, value]) => {
+      // 支持 { in: [...] }:历史列表用一条 groupBy 聚合多份计划的进度
+      if (value && typeof value === 'object' && Array.isArray((value as Row).in)) {
+        return (value as Row).in.includes(row[key])
+      }
+      return row[key] === value
+    })
 
   const sortRows = (rows: Row[], orderBy?: Record<string, 'asc' | 'desc'> | Array<Record<string, 'asc' | 'desc'>>) => {
     if (!orderBy) return rows
@@ -83,12 +94,18 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean } = {}) {
         state.profiles.push(row)
         return row
       },
+      update: async ({ where, data }: any) => {
+        const existing = state.profiles.find(r => whereMatch(r, where))
+        if (!existing) throw new Error('profile not found')
+        Object.assign(existing, data)
+        return existing
+      },
     },
     plan: {
       findFirst: async ({ where, orderBy }: any) =>
         sortRows(state.plans.filter(r => whereMatch(r, where)), orderBy)[0] ?? null,
-      findMany: async ({ where }: any = {}) =>
-        state.plans.filter(r => !where || whereMatch(r, where)),
+      findMany: async ({ where, orderBy }: any = {}) =>
+        sortRows(state.plans.filter(r => !where || whereMatch(r, where)), orderBy),
       create: async ({ data }: any) => {
         const row = { id: ++seq.plan, ...data }
         state.plans.push(row)
@@ -125,6 +142,28 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean } = {}) {
       },
       findMany: async ({ where, orderBy }: any = {}) =>
         sortRows(state.items.filter(r => !where || whereMatch(r, where)), orderBy),
+      groupBy: async ({ by, where, _count }: any) => {
+        const rows = state.items.filter(r => !where || whereMatch(r, where))
+        const groups = new Map<string, Row>()
+        for (const row of rows) {
+          const key = by.map((field: string) => String(row[field])).join('\u0000')
+          let group = groups.get(key)
+          if (!group) {
+            group = {}
+            for (const field of by) group[field] = row[field]
+            group._count = { _all: 0 }
+            groups.set(key, group)
+          }
+          if (_count?._all) group._count._all += 1
+        }
+        return [...groups.values()]
+      },
+      updateMany: async ({ where, data }: any) => {
+        await options.beforeItemUpdate?.()
+        const hit = state.items.filter(r => whereMatch(r, where))
+        for (const row of hit) Object.assign(row, data)
+        return { count: hit.length }
+      },
       deleteMany: async ({ where }: any) => {
         const hit = state.items.filter(r => whereMatch(r, where))
         state.items = state.items.filter(r => !whereMatch(r, where))
@@ -145,8 +184,42 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean } = {}) {
   return { db: db as PlanningDb, state, breakNextItemInsert: () => { failNextItemInsert = true } }
 }
 
-const serviceWith = (fake: ReturnType<typeof createFakeDb>) => createPlanningService(fake.db)
+const serviceWith = (fake: ReturnType<typeof createFakeDb>) => createPlanningService(fake.db, {
+  configured: () => true,
+  generate: async (input: AiPlanningInput) => ({
+    title: `${input.targetType}备考计划`,
+    plan: generateRulePlan(input),
+  }),
+})
 const USER = 'user-guid-0000-0000-0000-000000000001'
+
+test('an old socket closing after reconnect does not remove the new device connection', () => {
+  const hub = new WsHub()
+  const oldSocket = new EventEmitter() as WebSocket
+  const newSocket = new EventEmitter() as WebSocket
+  hub.add(oldSocket, USER, 7, 'old')
+  hub.add(newSocket, USER, 7, 'new')
+
+  oldSocket.emit('close')
+
+  assert.deepEqual(hub.onlineDevices(USER).map(device => device.deviceName), ['new'])
+})
+
+test('an old socket cannot rename or update the replacement connection', () => {
+  const hub = new WsHub()
+  const oldSocket = new EventEmitter() as WebSocket
+  const newSocket = new EventEmitter() as WebSocket
+  const oldConn = hub.add(oldSocket, USER, 7, 'old')
+  const newConn = hub.add(newSocket, USER, 7, 'new')
+
+  hub.rename(7, 'stale', oldConn)
+  hub.setStatus(7, { phase: 'focus' }, oldConn)
+  hub.setStatus(7, { phase: 'break' }, newConn)
+
+  assert.deepEqual(hub.onlineDevices(USER), [{
+    deviceId: 7, deviceName: 'new', lastStatus: { phase: 'break' },
+  }])
+})
 
 test('getProfile returns null before onboarding', async () => {
   const fake = createFakeDb()
@@ -200,6 +273,58 @@ test('upsertProfile overwrites an existing profile for the same user only', asyn
   assert.equal((await service.getProfile('other-user'))!.dailyMinutes, 60)
 })
 
+test('setItemStatus persists completion time and clears it when reopened', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const plan = await service.generatePlan(USER)
+  const itemId = plan.items[0].id
+  assert.equal(plan.items[0].completedAt, null)
+
+  const done = await service.setItemStatus(USER, itemId, 'done')
+  const completedAt = done.items.find(i => i.id === itemId)!.completedAt
+  assert.equal(typeof completedAt, 'number')
+  assert.equal((await service.getActivePlan(USER))!.items.find(i => i.id === itemId)!.completedAt, completedAt)
+
+  const repeated = await service.setItemStatus(USER, itemId, 'done')
+  assert.equal(repeated.items.find(i => i.id === itemId)!.completedAt, completedAt)
+
+  const reopened = await service.setItemStatus(USER, itemId, 'pending')
+  assert.equal(reopened.items.find(i => i.id === itemId)!.completedAt, null)
+})
+
+test('a stale completion cannot restore its old timestamp after another device reopens it', async () => {
+  let release!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  let entered!: () => void
+  const atUpdate = new Promise<void>(resolve => { entered = resolve })
+  let blockFirst = false
+  const fake = createFakeDb({ beforeItemUpdate: async () => {
+    if (blockFirst) {
+      blockFirst = false
+      entered()
+      await blocked
+    }
+  } })
+  const service = serviceWith(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const plan = await service.generatePlan(USER)
+  const itemId = plan.items[0].id
+  await service.setItemStatus(USER, itemId, 'done')
+  const original = fake.state.items.find(i => i.id === itemId)!.completedAt
+
+  blockFirst = true
+  const staleDone = service.setItemStatus(USER, itemId, 'done')
+  await atUpdate
+  await service.setItemStatus(USER, itemId, 'pending')
+  release()
+  await staleDone
+
+  const item = fake.state.items.find(i => i.id === itemId)!
+  assert.equal(item.status, 'done')
+  assert.notEqual(item.completedAt, original)
+})
+
 test('getActivePlan returns null when the user has no plan', async () => {
   const fake = createFakeDb()
   assert.equal(await serviceWith(fake).getActivePlan(USER), null)
@@ -214,6 +339,39 @@ test('generatePlan rejects users without a profile', async () => {
   assert.equal(fake.state.plans.length, 0)
 })
 
+test('generatePlan refuses to create a rule plan when AI is unavailable', async () => {
+  const fake = createFakeDb()
+  const service = createPlanningService(fake.db, {
+    configured: () => false,
+    generate: async () => { throw new Error('AI should not be called') },
+  })
+  await service.upsertProfile(USER, validProfile() as any)
+
+  await assert.rejects(
+    () => service.generatePlan(USER),
+    (error: any) => error.code === 'AI_NOT_CONFIGURED',
+  )
+  assert.equal(fake.state.plans.length, 0)
+})
+
+test('generatePlan preserves the active plan when AI fails', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const previous = await service.generatePlan(USER)
+  const failedService = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async () => { throw new Error('model unavailable') },
+  })
+
+  await assert.rejects(
+    () => failedService.generatePlan(USER),
+    (error: any) => error.code === 'PLAN_GENERATION_FAILED',
+  )
+  assert.equal(fake.state.plans.length, 1)
+  assert.equal((await service.getActivePlan(USER))!.id, previous.id)
+})
+
 test('generatePlan persists an active plan with stages covering the whole preparation window', async () => {
   const fake = createFakeDb()
   const service = serviceWith(fake)
@@ -223,7 +381,7 @@ test('generatePlan persists an active plan with stages covering the whole prepar
 
   assert.equal(plan.status, 'active')
   assert.equal(plan.version, 1)
-  assert.equal(plan.source, 'rule')
+  assert.equal(plan.source, 'ai')
   assert.equal(plan.startDate, dayIso(0))
   assert.equal(plan.examDate, dayIso(120))
   assert.deepEqual(plan.stages.map((s: any) => s.name), ['基础阶段', '强化阶段', '冲刺阶段'])
@@ -386,4 +544,233 @@ test('getActivePlan flags the plan as stale when the profile no longer matches i
   // 档案变了但还没重新生成:旧计划必须原样留着,不能变成空档
   assert.equal(plan.examDate, dayIso(120))
   assert.equal(plan.items.length > 0, true)
+})
+
+test('listPlanHistory returns an empty list before any plan is generated', async () => {
+  const fake = createFakeDb()
+  assert.deepEqual(await serviceWith(fake).listPlanHistory(USER), [])
+})
+
+test('listPlanHistory lists the active plan and every archived version, newest first', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const first = await service.generatePlan(USER)
+  const second = await service.generatePlan(USER)
+
+  // 勾一个第一版的项,确认归档计划保留自己的打卡数据
+  await service.setItemStatus(USER, second.items[0].id, 'done')
+
+  const history = await service.listPlanHistory(USER)
+
+  assert.deepEqual(history.map(p => p.version), [2, 1])
+  assert.deepEqual(history.map(p => p.status), ['active', 'archived'])
+  assert.equal(history[0].id, second.id)
+  assert.equal(history[1].id, first.id)
+  // 摘要只带计数:进度按 planId 聚合,不需要拉回上千条明细
+  assert.equal(history[0].totalItems, second.items.length)
+  assert.equal(history[0].doneItems, 1)
+  assert.equal(history[1].totalItems, first.items.length)
+  assert.equal(history[1].doneItems, 0)
+  assert.equal(history[0].startDate, dayIso(0))
+  assert.equal(history[0].totalDays > 0, true)
+})
+
+test('listPlanHistory only counts items that belong to each plan', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile('other-user', validProfile() as any)
+  const otherPlan = await service.generatePlan('other-user')
+  await service.upsertProfile(USER, validProfile() as any)
+  const mine = await service.generatePlan(USER)
+
+  const history = await service.listPlanHistory(USER)
+
+  assert.equal(history.length, 1)
+  assert.equal(history[0].id, mine.id)
+  assert.equal(history[0].totalItems, mine.items.length)
+  assert.notEqual(history[0].id, otherPlan.id)
+})
+
+test('getPlanById returns the archived plan with its stages and items intact', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const first = await service.generatePlan(USER)
+  await service.generatePlan(USER)
+
+  const archived = (await service.getPlanById(USER, first.id))!
+
+  assert.equal(archived.id, first.id)
+  assert.equal(archived.status, 'archived')
+  assert.equal(archived.version, 1)
+  assert.equal(archived.stages.length, first.stages.length)
+  assert.equal(archived.items.length, first.items.length)
+  assert.equal(archived.progress.totalItems, first.items.length)
+  // 归档计划不该再被标成「需要重新生成」
+  assert.equal(archived.stale, false)
+})
+
+test('getPlanById refuses to read another user\'s plan', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile('other-user', validProfile() as any)
+  const otherPlan = await service.generatePlan('other-user')
+  await service.upsertProfile(USER, validProfile() as any)
+
+  assert.equal(await service.getPlanById(USER, otherPlan.id), null)
+  assert.equal(await service.getPlanById('other-user', otherPlan.id) !== null, true)
+})
+
+const SAMPLE_BRIEF = {
+  summary: '在职二战,目标浙大 408,数学基础薄弱',
+  goals: ['浙江大学计算机专硕'],
+  constraints: ['在职,工作日只有晚上 3 小时'],
+  focus: ['数学中值定理与级数反复失分'],
+  materials: ['已有王道 408 四本'],
+  notes: ['周末全天可支配'],
+}
+
+const SAMPLE_DOCUMENT = {
+  title: '468 天考研全程作战计划',
+  hero: {
+    badge: '全程作战计划',
+    titleLead: '',
+    titleAccent: '468',
+    titleTail: '天考研全程作战计划',
+    subtitle: '从今天到考前,一张表管到底',
+    subjects: ['408', '数学一', '英语一', '政治'],
+    stats: [{ label: '总天数', value: '468' }],
+  },
+  chapters: [
+    {
+      no: '01',
+      title: '起点盘点与目标设定',
+      intro: '先把家底摸清楚',
+      blocks: [{ type: 'text', text: '你现在的起点决定计划的第一阶段怎么排。' }],
+    },
+    {
+      no: '02',
+      title: '阶段总览',
+      blocks: [
+        { type: 'cards', cards: [{ icon: '1', title: '基础阶段', subtitle: '第 1-150 天', lines: ['过教材', '做课后题'] }] },
+      ],
+    },
+  ],
+}
+
+test('generatePlan persists the long document and exposes it on the plan', async () => {
+  const fake = createFakeDb()
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async (input: AiPlanningInput) => ({
+      title: '考研备考计划',
+      plan: generateRulePlan(input),
+      document: SAMPLE_DOCUMENT as any,
+    }),
+  })
+  await service.upsertProfile(USER, validProfile() as any)
+
+  const plan = await service.generatePlan(USER)
+
+  assert.equal(plan.document?.title, '468 天考研全程作战计划')
+  assert.equal(plan.document?.chapters.length, 2)
+  // 落库的是 JSON 文本,重新读出来仍然完整
+  assert.equal(typeof fake.state.plans[0].documentJson, 'string')
+  assert.equal(JSON.parse(fake.state.plans[0].documentJson).hero.titleAccent, '468')
+})
+
+test('generatePlan degrades to a null document when the AI cannot produce one', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+
+  const plan = await service.generatePlan(USER)
+
+  // 长文档是加分项:生成不出来也不能影响每日清单
+  assert.equal(plan.document, null)
+  assert.equal(fake.state.plans[0].documentJson, null)
+  assert.equal(plan.items.length > 0, true)
+})
+
+test('generatePlan feeds the interview brief stored on the profile into the AI input', async () => {
+  const fake = createFakeDb()
+  let captured: AiPlanningInput | null = null
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async (input: AiPlanningInput) => {
+      captured = input
+      return { title: '考研备考计划', plan: generateRulePlan(input) }
+    },
+  })
+  await service.upsertProfile(USER, validProfile() as any)
+  fake.state.profiles[0].briefJson = JSON.stringify(SAMPLE_BRIEF)
+
+  await service.generatePlan(USER)
+
+  assert.equal(captured!.brief?.summary, SAMPLE_BRIEF.summary)
+  assert.deepEqual(captured!.brief?.focus, SAMPLE_BRIEF.focus)
+})
+
+test('interview returns the AI result and stores the brief for the next generation', async () => {
+  const fake = createFakeDb()
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async (input: AiPlanningInput) => ({ title: '考研备考计划', plan: generateRulePlan(input) }),
+    interview: async () => ({ reply: '信息够了,我这就开始排', options: [], done: true, brief: SAMPLE_BRIEF as any }),
+  })
+  await service.upsertProfile(USER, validProfile() as any)
+  fake.state.profiles[0].briefJson = undefined
+
+  const result = await service.interview(USER, { messages: [{ role: 'user', content: '我想考浙大 408' }] })
+
+  assert.equal(result.done, true)
+  assert.equal(result.brief?.summary, SAMPLE_BRIEF.summary)
+  // 收尾后简报落库,generatePlan 下次直接读得到
+  assert.equal(typeof fake.state.profiles[0].briefJson, 'string')
+  assert.equal(JSON.parse(fake.state.profiles[0].briefJson).goals[0], SAMPLE_BRIEF.goals[0])
+  assert.equal((await service.getProfile(USER))!.brief?.summary, SAMPLE_BRIEF.summary)
+})
+
+test('interview does not store an empty brief when the AI wrapped up with nothing', async () => {
+  const fake = createFakeDb()
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async (input: AiPlanningInput) => ({ title: '考研备考计划', plan: generateRulePlan(input) }),
+    interview: async () => ({
+      reply: '那我们开始吧',
+      options: [],
+      done: true,
+      brief: { summary: '', goals: [], constraints: [], focus: [], materials: [], notes: [] },
+    }),
+  })
+  await service.upsertProfile(USER, validProfile() as any)
+
+  await service.interview(USER, { messages: [{ role: 'user', content: '直接开始' }], force: true })
+
+  assert.equal(fake.state.profiles[0].briefJson, undefined)
+})
+
+test('interview reports AI_NOT_CONFIGURED when no interviewer is wired up', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+
+  await assert.rejects(
+    () => service.interview(USER, {}),
+    (error: any) => error?.code === 'AI_NOT_CONFIGURED',
+  )
+})
+
+test('upsertProfile keeps the brief gathered during the interview', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  fake.state.profiles[0].briefJson = JSON.stringify(SAMPLE_BRIEF)
+
+  await service.upsertProfile(USER, validProfile({ dailyMinutes: 240 }) as any)
+
+  // 改档案不该把面谈得到的画像一起丢掉
+  assert.equal(typeof fake.state.profiles[0].briefJson, 'string')
+  assert.equal((await service.getProfile(USER))!.brief?.summary, SAMPLE_BRIEF.summary)
 })

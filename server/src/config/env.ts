@@ -33,7 +33,19 @@ export const env = {
     .map(s => s.trim())
     .filter(Boolean),
   adminToken: process.env.ADMIN_TOKEN ?? '',
+  // AI 计划生成用的大模型接口(OpenAI 兼容协议)。
+  // 兼容 DeepSeek / 豆包(火山方舟) / 智谱 / 硅基流动 / 通义 等;
+  // 未配置 apiKey 时计划生成接口返回 AI_NOT_CONFIGURED。
+  llm: {
+    baseUrl: (process.env.LLM_BASE_URL ?? 'https://api.deepseek.com').replace(/\/+$/, ''),
+    apiKey: process.env.LLM_API_KEY ?? '',
+    model: process.env.LLM_MODEL ?? 'deepseek-flash',
+    timeoutMs: Number(process.env.LLM_TIMEOUT_MS ?? 120_000),
+    maxTokens: Number(process.env.LLM_MAX_TOKENS ?? 8192),
+  },
 }
 
 export const smtpConfigured = (): boolean => env.smtp.host !== '' && env.smtp.user !== ''
 export const adminConfigured = (): boolean => env.adminToken !== ''
+/** 计划生成所需的模型密钥是否已配置 */
+export const llmConfigured = (): boolean => env.llm.apiKey !== ''

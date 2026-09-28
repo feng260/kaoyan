@@ -24,13 +24,13 @@ export function setupStatusWs(server: import('http').Server) {
     const conn = hub.add(ws, userGuid, deviceId, `设备#${deviceId}`)
 
     ws.on('message', raw => {
+      if (!hub.isCurrent(deviceId, conn)) return
       let msg: any
       try { msg = JSON.parse(String(raw)) } catch { return }
       switch (msg.type) {
         case 'hello': {
           if (typeof msg.deviceName === 'string' && msg.deviceName) {
-            hub.rename(deviceId, msg.deviceName.slice(0, 64))
-            conn.deviceName = msg.deviceName.slice(0, 64)
+            hub.rename(deviceId, msg.deviceName.slice(0, 64), conn)
           }
           // 重连即全量重拉:回推 presence(self 标记让客户端过滤自己)
           hub.send(ws, {
@@ -51,11 +51,11 @@ export function setupStatusWs(server: import('http').Server) {
             following: typeof msg.following === 'boolean' ? msg.following : undefined,
             paused: typeof msg.paused === 'boolean' ? msg.paused : undefined,
           }
-          hub.setStatus(deviceId, status)
+          hub.setStatus(deviceId, status, conn)
           break
         }
         case 'stop': {
-          hub.setStatus(deviceId, { phase: 'idle' })
+          hub.setStatus(deviceId, { phase: 'idle' }, conn)
           break
         }
       }

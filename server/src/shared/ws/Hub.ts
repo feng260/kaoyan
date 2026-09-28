@@ -30,7 +30,7 @@ interface Conn {
  * - kick(设备被强制登出时断开其连接)
  * 重连恢复策略:客户端重连后发送 hello,服务端即回推 presence 全量。
  */
-class WsHub {
+export class WsHub {
   private conns = new Map<number, Conn>() // key: deviceId
   private timer: NodeJS.Timeout | null = null
 
@@ -41,7 +41,7 @@ class WsHub {
       for (const [deviceId, conn] of this.conns) {
         if (!conn.alive) {
           conn.ws.terminate()
-          this.remove(deviceId, 'ping-timeout')
+          this.remove(deviceId, 'ping-timeout', conn)
           continue
         }
         conn.alive = false
@@ -55,27 +55,31 @@ class WsHub {
     const conn: Conn = { ws, userGuid, deviceId, deviceName, alive: true }
     this.conns.set(deviceId, conn)
     ws.on('pong', () => { conn.alive = true })
-    ws.on('close', () => this.remove(deviceId, 'closed'))
-    ws.on('error', () => this.remove(deviceId, 'error'))
+    ws.on('close', () => this.remove(deviceId, 'closed', conn))
+    ws.on('error', () => this.remove(deviceId, 'error', conn))
     return conn
   }
 
-  /** 设备主动改名(hello 时机) */
-  rename(deviceId: number, name: string) {
-    const conn = this.conns.get(deviceId)
-    if (conn) conn.deviceName = name
+  isCurrent(deviceId: number, expectedConn: Conn) {
+    return this.conns.get(deviceId) === expectedConn
   }
 
-  private remove(deviceId: number, reason: string) {
+  /** 设备主动改名(hello 时机) */
+  rename(deviceId: number, name: string, expectedConn: Conn) {
     const conn = this.conns.get(deviceId)
-    if (!conn) return
+    if (conn === expectedConn) conn.deviceName = name
+  }
+
+  private remove(deviceId: number, reason: string, expectedConn?: Conn) {
+    const conn = this.conns.get(deviceId)
+    if (!conn || (expectedConn && conn !== expectedConn)) return
     this.conns.delete(deviceId)
     this.broadcastPresence(conn.userGuid, `peer-offline:${reason}`)
   }
 
-  setStatus(deviceId: number, status: PeerStatus) {
+  setStatus(deviceId: number, status: PeerStatus, expectedConn: Conn) {
     const conn = this.conns.get(deviceId)
-    if (!conn) return
+    if (conn !== expectedConn) return
     conn.lastStatus = status
     // 推送给同用户其他在线设备
     this.sendToUser(conn.userGuid, {

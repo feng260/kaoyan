@@ -1,7 +1,11 @@
 import { prisma } from '../../shared/prisma'
 import { ApiError } from '../../middlewares/error'
+import { llmConfigured } from '../../config/env'
 import { dayStart, diffDays, profileInputSchema, type ProfileInput } from './schemas'
-import { generateRulePlan, PlanGenerationError, type GeneratedPlan } from './generator'
+import type { GeneratedPlan } from './generator'
+import { generateAiPlan, type AiPlanningInput } from './aiGenerator'
+import { runPlanInterview, type InterviewInput, type InterviewResult } from './aiCoach'
+import { briefIsEmpty, normalizeBrief, type PlanBrief, type PlanDocument } from './document'
 
 /**
  * 备考档案与计划的持久化(Phase 0)。
@@ -18,9 +22,11 @@ export interface PlanningDb {
   userProfile: {
     findUnique(args: AnyArgs): Promise<any>
     upsert(args: AnyArgs): Promise<any>
+    update(args: AnyArgs): Promise<any>
   }
   plan: {
     findFirst(args?: AnyArgs): Promise<any>
+    findMany(args?: AnyArgs): Promise<any[]>
     create(args: AnyArgs): Promise<any>
     updateMany(args: AnyArgs): Promise<any>
   }
@@ -31,6 +37,8 @@ export interface PlanningDb {
   planItem: {
     createMany(args: AnyArgs): Promise<any>
     findMany(args?: AnyArgs): Promise<any[]>
+    updateMany(args: AnyArgs): Promise<any>
+    groupBy(args: AnyArgs): Promise<any[]>
   }
   $transaction<T>(fn: (tx: PlanningDb) => Promise<T>): Promise<T>
 }
@@ -43,6 +51,8 @@ export interface PublicProfile {
   studyWindows: string[]
   foundation: string | null
   weakSubjects: string[]
+  /** 备考面谈得到的考生画像简报;没聊过就是 null */
+  brief: PlanBrief | null
   onboardingDoneAt: number | null
   updatedAt: number | null
 }
@@ -57,6 +67,7 @@ export interface PublicPlanItem {
   priority: number
   status: string
   sortOrder: number
+  completedAt: number | null
 }
 
 export interface PublicPlan {
@@ -70,6 +81,8 @@ export interface PublicPlan {
   version: number
   /** 档案改过但计划还没重建:客户端应提示「重新生成」而不是直接换掉用户今天的安排 */
   stale: boolean
+  /** 长文档(对标 468 天全程作战计划);生成失败时为 null,客户端回退到只显示每日清单 */
+  document: PlanDocument | null
   stages: Array<{ id: number; name: string; startDate: string; endDate: string; sortOrder: number }>
   items: PublicPlanItem[]
   progress: { totalItems: number; pendingItems: number; doneItems: number; totalMinutes: number; totalDays: number }
@@ -77,7 +90,31 @@ export interface PublicPlan {
   updatedAt: number | null
 }
 
+/**
+ * 历史列表里的计划摘要:只带计数,不带 items/stages 明细。
+ * 一份 468 天的计划有上千条计划项,历史列表若逐份把明细拉回来,列表接口会重得离谱。
+ */
+export interface PublicPlanSummary {
+  id: number
+  title: string
+  targetType: string
+  source: string
+  status: string
+  startDate: string
+  examDate: string
+  version: number
+  totalItems: number
+  doneItems: number
+  totalDays: number
+  createdAt: number | null
+  updatedAt: number | null
+}
+
 const DAY_MS = 24 * 3600_000
+
+/** 计划项状态:与客户端与 prisma 默认值对齐 */
+export const PLAN_ITEM_STATUSES = ['pending', 'done'] as const
+export type PlanItemStatus = (typeof PLAN_ITEM_STATUSES)[number]
 
 /** 按天输出,和 App 端「今天/明天」的判定口径保持一致 */
 function dateOnly(value: unknown): string {
@@ -105,12 +142,25 @@ function jsonArray(raw: unknown): string[] {
   }
 }
 
+/** 数据库里存的结构化对象(briefJson / documentJson):解析失败一律当 null,不让一行坏数据把接口打挂 */
+function jsonObject(raw: unknown): Record<string, any> | null {
+  if (raw && typeof raw === 'object') return raw as Record<string, any>
+  if (typeof raw !== 'string' || !raw.trim()) return null
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
 function toDay(value: unknown): Date {
   const d = value instanceof Date ? value : new Date(Number(value))
   return dayStart(d)
 }
 
 function serializeProfile(row: any): PublicProfile {
+  const briefRaw = jsonObject(row.briefJson)
   return {
     targetType: row.targetType,
     examDate: dateOnly(row.examDate),
@@ -118,6 +168,7 @@ function serializeProfile(row: any): PublicProfile {
     studyWindows: jsonArray(row.studyWindowsJson),
     foundation: row.foundation ?? null,
     weakSubjects: jsonArray(row.weakSubjectsJson),
+    brief: briefRaw ? normalizeBrief(briefRaw) : null,
     onboardingDoneAt: ms(row.onboardingDoneAt),
     updatedAt: ms(row.updatedAt),
   }
@@ -145,6 +196,7 @@ function serializePlan(row: any, stages: any[], items: any[], stale: boolean): P
     examDate: dateOnly(row.examDate),
     version: Number(row.version ?? 1),
     stale,
+    document: jsonObject(row.documentJson) as PlanDocument | null,
     stages: stages.map(s => ({
       id: s.id,
       name: s.name,
@@ -162,6 +214,7 @@ function serializePlan(row: any, stages: any[], items: any[], stale: boolean): P
       priority: Number(i.priority ?? 0),
       status: i.status,
       sortOrder: Number(i.sortOrder ?? 0),
+      completedAt: ms(i.completedAt),
     })),
     progress: {
       totalItems: items.length,
@@ -173,6 +226,38 @@ function serializePlan(row: any, stages: any[], items: any[], stale: boolean): P
     createdAt: ms(row.createdAt),
     updatedAt: ms(row.updatedAt),
   }
+}
+
+/** 计划行 + 按状态聚合出的计数 → 历史列表用的摘要 */
+function serializePlanSummary(row: any, totalItems: number, doneItems: number): PublicPlanSummary {
+  return {
+    id: row.id,
+    title: row.title,
+    targetType: row.targetType,
+    source: row.source,
+    status: row.status,
+    startDate: dateOnly(row.startDate),
+    examDate: dateOnly(row.examDate),
+    version: Number(row.version ?? 1),
+    totalItems,
+    doneItems,
+    totalDays: diffDays(toDay(row.examDate), toDay(row.startDate)),
+    createdAt: ms(row.createdAt),
+    updatedAt: ms(row.updatedAt),
+  }
+}
+
+/** 从库里读出的档案行还原成 ProfileInput;档案不可用时返回 null —— 面谈没有档案也能进行 */
+function profileInputFromRow(row: any): ProfileInput | null {
+  const parsed = profileInputSchema.safeParse({
+    targetType: row.targetType,
+    examDate: toDay(row.examDate),
+    dailyMinutes: Number(row.dailyMinutes ?? 0),
+    studyWindows: jsonArray(row.studyWindowsJson),
+    foundation: row.foundation ?? '一般',
+    weakSubjects: jsonArray(row.weakSubjectsJson),
+  })
+  return parsed.success ? parsed.data : null
 }
 
 /**
@@ -214,7 +299,24 @@ function assertGeneratedPlanValid(generated: GeneratedPlan, dailyMinutes: number
   }
 }
 
-export function createPlanningService(db: PlanningDb) {
+/**
+ * 服务端依赖的 AI 能力。`interview` 刻意是可选的:
+ * 单测注入的假 AI 只需要 generate,不必为了跑通测试去 mock 一整套面谈。
+ */
+export interface PlanningAi {
+  configured: () => boolean
+  generate: (input: AiPlanningInput) => Promise<{ title: string; plan: GeneratedPlan; document?: PlanDocument | null }>
+  interview?: (input: InterviewInput) => Promise<InterviewResult>
+}
+
+export function createPlanningService(
+  db: PlanningDb,
+  ai: PlanningAi = {
+    configured: llmConfigured,
+    generate: generateAiPlan,
+    interview: runPlanInterview,
+  },
+) {
   async function requireProfileRow(userGuid: string) {
     const row = await db.userProfile.findUnique({ where: { userGuid } })
     if (!row) {
@@ -229,10 +331,13 @@ export function createPlanningService(db: PlanningDb) {
       db.planItem.findMany({ where: { planId: planRow.id }, orderBy: [{ planDate: 'asc' }, { sortOrder: 'asc' }] }),
       db.userProfile.findUnique({ where: { userGuid } }),
     ])
-    const stale = !profileRow
-      ? true
-      : diffDays(toDay(planRow.examDate), toDay(profileRow.examDate)) !== 0
-        || firstDayBudget(items) !== Number(profileRow.dailyMinutes ?? 0)
+    // 只有当前的计划才谈得上「档案变了需要重新生成」;历史计划一律不标 stale
+    const stale = planRow.status !== 'active'
+      ? false
+      : !profileRow
+        ? true
+        : diffDays(toDay(planRow.examDate), toDay(profileRow.examDate)) !== 0
+          || firstDayBudget(items) !== Number(profileRow.dailyMinutes ?? 0)
     return serializePlan(planRow, stages, items, stale)
   }
 
@@ -270,27 +375,86 @@ export function createPlanningService(db: PlanningDb) {
       return row ? loadPlan(userGuid, row) : null
     },
 
+    /**
+     * 历史计划列表:当前计划 + 所有已归档计划,按版本倒序(最新的在前)。
+     *
+     * 重新生成会把旧计划归档并清空打卡(新计划全部 pending),用户需要一个地方回看
+     * 「上一版计划长什么样」。这里只返回摘要,进度用一条 groupBy 聚合出来,
+     * 不把每份上千条的 items 拉回内存。
+     */
+    async listPlanHistory(userGuid: string): Promise<PublicPlanSummary[]> {
+      const rows = await db.plan.findMany({
+        where: { userGuid },
+        orderBy: { version: 'desc' },
+      })
+      if (rows.length === 0) return []
+
+      const grouped = await db.planItem.groupBy({
+        by: ['planId', 'status'],
+        where: { planId: { in: rows.map(r => r.id) } },
+        _count: { _all: true },
+      })
+      const total = new Map<number, number>()
+      const done = new Map<number, number>()
+      for (const g of grouped) {
+        const count = Number(g._count?._all ?? 0)
+        total.set(g.planId, (total.get(g.planId) ?? 0) + count)
+        if (g.status === 'done') done.set(g.planId, (done.get(g.planId) ?? 0) + count)
+      }
+      return rows.map(row => serializePlanSummary(row, total.get(row.id) ?? 0, done.get(row.id) ?? 0))
+    },
+
+    /** 只读查看某一份计划(含阶段与计划项);严格按 userGuid 归属过滤,读不到他人的计划 */
+    async getPlanById(userGuid: string, planId: number): Promise<PublicPlan | null> {
+      const row = await db.plan.findFirst({ where: { id: planId, userGuid } })
+      return row ? loadPlan(userGuid, row) : null
+    },
+
     async generatePlan(userGuid: string): Promise<PublicPlan> {
       const profileRow = await requireProfileRow(userGuid)
       const profile = serializeProfile(profileRow)
       const examDate = toDay(profileRow.examDate)
 
-      let generated: GeneratedPlan
-      try {
-        generated = generateRulePlan({
-          examDate,
-          startDate: dayStart(new Date()),
-          dailyMinutes: profile.dailyMinutes,
-          weakSubjects: profile.weakSubjects,
-          studyWindows: profile.studyWindows,
-        })
-      } catch (error) {
-        if (error instanceof PlanGenerationError) {
-          throw new ApiError(400, error.code, error.message)
-        }
-        throw new ApiError(500, 'PLAN_GENERATION_FAILED', '计划生成失败,请稍后重试')
+      // 库里读出来的是宽松字符串,这里再过一遍 schema 收成 ProfileInput 的字面量联合类型。
+      // 校验失败说明存进库的档案本身就不可用(日期过期、时长越界等),交给路由层转成业务错误码。
+      const parsedProfile = profileInputSchema.safeParse({
+        targetType: profile.targetType,
+        examDate,
+        dailyMinutes: profile.dailyMinutes,
+        studyWindows: profile.studyWindows,
+        foundation: profile.foundation ?? '一般',
+        weakSubjects: profile.weakSubjects,
+      })
+      if (!parsedProfile.success) {
+        const issue = parsedProfile.error.issues[0]
+        const field = String(issue?.path[0] ?? '')
+        if (field === 'examDate') throw new ApiError(400, 'INVALID_EXAM_DATE', issue.message)
+        if (field === 'dailyMinutes') throw new ApiError(400, 'INVALID_DAILY_MINUTES', issue.message)
+        throw new ApiError(400, 'INVALID_PARAMS', issue?.message ?? '备考档案不完整,请重新填写')
       }
-      assertGeneratedPlanValid(generated, profile.dailyMinutes, examDate)
+
+      if (!ai.configured()) {
+        throw new ApiError(503, 'AI_NOT_CONFIGURED', 'AI 计划生成服务尚未配置,请稍后再试')
+      }
+
+      // 面谈得到的画像简报:有就一起喂给生成器,让阶段与每日安排贴合考生真实情况
+      const briefRaw = jsonObject(profileRow.briefJson)
+      const brief = briefRaw ? normalizeBrief(briefRaw) : null
+
+      let generated: GeneratedPlan
+      let title: string
+      let document: PlanDocument | null = null
+      try {
+        const result = await ai.generate({ ...parsedProfile.data, startDate: dayStart(new Date()), brief })
+        assertGeneratedPlanValid(result.plan, profile.dailyMinutes, examDate)
+        generated = result.plan
+        title = result.title
+        document = result.document ?? null
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        console.warn(`[planning] AI 计划生成失败:${reason}`)
+        throw new ApiError(502, 'PLAN_GENERATION_FAILED', 'AI 计划生成失败,请稍后重试')
+      }
 
       const lastPlan = await db.plan.findFirst({ where: { userGuid }, orderBy: { version: 'desc' } })
       const version = Number(lastPlan?.version ?? 0) + 1
@@ -305,13 +469,14 @@ export function createPlanningService(db: PlanningDb) {
           data: {
             userGuid,
             profileId: profileRow.id,
-            title: `${profileRow.targetType ?? '考研'}备考计划`,
+            title,
             targetType: profileRow.targetType ?? '考研',
-            source: 'rule',
+            source: 'ai',
             status: 'active',
             startDate: generated.stages[0].startDate,
             examDate,
             version,
+            documentJson: document ? JSON.stringify(document) : null,
             createdAt: new Date(),
             updatedAt: new Date(),
           },
@@ -347,6 +512,80 @@ export function createPlanningService(db: PlanningDb) {
       })
 
       return loadPlan(userGuid, created)
+    },
+
+    /**
+     * 备考面谈:把「填问卷 → 直接出计划」换成「和 AI 规划师聊几轮 → 出一份真正贴身的计划」。
+     *
+     * 无状态:客户端把整段对话历史带上来,这里只推进一轮。轮次上限在 aiCoach 里兜底,
+     * 到点强制收尾,避免用户一直聊下去而永远生成不出计划。
+     * 收尾拿到有效简报时落进档案,下次生成计划直接带上,不必重新面谈。
+     */
+    async interview(
+      userGuid: string,
+      input: { messages?: unknown; force?: boolean },
+    ): Promise<InterviewResult> {
+      if (!ai.interview || !ai.configured()) {
+        throw new ApiError(503, 'AI_NOT_CONFIGURED', 'AI 面谈服务尚未配置,请稍后再试')
+      }
+
+      const profileRow = await db.userProfile.findUnique({ where: { userGuid } })
+      const profile = profileRow ? profileInputFromRow(profileRow) : null
+      const messages = Array.isArray(input.messages) ? (input.messages as InterviewInput['messages']) : []
+
+      let result: InterviewResult
+      try {
+        result = await ai.interview({ messages, profile, force: input.force === true })
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        console.warn(`[planning] 备考面谈失败:${reason}`)
+        throw new ApiError(502, 'PLAN_INTERVIEW_FAILED', 'AI 面谈失败,请稍后重试')
+      }
+
+      // 只有档案已经存在时才落库:没有档案行时凭空建一条会让后续生成报「档案不完整」而非「请先填问卷」
+      if (result.done && result.brief && !briefIsEmpty(result.brief) && profileRow) {
+        await db.userProfile.update({
+          where: { userGuid },
+          data: { briefJson: JSON.stringify(result.brief), updatedAt: new Date() },
+        })
+      }
+
+      return result
+    },
+
+    /**
+     * 回写单个计划项的完成状态 —— 「每日完成的计划」同步的唯一入口。
+     *
+     * 用 updateMany + where 里带上 userGuid 归属校验:itemId 是自增主键,若只按 id 更新,
+     * 任何人猜到别人的 id 就能改别人的计划。updateMany 影响行数为 0 一律当「不存在」处理,
+     * 不区分「没这条」和「不是你的」,避免把他人计划的存在性泄露出去。
+     */
+    async setItemStatus(userGuid: string, itemId: number, status: PlanItemStatus): Promise<PublicPlan> {
+      const planRow = await db.plan.findFirst({
+        where: { userGuid, status: 'active' },
+        orderBy: { version: 'desc' },
+      })
+      if (!planRow) throw new ApiError(404, 'PLAN_NOT_FOUND', '当前没有生效中的计划')
+
+      if (status === 'done') {
+        await db.planItem.updateMany({
+          where: { id: itemId, planId: planRow.id, status: 'pending' },
+          data: { status: 'done', completedAt: new Date(), updatedAt: new Date() },
+        })
+      } else {
+        await db.planItem.updateMany({
+          where: { id: itemId, planId: planRow.id },
+          data: { status: 'pending', completedAt: null, updatedAt: new Date() },
+        })
+      }
+      const current = (await db.planItem.findMany({ where: { id: itemId, planId: planRow.id } }))[0]
+      if (!current) throw new ApiError(404, 'PLAN_ITEM_NOT_FOUND', '计划项不存在')
+
+      await db.plan.updateMany({
+        where: { id: planRow.id },
+        data: { updatedAt: new Date() },
+      })
+      return loadPlan(userGuid, planRow)
     },
   }
 }

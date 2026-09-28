@@ -30,6 +30,12 @@ services:
       PORT: 3000
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # AI 计划生成需要 LLM_API_KEY;未配置时生成接口返回 AI_NOT_CONFIGURED
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-flash}
+      LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-120000}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-8192}
       # 直接对外暴露 3000 端口、前面没有反向代理,必须为 false:
       # 置 true 会让攻击者伪造 X-Forwarded-For 绕过限流并伪造来源 IP
       TRUST_PROXY: "false"
