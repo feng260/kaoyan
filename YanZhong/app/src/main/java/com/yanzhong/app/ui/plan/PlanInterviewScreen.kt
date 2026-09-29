@@ -3,6 +3,7 @@ package com.yanzhong.app.ui.plan
 import android.annotation.SuppressLint
 import android.webkit.WebView
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,8 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -45,6 +48,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -89,11 +94,27 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
     LaunchedEffect(state.phase) { if (state.phase != InterviewPhase.DRAFT) fullscreen = false }
 
     Column(Modifier.fillMaxSize().background(Color(0xFFF7F8F6)).imePadding()) {
-        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { if (fullscreen) fullscreen = false else navController.popBackStack() }) {
                 Icon(AppIcons.ArrowBack, contentDescription = "返回")
             }
-            Text(if (fullscreen) "全屏预览 · DRAFT" else "AI 备考面谈", style = MaterialTheme.typography.titleMedium)
+            Column(Modifier.weight(1f)) {
+                Text(if (fullscreen) "全屏预览 · DRAFT" else "AI 备考面谈",
+                    style = MaterialTheme.typography.titleMedium)
+                // 副标题说明「AI 在问什么/已经确认了什么」，避免只有光秃秃一个对话框
+                if (!fullscreen && state.phase == InterviewPhase.CHATTING) {
+                    Text(chatterSubtitle(state), style = MaterialTheme.typography.labelSmall,
+                        color = Color(0xFF6B7A72), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            if (!fullscreen && state.phase == InterviewPhase.CHATTING) {
+                val answered = state.messages.count { it.role == "user" }
+                if (answered > 0) Surface(color = Color(0xFFEFF6F1), shape = RoundedCornerShape(50.dp)) {
+                    Text("已答 $answered 轮", Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall, color = Color(0xFF1F5A3D))
+                }
+            }
         }
         when (state.phase) {
             InterviewPhase.LOADING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -106,22 +127,39 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
             }
             InterviewPhase.CHATTING -> {
                 LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(state.messages.size) { index -> MessageBubble(state.messages[index]) }
-                    if (state.sending) item { CircularProgressIndicator(Modifier.size(22.dp)) }
+                    contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                    items(state.messages.size) { index ->
+                        val isLast = index == state.messages.lastIndex
+                        val isAi = state.messages[index].role == "assistant"
+                        // 快捷答案跟着它要回答的那句问题走:贴在问题卡片下面,
+                        // 而不是沉在输入框上方,省得考生来回对照「这几个选项答的是哪一句」
+                        MessageBubble(
+                            message = state.messages[index],
+                            options = if (isLast && isAi) state.options else emptyList(),
+                            optionsEnabled = !state.busy,
+                            onOption = vm::send,
+                        )
+                    }
+                    if (state.sending) item { TypingRow() }
                 }
-                Surface(shadowElevation = 4.dp) {
+                Surface(color = Color.White, shadowElevation = 4.dp) {
                     Column(Modifier.fillMaxWidth().padding(12.dp)) {
                         state.error?.let { ErrorRow(it, vm::retry, vm::dismissError) }
                         if (state.done) {
-                            Text("面谈已完成，可以生成草稿；确认前不会改变当前计划。",
-                                style = MaterialTheme.typography.bodySmall)
+                            Surface(color = Color(0xFFEFF6F1), shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                    Text("面谈已完成", style = MaterialTheme.typography.labelLarge,
+                                        color = Color(0xFF1F5A3D))
+                                    Text("确认前不会改变当前计划，草稿可先预览再决定。",
+                                        style = MaterialTheme.typography.bodySmall, color = Color(0xFF4A5C51))
+                                }
+                            }
                             Spacer(Modifier.height(8.dp))
                             Button(onClick = vm::generate, enabled = state.canGenerate, modifier = Modifier.fillMaxWidth()) {
                                 Text(if (state.generating) "正在生成草稿…" else "生成计划草稿")
                             }
                         }
-                        InterviewOptions(state.options, state.busy, vm::send)
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             OutlinedTextField(value = input, onValueChange = { input = it },
                                 enabled = !state.busy, modifier = Modifier.weight(1f), maxLines = 4,
@@ -165,21 +203,118 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
     }
 }
 
+/** 聊天区副标题：把「AI 现在在做什么/已经确认了什么」显式说出来，减少人机感 */
+private fun chatterSubtitle(state: InterviewUiState): String {
+    if (state.done) return "关键信息已齐，可以生成计划草稿了"
+    val summary = state.brief?.summary?.trim().orEmpty()
+    if (summary.isNotEmpty()) return "已确认：$summary"
+    return "AI 会先补齐关键事实，再按你的空档排计划"
+}
+
+/** 一条回复拆成「一句接话」和「本轮要回答的问题」两类,只有后者需要被看见 */
+private data class ReplyPart(val text: String, val isQuestion: Boolean)
+
+private fun looksLikeQuestion(text: String): Boolean =
+    text.contains('？') || text.contains('?') || text.endsWith("吗") || text.endsWith("呢")
+
+/**
+ * 提示词要求 AI 把「接话」和「本轮唯一的问题」用换行分成两段,所以按最后一段带问号的那句找问题;
+ * 模型偶尔漏掉问号时退回「最后一段就是问题」——总比整段回复都平铺、考生自己找要强。
+ * 单行且不像问句(收尾那句「可以生成计划草稿了」)就按普通文字渲染,不硬套问题样式。
+ */
+private fun replyParts(content: String): List<ReplyPart> {
+    val lines = content.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+    if (lines.isEmpty()) return emptyList()
+    val questionAt = if (lines.size == 1) {
+        if (looksLikeQuestion(lines[0])) 0 else -1
+    } else {
+        lines.indexOfLast { looksLikeQuestion(it) }.takeIf { it >= 0 } ?: lines.lastIndex
+    }
+    return lines.mapIndexed { index, text -> ReplyPart(text, index == questionAt) }
+}
+
 @Composable
-private fun MessageBubble(message: InterviewMessageDto) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.role == "user") Arrangement.End else Arrangement.Start) {
-        Surface(color = if (message.role == "user") Color(0xFFE4F0EA) else Color.White,
-            modifier = Modifier.fillMaxWidth(0.85f)) {
-            Text(message.content, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodyMedium)
+private fun MessageBubble(
+    message: InterviewMessageDto,
+    options: List<String> = emptyList(),
+    optionsEnabled: Boolean = false,
+    onOption: (String) -> Unit = {},
+) {
+    if (message.role == "user") {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            Surface(color = Color(0xFFDCEBE1), shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth(0.85f)) {
+                Text(message.content, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    style = MaterialTheme.typography.bodyMedium, color = Color(0xFF24352C))
+            }
         }
+        return
+    }
+    // AI 侧只留两块:一句灰色接话 + 一张醒目的「本轮要回答的问题」卡片,
+    // 考生扫一眼就知道该答什么,不必在整段文字里找问号
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
+        Column(Modifier.fillMaxWidth(0.92f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(6.dp).background(Color(0xFF2E7D5B), CircleShape))
+                Spacer(Modifier.width(6.dp))
+                Text("规划师", style = MaterialTheme.typography.labelSmall, color = Color(0xFF2E7D5B))
+            }
+            Spacer(Modifier.height(6.dp))
+            Surface(color = Color.White, shape = RoundedCornerShape(14.dp), shadowElevation = 1.dp) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    replyParts(message.content).forEach { part ->
+                        if (part.isQuestion) QuestionCard(part.text)
+                        else Text(part.text, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF5A5F5C))
+                    }
+                    QuickAnswers(options, optionsEnabled, onOption)
+                }
+            }
+        }
+    }
+}
+
+/** 本轮唯一的问题:单独填色、加「请回答」标签并放大加粗,和上面的接话拉开层级 */
+@Composable
+private fun QuestionCard(text: String) {
+    Surface(color = Color(0xFFEFF6F1), shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, Color(0xFFB8D6C4))) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+            Text("请回答", style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFF2E7D5B), fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(3.dp))
+            Text(text, style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold, color = Color(0xFF173D2B))
+        }
+    }
+}
+
+@Composable
+private fun TypingRow() {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+        Spacer(Modifier.width(8.dp))
+        Text("规划师正在整理…", style = MaterialTheme.typography.labelMedium, color = Color(0xFF7A8A80))
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun InterviewOptions(options: List<String>, busy: Boolean, onOption: (String) -> Unit) {
-    if (!busy) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        options.forEach { option -> TextButton(onClick = { onOption(option) }) { Text(option) } }
+private fun QuickAnswers(options: List<String>, enabled: Boolean, onOption: (String) -> Unit) {
+    if (!enabled || options.isEmpty()) return
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        options.forEach { option ->
+            Surface(
+                onClick = { onOption(option) },
+                shape = RoundedCornerShape(50.dp),
+                color = Color(0xFFEFF6F1),
+                border = BorderStroke(1.dp, Color(0xFFCBDFD2)),
+            ) {
+                Text(option, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    style = MaterialTheme.typography.labelLarge, color = Color(0xFF1F5A3D))
+            }
+        }
     }
 }
 
