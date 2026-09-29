@@ -18,10 +18,17 @@ import { dayStart, type ProfileInput } from './schemas'
 export const MIN_INTERVIEW_TURNS = 3
 /** 轮次上限:到了这里强制收尾,把已有信息整理成简报 */
 export const MAX_INTERVIEW_TURNS = 8
-const MAX_REPLY_LENGTH = 400
+/**
+ * 回复字数硬上限。客户端靠它把「一句接话」和「本轮唯一的问题」分开高亮,
+ * 所以这里卡得很死:AI 说得越长,考生越抓不住重点。
+ */
+const MAX_REPLY_LENGTH = 180
 const MAX_OPTIONS = 4
+const MAX_OPTION_LENGTH = 14
 const MAX_INPUT_MESSAGES = 24
 const MAX_MESSAGE_LENGTH = 1000
+/** 面谈输出很短(一个 JSON 对象),显式压小 max_tokens 可以规避部分厂商的上限校验(400) */
+const INTERVIEW_MAX_TOKENS = 1600
 
 export type InterviewInput = {
   /** 从早到晚的完整对话(不含系统提示);为空表示「刚开始,请提第一个问题」 */
@@ -47,25 +54,30 @@ export type InterviewResult = {
 const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,正在和考生做一对一的「备考面谈」,目标是把一份模板计划变成真正贴合他的全程作战计划。
 
 对话规则:
-1. 每轮只问 1–2 个最关键的问题,绝不要一次抛出一串问题清单。
-2. 提问时,针对每个问题给 2–4 个「快捷选项」放进 options,每个选项不超过 16 字,让考生能一键作答。
-   不提问(收尾)时 options 给空数组。
-3. 提问顺序建议:目标院校与专业方向 → 一战/二战/三战、是否跨考、全职还是在职 →
+1. 每轮只问 1 个最关键的问题,绝不要一次抛出多个问题,更不要输出问题清单。
+2. reply 必须极简,用换行分成最多两段:
+   第一段:针对考生上一句的一句接话(认可、确认或一句专业判断),不超过 30 字,可以省略;
+   第二段:本轮唯一的问题,不超过 60 字,只问一件事。
+   整段 reply 不超过 100 字;禁止序号、项目符号、Markdown 和括号清单;不要复述档案里或上一轮已经确认过的信息。
+3. options 必须能直接回答「第二段刚提出的那个问题」:2–4 个,每个不超过 14 字,彼此互斥并覆盖最常见的答案。
+   不要给出与问题无关、或还需要考生再解释一遍的选项。不提问(收尾)时 options 给空数组。
+4. 提问顺序建议:目标院校与专业方向 → 一战/二战/三战、是否跨考、全职还是在职 →
    各科当前水平与最薄弱的环节 → 已有哪些资料/课程 → 最近一次自测或模考分数 → 复习环境与干扰因素。
    考生已经答过的不要重复问;档案里已有的信息(考试日期、每日时长、薄弱科目、正式科目、空闲时段、固定占用)也不要再问。
    若上面「考生已填写问卷档案」里已经确认了正式科目/空闲时段/固定占用,你只需要补齐每一科的:
    当前进度、已知考试范围(自命题范围不明就留空)、剩余任务分钟数、里程碑及其截止日期与目标分钟数。
-4. 先对考生上一句做一句简短的回应或点评(像真人一样接话,可以是提醒、确认或一句专业判断),再提问。不要复述待办清单,不要每轮说「还需确认某某」这类模板句。
 5. 需要逐步确认的事实:正式考试科目名称;每门的当前进度/已知范围/剩余任务分钟数/里程碑及其明确截止日期(YYYY-MM-DD)和目标分钟数;按星期与起止时间记录的真实空闲时段和固定占用(没有固定占用也须明确确认)。已经聊清楚的不要重复问,直接进入下一项。
 6. 缺少上述事实时不要声称信息足够;但要用自然对话的方式补齐,不要输出核对清单。自命题范围不明时标为空,不得补写章节。
 
 严格只输出一个 JSON 对象,不要任何解释文字、不要 Markdown 代码块:
 {
-  "reply": "给考生的回应 + 提问(还没聊完就是提问,聊完了就是收尾语)",
+  "reply": "第一段接话(可省略)\\n第二段本轮唯一的问题",
   "options": ["快捷选项1", "快捷选项2"],
   "done": false,
   "brief": { 把「到目前为止已经确认的事实」全部写进来 }
 }
+
+收尾时(done 为 true)reply 只用一句不超过 60 字的话说明可以生成计划了,不要再提问,options 给空数组。
 
 关键:无论 done 是 true 还是 false,brief 都必须给出,并且要累积 —— 每轮把考生已经确认的事实合并进去,
 不要因为还没聊完就写 null,也不要丢掉前面几轮已经确认的内容。
@@ -87,6 +99,20 @@ brief 里的科目、进度、范围、时间和固定占用必须来自考生�
 
 function clip(value: unknown, max: number): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
+}
+
+/**
+ * 回复专用裁剪:保留换行,让客户端能把「接话」和「本轮唯一的问题」分成两块来高亮。
+ * 与 clip() 一样会压掉多余空格并丢掉空行。
+ */
+function clipReply(value: unknown, max: number): string {
+  return String(value ?? '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map(line => line.replace(/[ \t]+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n')
+    .slice(0, max)
 }
 
 /** 只保留 user/assistant,并裁掉超长与过量的历史(防 prompt 被灌爆) */
@@ -178,6 +204,7 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
       ],
       json: true,
       temperature: 0.6,
+      maxTokens: INTERVIEW_MAX_TOKENS,
     })
   } catch (error) {
     if (error instanceof LlmError) throw new AiUnavailable(error.message)
@@ -191,13 +218,13 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
     throw new AiUnavailable((error as Error)?.message ?? '模型返回内容无法解析为 JSON')
   }
 
-  const reply = clip(parsed?.reply, MAX_REPLY_LENGTH)
+  const reply = clipReply(parsed?.reply, MAX_REPLY_LENGTH)
   if (!reply) throw new AiUnavailable('模型没有返回有效的回复内容')
 
   const optionSource = Array.isArray(parsed?.options) ? parsed.options : []
   const options: string[] = []
   for (const item of optionSource) {
-    const text = clip(item, 32)
+    const text = clip(item, MAX_OPTION_LENGTH)
     if (text && !options.includes(text)) options.push(text)
     if (options.length >= MAX_OPTIONS) break
   }
@@ -221,7 +248,7 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
       : facts.deficits.length
         ? `现在的空闲时间还盖不住:${facts.deficits.map(d => `${d.subject} ${d.milestone}缺${d.missingMinutes}分钟`).join('、')}`
         : ''
-    if (hint) finalReply = clip(`${reply}\n(${hint})`, MAX_REPLY_LENGTH)
+    if (hint) finalReply = clipReply(`${reply}\n${hint}`, MAX_REPLY_LENGTH)
   }
   return { reply: finalReply, options, done: false, brief }
 }

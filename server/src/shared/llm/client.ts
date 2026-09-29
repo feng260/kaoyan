@@ -50,24 +50,45 @@ export async function chatComplete(options: ChatOptions): Promise<string> {
   }
 
   const timeoutMs = options.timeoutMs ?? config.timeoutMs
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const wantedMaxTokens = options.maxTokens ?? config.maxTokens
+
+  /** 发一次请求,超时用 AbortController 兜住(每次重试都要新的 controller) */
+  const send = async (body: Record<string, unknown>) => {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      return await fetch(`${config.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+    } finally {
+      clearTimeout(timeout)
+    }
+  }
+
+  const buildBody = (json: boolean, maxTokens: number): Record<string, unknown> => ({
+    model: config.model,
+    messages: options.messages,
+    temperature: options.temperature ?? 0.4,
+    max_tokens: maxTokens,
+    ...(json ? { response_format: { type: 'json_object' } } : {}),
+  })
+
   try {
-    const res = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model,
-        messages: options.messages,
-        temperature: options.temperature ?? 0.4,
-        max_tokens: options.maxTokens ?? config.maxTokens,
-        ...(options.json ? { response_format: { type: 'json_object' } } : {}),
-      }),
-      signal: controller.signal,
-    })
+    let res = await send(buildBody(options.json === true, wantedMaxTokens))
+
+    // 400/422 多半是厂商配置差异而不是真的失败:有的不支持 response_format=json_object,
+    // 有的对 max_tokens 上限卡得更死。这种情况降级(去掉 json 约束、收紧 max_tokens)再试一次,
+    // 而不是把厂商的 400 原样透给用户。
+    if (!res.ok && (res.status === 400 || res.status === 422) && (options.json === true || wantedMaxTokens > 2048)) {
+      await res.text().catch(() => '')
+      res = await send(buildBody(false, Math.min(wantedMaxTokens, 2048)))
+    }
 
     if (!res.ok) {
       const detail = await res.text().catch(() => '')
@@ -86,8 +107,6 @@ export async function chatComplete(options: ChatOptions): Promise<string> {
       throw new LlmError('TIMEOUT', `大模型接口超时(${timeoutMs}ms)`)
     }
     throw new LlmError('HTTP_ERROR', `调用大模型失败:${(error as Error)?.message ?? '未知错误'}`)
-  } finally {
-    clearTimeout(timeout)
   }
 }
 

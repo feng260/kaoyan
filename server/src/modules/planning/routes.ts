@@ -14,15 +14,16 @@ const itemStatusSchema = z.object({
 })
 
 const interviewSchema = z.object({
-  // 整段对话历史由客户端携带;内容长度与角色在 aiCoach 里还会再收敛一次,这里只挡明显不合规的
+  // 整段对话历史由客户端携带;内容长度与角色在 aiCoach 里还会再收敛一次(裁到 24 条、每条 1000 字),
+  // 这里放宽上限只是为了别让考生多打几行字就吃一个 400。
   messages: z
     .array(
       z.object({
         role: z.enum(['user', 'assistant']),
-        content: z.string().min(1).max(2000),
+        content: z.string().min(1).max(8000),
       }),
     )
-    .max(40)
+    .max(60)
     .optional(),
   // 用户主动点「直接开始生成」
   force: z.boolean().optional(),
