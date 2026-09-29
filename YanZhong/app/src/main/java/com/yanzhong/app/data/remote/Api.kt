@@ -412,6 +412,65 @@ data class TimetableResp(
     val serverTime: Long = 0
 )
 
+// ---------- 行程调整(D2) ----------
+
+/** 调整单里一条变动的字段快照 */
+@Serializable
+data class AdjustmentFieldDto(
+    val planDate: String,
+    val minutes: Long = 0,
+    val title: String = ""
+)
+
+/** 一条变动:moved=挪日期 / added=新增 / removed=删除 / updated=改内容 */
+@Serializable
+data class AdjustmentChangeDto(
+    val kind: String,
+    val id: Long = 0,
+    val subject: String = "",
+    val title: String = "",
+    val from: AdjustmentFieldDto? = null,
+    val to: AdjustmentFieldDto? = null
+)
+
+/** 待确认/已生效的调整单;changes 由服务端从前后快照重算 */
+@Serializable
+data class AdjustmentDto(
+    val id: Long,
+    val planId: Long = 0,
+    val tier: String = "",
+    val status: String = "",
+    val reason: String? = null,
+    val summary: String? = null,
+    val windowFrom: String = "",
+    val windowTo: String = "",
+    val changes: List<AdjustmentChangeDto> = emptyList(),
+    val createdAt: Long? = null,
+    val appliedAt: Long? = null
+)
+
+@Serializable
+data class AdjustReq(val message: String)
+
+@Serializable
+data class AdjustResp(
+    val adjustment: AdjustmentDto? = null,
+    val reply: String? = null,
+    val plan: PlanDto? = null,
+    val serverTime: Long = 0
+)
+
+@Serializable
+data class LatestAdjustmentResp(val adjustment: AdjustmentDto? = null, val serverTime: Long = 0)
+
+@Serializable
+data class CheckupResp(
+    val behindMinutes: Long = 0,
+    val overdueCount: Long = 0,
+    val suggestion: String = "",
+    val serverTime: Long = 0
+)
+
 // ---------- API 接口 ----------
 
 interface YanzhongApi {
@@ -519,6 +578,24 @@ interface YanzhongApi {
         @Path("id") id: Long,
         @Body body: PlanItemStatusReq
     ): PlanResp
+
+    /** 行程调整:一句话描述突发情况,服务端产出待确认调整单(adjustment 为 null 时 reply 是追问/闲聊) */
+    @POST("api/v1/plans/adjust")
+    suspend fun adjustPlan(@Body body: AdjustReq): AdjustResp
+
+    /** 最近一张待确认/已生效的调整单(冷启动恢复卡片用) */
+    @GET("api/v1/plans/adjustments/latest")
+    suspend fun getLatestAdjustment(): LatestAdjustmentResp
+
+    @POST("api/v1/plans/adjustments/{id}/confirm")
+    suspend fun confirmAdjustment(@Path("id") id: Long): PlanResp
+
+    @POST("api/v1/plans/adjustments/{id}/undo")
+    suspend fun undoAdjustment(@Path("id") id: Long): PlanResp
+
+    /** 计划体检:落后分钟数/过期任务数/一句话建议(suggestion 为空表示不用提醒) */
+    @GET("api/v1/plans/checkup")
+    suspend fun planCheckup(): CheckupResp
 
     /**
      * 全量导出账号数据。直接返回服务端 JSON（含账号、档案、计划、同步数据），

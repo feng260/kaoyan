@@ -7,6 +7,13 @@ import { generateAiPlan, type AiPlanningInput } from './aiGenerator'
 import { runPlanInterview, type InterviewInput, type InterviewResult } from './aiCoach'
 import { parseTimetableImage, type TimetableImage, type TimetableResult } from './timetable'
 import { briefIsEmpty, normalizeBrief, assessPlanningFacts, netAvailableMinutes, type PlanBrief, type PlanDocument } from './document'
+import {
+  affectedDays, dailyCapacity, datesBetween, diffSnapshots, planL1Shuffle, shiftDate,
+  windowFingerprint, L1_MAX_AFFECTED_DAYS,
+  type AdjustmentTier, type AdjustableItem, type WindowSnapshotItem,
+} from './adjust'
+import { buildLedger, expandL2, normalizeL2Tasks, runAdjustL2, validateL2, type L2Input, type L2Task } from './adjustL2'
+import { runAdjustIntent, type AdjustIntent, type AdjustIntentInput } from './adjustIntent'
 
 /**
  * 备考档案与计划的持久化(Phase 0)。
@@ -39,7 +46,14 @@ export interface PlanningDb {
     createMany(args: AnyArgs): Promise<any>
     findMany(args?: AnyArgs): Promise<any[]>
     updateMany(args: AnyArgs): Promise<any>
+    deleteMany(args: AnyArgs): Promise<any>
     groupBy(args: AnyArgs): Promise<any[]>
+  }
+  planAdjustment: {
+    findFirst(args?: AnyArgs): Promise<any>
+    findMany(args?: AnyArgs): Promise<any[]>
+    create(args: AnyArgs): Promise<any>
+    updateMany(args: AnyArgs): Promise<any>
   }
   $transaction<T>(fn: (tx: PlanningDb) => Promise<T>): Promise<T>
 }
@@ -89,6 +103,21 @@ export interface PublicPlan {
   progress: { totalItems: number; pendingItems: number; doneItems: number; totalMinutes: number; totalDays: number }
   createdAt: number | null
   updatedAt: number | null
+}
+
+/** 调整单的对外结构;changes 由 before/after 快照重算,客户端拿去渲染变动清单 */
+export interface PublicAdjustment {
+  id: number
+  planId: number
+  tier: string
+  status: string
+  reason: string | null
+  summary: string | null
+  windowFrom: string
+  windowTo: string
+  changes: ReturnType<typeof diffSnapshots>
+  createdAt: number | null
+  appliedAt: number | null
 }
 
 /**
@@ -272,6 +301,168 @@ function serializePlanSummary(row: any, totalItems: number, doneItems: number): 
   }
 }
 
+// ---------- 行程调整(D1):窗口快照、指纹校验与窗口同步 ----------
+
+function toAdjustable(row: any): AdjustableItem {
+  return {
+    id: Number(row.id), subject: String(row.subject ?? ''), title: String(row.title ?? ''),
+    planDate: dateOnly(row.planDate), minutes: Number(row.minutes ?? 0),
+    priority: Number(row.priority ?? 0), sortOrder: Number(row.sortOrder ?? 0),
+  }
+}
+
+function toSnapshot(items: any[]): WindowSnapshotItem[] {
+  return items.map(row => ({
+    id: Number(row.id), subject: String(row.subject ?? ''), title: String(row.title ?? ''),
+    planDate: dateOnly(row.planDate), minutes: Number(row.minutes ?? 0), status: String(row.status ?? 'pending'),
+  }))
+}
+
+function jsonList<T>(raw: unknown): T[] {
+  try {
+    const parsed = JSON.parse(typeof raw === 'string' ? raw : 'null')
+    return Array.isArray(parsed) ? parsed as T[] : []
+  } catch {
+    return []
+  }
+}
+
+/** 调整窗口 = [今天, 当前阶段末]:优先覆盖今天的阶段,没有则取第一个未来阶段,再没有(全部过完)报 404 */
+function stageWindow(stages: any[], today: string): { from: string; to: string } {
+  const sorted = [...stages].sort((a, b) => Number(a.sortOrder ?? 0) - Number(b.sortOrder ?? 0))
+  const stage = sorted.find(item => dateOnly(item.startDate) <= today && today <= dateOnly(item.endDate))
+    ?? sorted.find(item => dateOnly(item.startDate) > today)
+  if (!stage) throw new ApiError(404, 'PLAN_NOT_FOUND', '计划的阶段已全部结束,没有可调整的内容')
+  const to = dateOnly(stage.endDate)
+  if (to < today) throw new ApiError(404, 'PLAN_NOT_FOUND', '计划的阶段已全部结束,没有可调整的内容')
+  return { from: today, to }
+}
+
+function stageIdFor(stages: any[], day: string): number {
+  const hit = stages.find(stage => dateOnly(stage.startDate) <= day && day <= dateOnly(stage.endDate))
+  return Number(hit?.id ?? stages[0]?.id ?? 0)
+}
+
+/**
+ * 把窗口内的计划项改写成目标快照:
+ * - 窗口内、非 done、目标里没有的 → 删除
+ * - 窗口内、非 done、字段变了 → 原地更新(注意 plan_items 没有 updatedAt 列,不写它)
+ * - 目标里新增(id<=0 或库里不存在) → 插入
+ * done 项与窗口外的项一律不碰。existingById 必须基于全表:
+ * 目标快照里的 done 项可能落在窗口外,只查窗口内会把它们误判成「新增」。
+ */
+async function syncWindowItems(tx: PlanningDb, planId: number, windowFrom: string, windowTo: string,
+  target: WindowSnapshotItem[], stages: any[]): Promise<void> {
+  const allRows = await tx.planItem.findMany({ where: { planId } })
+  const existingById = new Map<number, any>(allRows.map(row => [Number(row.id), row]))
+  const targetIds = new Set(target.filter(item => item.id > 0 && existingById.has(item.id)).map(item => item.id))
+
+  const removeIds = allRows
+    .filter(row => {
+      const day = dateOnly(row.planDate)
+      return day >= windowFrom && day <= windowTo && row.status !== 'done' && !targetIds.has(Number(row.id))
+    })
+    .map(row => Number(row.id))
+  if (removeIds.length > 0) {
+    await tx.planItem.deleteMany({ where: { id: { in: removeIds } } })
+  }
+
+  for (const item of target) {
+    const row = item.id > 0 ? existingById.get(item.id) : undefined
+    if (!row || row.status === 'done') continue // 新增走 createMany;done 永不动
+    const day = dateOnly(row.planDate)
+    if (day < windowFrom || day > windowTo) continue
+    if (day === item.planDate && Number(row.minutes) === item.minutes
+      && String(row.subject) === item.subject && String(row.title) === item.title) continue
+    await tx.planItem.updateMany({
+      where: { id: item.id, planId, status: 'pending' },
+      data: {
+        planDate: new Date(`${item.planDate}T00:00:00.000Z`),
+        minutes: item.minutes, subject: item.subject, title: item.title,
+      },
+    })
+  }
+
+  const additions = target.filter(item => item.id <= 0 || !existingById.has(item.id))
+  if (additions.length > 0) {
+    await tx.planItem.createMany({
+      data: additions.map(item => ({
+        planId,
+        stageId: stageIdFor(stages, item.planDate),
+        subject: item.subject,
+        title: item.title,
+        planDate: new Date(`${item.planDate}T00:00:00.000Z`),
+        minutes: item.minutes,
+        priority: 0,
+        sortOrder: 0,
+      })),
+    })
+  }
+}
+
+function serializeAdjustment(row: any): PublicAdjustment {
+  const before = jsonList<WindowSnapshotItem>(row.beforeJson)
+  const after = jsonList<WindowSnapshotItem>(row.afterJson)
+  return {
+    id: Number(row.id),
+    planId: Number(row.planId),
+    tier: String(row.tier ?? ''),
+    status: String(row.status ?? ''),
+    reason: row.reason ?? null,
+    summary: row.summary ?? null,
+    windowFrom: dateOnly(row.windowFrom),
+    windowTo: dateOnly(row.windowTo),
+    changes: diffSnapshots(before, after),
+    createdAt: ms(row.createdAt),
+    appliedAt: ms(row.appliedAt),
+  }
+}
+
+/**
+ * L2 重排:模型给相对序列 → 服务端展开校验。校验失败把原因回喂重试一次,仍失败抛
+ * PLAN_GENERATION_FAILED(502)。整个过程在事务外、落库前,失败天然不产生任何数据。
+ */
+async function runAdjustL2Plan(ai: PlanningAi, args: {
+  message: string
+  pending: AdjustableItem[]
+  capacity: Map<string, number>
+  from: string
+  to: string
+  brief: PlanBrief
+}): Promise<WindowSnapshotItem[]> {
+  if (!ai.adjustL2) throw new ApiError(503, 'AI_NOT_CONFIGURED', '服务端还没有配置大模型,暂时无法重排计划')
+  const days = datesBetween(args.from, args.to)
+  if (days.length === 0) throw new ApiError(400, 'PLAN_CAPACITY_INSUFFICIENT', '调整窗口为空,没有可重排的日期')
+  const milestones: Array<{ subject: string; date: string; name: string }> = []
+  for (const subject of args.brief.examSubjects) {
+    if (subject.milestone && subject.milestoneDate) {
+      milestones.push({ subject: subject.name, date: subject.milestoneDate, name: subject.milestone })
+    }
+  }
+  const ledger = buildLedger(
+    args.pending, args.capacity, days,
+    args.brief.examSubjects.map(subject => subject.name),
+    milestones,
+  )
+  const run = (message: string) => ai.adjustL2!({
+    message, windowFrom: args.from, windowTo: args.to, ledger, pending: args.pending,
+  }).then(tasks => normalizeL2Tasks(tasks, ledger))
+
+  let tasks = await run(args.message)
+  let target = expandL2(tasks, args.from, args.pending)
+  let verdict = validateL2(target, ledger)
+  if (!verdict.ok) {
+    // 回喂一次:把失败原因告诉模型,多数情况一次就能收敛
+    tasks = await run(`${args.message}\n(上一次重排没通过:${verdict.reason};请修正后重新输出完整方案)`)
+    target = expandL2(tasks, args.from, args.pending)
+    verdict = validateL2(target, ledger)
+  }
+  if (!verdict.ok) {
+    throw new ApiError(502, 'PLAN_GENERATION_FAILED', `重排方案没有通过校验:${verdict.reason}`)
+  }
+  return target
+}
+
 /** 从库里读出的档案行还原成 ProfileInput;档案不可用时返回 null —— 面谈没有档案也能进行 */
 function profileInputFromRow(row: any): ProfileInput | null {
   const parsed = profileInputSchema.safeParse({
@@ -363,6 +554,8 @@ export interface PlanningAi {
   generate: (input: AiPlanningInput) => Promise<{ title: string; plan: GeneratedPlan; document?: PlanDocument | null }>
   interview?: (input: InterviewInput) => Promise<InterviewResult>
   parseTimetable?: (input: TimetableImage) => Promise<TimetableResult>
+  adjustIntent?: (input: AdjustIntentInput) => Promise<AdjustIntent>
+  adjustL2?: (input: L2Input) => Promise<L2Task[]>
 }
 
 export function createPlanningService(
@@ -372,6 +565,8 @@ export function createPlanningService(
     generate: generateAiPlan,
     interview: runPlanInterview,
     parseTimetable: parseTimetableImage,
+    adjustIntent: runAdjustIntent,
+    adjustL2: runAdjustL2,
   },
 ) {
   async function requireProfileRow(userGuid: string) {
@@ -615,6 +810,238 @@ export function createPlanningService(
       })
       return loadPlan(userGuid, planRow)
     },
+
+    /**
+     * 行程调整入口:一句话描述突发情况 → 模型解析意图 → 服务端硬规则定档(L1 顺延/L2 重排)→ 产出待确认调整单。
+     * 确认前零副作用(唯一例外:change_commitment 把新固定占用并进档案,那是用户陈述的事实本身)。
+     */
+    async adjust(userGuid: string, input: { message: string }):
+      Promise<{ adjustment: PublicAdjustment | null; reply: string; plan: PublicPlan | null }> {
+      const message = String(input?.message ?? '').trim()
+      if (!message) throw new ApiError(400, 'INVALID_PARAMS', '请说一说发生了什么')
+      const planRow = await db.plan.findFirst({ where: { userGuid, status: 'active' }, orderBy: { version: 'desc' } })
+      if (!planRow) throw new ApiError(404, 'PLAN_NOT_FOUND', '当前没有生效中的计划')
+      if (!ai.adjustIntent || !ai.configured()) {
+        throw new ApiError(503, 'AI_NOT_CONFIGURED', '服务端还没有配置大模型,暂时无法理解你的描述')
+      }
+
+      const profileRow = await db.userProfile.findUnique({ where: { userGuid } })
+      const brief = profileRow ? briefFromRow(profileRow) : normalizeBrief(null)
+      const dailyMinutes = Number(profileRow?.dailyMinutes ?? 0)
+      const stages = await db.planStage.findMany({ where: { planId: planRow.id }, orderBy: { sortOrder: 'asc' } })
+      const today = dayStart(new Date()).toISOString().slice(0, 10)
+      const { from, to } = stageWindow(stages, today)
+
+      let intent: AdjustIntent
+      try {
+        const subjects = [...new Set((await db.planItem.findMany({ where: { planId: planRow.id } }))
+          .map(row => String(row.subject)).filter(Boolean))]
+        intent = await ai.adjustIntent({ message, today, windowTo: to, subjects, brief })
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        console.warn(`[planning] 调整意图解析失败:${reason}`)
+        throw new ApiError(502, 'PLAN_INTERVIEW_FAILED', `这句没听懂:${reason}`)
+      }
+
+      // 追问 / 闲聊:只回话,不产调整单
+      if (intent.needClarify || intent.kind === 'chat') {
+        const reply = intent.needClarify ? (intent.clarifyQuestion || intent.summary) : intent.summary
+        return { adjustment: null, reply, plan: null }
+      }
+
+      // change_commitment:每周固定占用变了。先把新占用并进档案(并集去重,与课表识别同一口径),
+      // 之后的容量计算自然按新占用扣减。
+      if (intent.kind === 'change_commitment' && intent.commitments.length > 0 && profileRow) {
+        const known = brief.fixedCommitments
+        const added = intent.commitments.filter(item => !known.some(existing => existing.weekday === item.weekday
+          && existing.start === item.start && existing.end === item.end && existing.label === item.label))
+        brief.fixedCommitments = [...known, ...added]
+        brief.commitmentsConfirmed = true
+        await db.userProfile.update({
+          where: { userGuid },
+          data: { briefJson: JSON.stringify(brief), updatedAt: new Date() },
+        })
+      }
+
+      const items = await db.planItem.findMany({ where: { planId: planRow.id } })
+      const inWindow = items.filter(row => {
+        const day = dateOnly(row.planDate)
+        return day >= from && day <= to
+      })
+
+      // 每日容量 = min(每日目标, 当天净空闲),再逐项扣掉窗口内已完成的分钟
+      const capacity = new Map<string, number>()
+      for (const day of datesBetween(from, to)) capacity.set(day, dailyCapacity(brief, dailyMinutes, day))
+      for (const row of inWindow) {
+        if (row.status === 'done') {
+          const day = dateOnly(row.planDate)
+          capacity.set(day, Math.max(0, (capacity.get(day) ?? 0) - Number(row.minutes ?? 0)))
+        }
+      }
+
+      const pending = inWindow.filter(row => row.status !== 'done').map(row => toAdjustable(row))
+      const before = toSnapshot(inWindow)
+
+      if (intent.kind === 'unavailable') {
+        for (const day of intent.days) {
+          if (capacity.has(day)) capacity.set(day, 0)
+        }
+      } else if (intent.kind === 'reduce_capacity') {
+        if (intent.windows.length === 0) {
+          // 用户只说「时间变少」没说哪天:按今明后三天各降 30% 估
+          for (const day of datesBetween(from, shiftDate(today, 2))) {
+            const base = capacity.get(day) ?? 0
+            if (base > 0) capacity.set(day, Math.round(base * 0.7))
+          }
+        } else {
+          for (const window of intent.windows) {
+            if (!capacity.has(window.day)) continue
+            capacity.set(window.day, window.minutes <= 0 ? 0 : Math.min(capacity.get(window.day) ?? 0, window.minutes))
+          }
+        }
+      }
+
+      const l1 = planL1Shuffle({ pending, capacity, windowFrom: from, windowTo: to })
+      // 档位判定(服务端硬规则,spec §3.2):塞得下且影响天数 ≤ 阈值 → L1 顺延;否则 L2 重排
+      const tier: AdjustmentTier = l1.overflow.length === 0 && affectedDays(l1.moves) <= L1_MAX_AFFECTED_DAYS
+        ? 'L1'
+        : 'L2'
+
+      let after: WindowSnapshotItem[]
+      if (tier === 'L1') {
+        const movedById = new Map(l1.moves.map(move => [move.item.id, move.to]))
+        after = before.map(item => {
+          const nextDay = movedById.get(item.id)
+          return nextDay && item.status !== 'done' ? { ...item, planDate: nextDay } : item
+        })
+      } else {
+        // L2 预检:窗口总量塞不下直接报缺口,不浪费一次模型调用
+        const totalPending = pending.reduce((sum, item) => sum + item.minutes, 0)
+        const totalCapacity = [...capacity.values()].reduce((sum, value) => sum + value, 0)
+        if (totalPending > totalCapacity) {
+          throw new ApiError(400, 'PLAN_CAPACITY_INSUFFICIENT',
+            `这个阶段到 ${to} 之前只剩 ${totalCapacity} 分钟,排不下 ${totalPending} 分钟的任务。要么把休息日让出来,要么等下一阶段再补`)
+        }
+        const target = await runAdjustL2Plan(ai, { message, pending, capacity, from, to, brief })
+        // L2 的 after 必须带上窗口内的 done 项,否则 diff 会把打卡项误判成 removed
+        after = [...before.filter(item => item.status === 'done'), ...target]
+      }
+      const changes = diffSnapshots(before, after)
+      if (changes.length === 0) {
+        return { adjustment: null, reply: '这个阶段里本来就排得下,计划不用改。', plan: null }
+      }
+
+      // 同一用户同一时刻最多一张 draft:已有就原地覆盖,不产生第二张(spec §6)
+      const payload = {
+        userGuid,
+        planId: planRow.id,
+        tier,
+        status: 'draft',
+        reason: intent.note || message,
+        summary: intent.summary,
+        windowFrom: new Date(`${from}T00:00:00.000Z`),
+        windowTo: new Date(`${to}T00:00:00.000Z`),
+        beforeJson: JSON.stringify(before),
+        afterJson: JSON.stringify(after),
+        fingerprint: windowFingerprint(before),
+      }
+      const existingDraft = await db.planAdjustment.findFirst({ where: { userGuid, status: 'draft' } })
+      let row: any
+      if (existingDraft) {
+        await db.planAdjustment.updateMany({ where: { id: existingDraft.id }, data: payload })
+        row = await db.planAdjustment.findFirst({ where: { id: existingDraft.id } })
+      } else {
+        row = await db.planAdjustment.create({ data: payload })
+      }
+      return { adjustment: serializeAdjustment(row), reply: `已按「${intent.summary}」算好新排法,确认后生效。`, plan: null }
+    },
+
+    /** 最近一张待确认/已生效的调整单:App 冷启动/切页恢复卡片用。按事件时间倒序(draft 看 createdAt,applied 看 appliedAt) */
+    async latestAdjustment(userGuid: string): Promise<PublicAdjustment | null> {
+      const rows = await db.planAdjustment.findMany({ where: { userGuid, status: { in: ['draft', 'applied'] } } })
+      const eventTime = (row: any) => ms(row.status === 'applied' ? row.appliedAt : row.createdAt) ?? 0
+      const sorted = [...rows].sort((a, b) => eventTime(b) - eventTime(a) || Number(b.id) - Number(a.id))
+      return sorted.length > 0 ? serializeAdjustment(sorted[0]) : null
+    },
+
+    /** 确认调整单:指纹校验(窗口没被第三方改过)→ 事务内把目标快照写进计划项 → 标记 applied */
+    async confirmAdjustment(userGuid: string, adjustmentId: number): Promise<PublicPlan> {
+      const appliedPlanId = await db.$transaction(async tx => {
+        const row = await tx.planAdjustment.findFirst({ where: { id: adjustmentId, userGuid, status: 'draft' } })
+        if (!row) throw new ApiError(404, 'ADJUSTMENT_NOT_FOUND', '调整单不存在,或已经确认/撤销过了')
+        const planRow = await tx.plan.findFirst({ where: { userGuid, status: 'active' }, orderBy: { version: 'desc' } })
+        if (!planRow || Number(planRow.id) !== Number(row.planId)) {
+          throw new ApiError(404, 'PLAN_NOT_FOUND', '这份调整单对应的计划已经不在了')
+        }
+        const stages = await tx.planStage.findMany({ where: { planId: planRow.id }, orderBy: { sortOrder: 'asc' } })
+        const items = await tx.planItem.findMany({ where: { planId: planRow.id } })
+        const from = dateOnly(row.windowFrom)
+        const to = dateOnly(row.windowTo)
+        const inWindow = items.filter(item => {
+          const day = dateOnly(item.planDate)
+          return day >= from && day <= to
+        })
+        if (windowFingerprint(toSnapshot(inWindow)) !== String(row.fingerprint)) {
+          throw new ApiError(409, 'ADJUSTMENT_STALE', '计划在生成调整单之后又被改过,这张调整单已失效,请重新说一遍')
+        }
+        await syncWindowItems(tx, planRow.id, from, to, jsonList<WindowSnapshotItem>(row.afterJson), stages)
+        await tx.planAdjustment.updateMany({
+          where: { id: row.id },
+          data: { status: 'applied', appliedAt: new Date() },
+        })
+        await tx.plan.updateMany({ where: { id: planRow.id }, data: { updatedAt: new Date() } })
+        return Number(planRow.id)
+      })
+      const planRow = await db.plan.findFirst({ where: { id: appliedPlanId } })
+      if (!planRow) throw new ApiError(404, 'PLAN_NOT_FOUND', '计划不存在')
+      return loadPlan(userGuid, planRow)
+    },
+
+    /** 撤销:把 beforeJson 写回去。只允许撤销最近一次 applied,且其后没有新打卡(spec §2 可撤销原则) */
+    async undoAdjustment(userGuid: string, adjustmentId: number): Promise<PublicPlan> {
+      const rows = await db.planAdjustment.findMany({ where: { userGuid, status: 'applied' } })
+      const latestApplied = [...rows].sort((a, b) => Number(b.id) - Number(a.id))[0]
+      if (!latestApplied || Number(latestApplied.id) !== Number(adjustmentId)) {
+        throw new ApiError(409, 'ADJUSTMENT_STALE', '只能撤销最近一次调整')
+      }
+      const appliedPlanId = await db.$transaction(async tx => {
+        const planRow = await tx.plan.findFirst({ where: { userGuid, status: 'active' }, orderBy: { version: 'desc' } })
+        if (!planRow || Number(planRow.id) !== Number(latestApplied.planId)) {
+          throw new ApiError(404, 'PLAN_NOT_FOUND', '这份调整单对应的计划已经不在了')
+        }
+        const appliedAt = ms(latestApplied.appliedAt)
+        const items = await tx.planItem.findMany({ where: { planId: planRow.id } })
+        // >= 而非 >:Windows 时钟粒度可能让「确认」与「打卡」同毫秒,严格比较才能保证不把新打卡搞乱
+        const touched = items.some(item => item.status === 'done' && appliedAt != null
+          && ms(item.completedAt) != null && ms(item.completedAt)! >= appliedAt)
+        if (touched) {
+          throw new ApiError(409, 'ADJUSTMENT_STALE', '调整生效后你已经打了新的卡,撤销会把记录搞乱;再用一句话描述新的调整即可')
+        }
+        const stages = await tx.planStage.findMany({ where: { planId: planRow.id }, orderBy: { sortOrder: 'asc' } })
+        await syncWindowItems(tx, planRow.id, dateOnly(latestApplied.windowFrom), dateOnly(latestApplied.windowTo),
+          jsonList<WindowSnapshotItem>(latestApplied.beforeJson), stages)
+        await tx.planAdjustment.updateMany({
+          where: { id: latestApplied.id },
+          data: { status: 'undone', undoneAt: new Date() },
+        })
+        await tx.plan.updateMany({ where: { id: planRow.id }, data: { updatedAt: new Date() } })
+        return Number(planRow.id)
+      })
+      const planRow = await db.plan.findFirst({ where: { id: appliedPlanId } })
+      if (!planRow) throw new ApiError(404, 'PLAN_NOT_FOUND', '计划不存在')
+      return loadPlan(userGuid, planRow)
+    },
+
+    /** 主动体检:数一数落在过去还没完成的任务,给出一句话建议(纯计算,无副作用) */
+    async checkup(userGuid: string): Promise<{ behindMinutes: number; overdueCount: number; suggestion: string }> {
+      const planRow = await db.plan.findFirst({ where: { userGuid, status: 'active' }, orderBy: { version: 'desc' } })
+      if (!planRow) return { behindMinutes: 0, overdueCount: 0, suggestion: '' }
+      const items = await db.planItem.findMany({ where: { planId: planRow.id } })
+      const today = dayStart(new Date()).toISOString().slice(0, 10)
+      const overdue = items.filter(item => item.status !== 'done' && dateOnly(item.planDate) < today)
+      const behindMinutes = overdue.reduce((sum, item) => sum + Number(item.minutes ?? 0), 0)
+      return { behindMinutes, overdueCount: overdue.length, suggestion: overdueSuggestion(overdue.length, behindMinutes) }
+    },
   }
 
   async function buildPlan(userGuid: string): Promise<PublicPlan> {
@@ -775,6 +1202,13 @@ export function createPlanningService(
 
       return loadPlan(userGuid, created)
     }
+}
+
+/** 主动提醒文案:没有落后任务返回空串(App 以空串判断「不用提醒」) */
+export function overdueSuggestion(count: number, minutes: number): string {
+  if (count <= 0) return ''
+  const part = minutes > 0 ? `、约 ${minutes} 分钟` : ''
+  return `有 ${count} 项${part}的任务落在过去还没完成,打开 AI 行程小助手说一句,马上帮你重新排。`
 }
 
 export type PlanningService = ReturnType<typeof createPlanningService>

@@ -57,6 +57,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.currentBackStackEntryAsState
 import com.yanzhong.app.data.remote.InterviewMessageDto
+import com.yanzhong.app.data.remote.PlanBriefDto
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.ui.theme.AppIcons
@@ -68,6 +69,7 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
     val state by vm.state.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
     var fullscreen by rememberSaveable { mutableStateOf(false) }
+    var adjustPreview by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val entry by navController.currentBackStackEntryAsState()
     val profileSaved by (entry?.savedStateHandle?.getStateFlow(Routes.EXTRA_PLAN_PROFILE_SAVED, false)
@@ -87,11 +89,15 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
     }
     LaunchedEffect(state.messages.size, state.sending) {
         if (state.messages.isNotEmpty() && state.phase == InterviewPhase.CHATTING) {
-            listState.animateScrollToItem(state.messages.lastIndex)
+            // 发送中的「规划师正在整理…」是列表的最后一项(下标 = messages.size)。
+            // 不算上它，考生点完选项后看不到任何反应，像卡住了。
+            listState.animateScrollToItem(if (state.sending) state.messages.size else state.messages.lastIndex)
         }
     }
     BackHandler(fullscreen && state.phase == InterviewPhase.DRAFT) { fullscreen = false }
     LaunchedEffect(state.phase) { if (state.phase != InterviewPhase.DRAFT) fullscreen = false }
+    BackHandler(adjustPreview && state.phase == InterviewPhase.CHATTING) { adjustPreview = false }
+    LaunchedEffect(state.adjustment) { if (state.adjustment == null) adjustPreview = false }
 
     Column(Modifier.fillMaxSize().background(Color(0xFFF7F8F6)).imePadding()) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp),
@@ -100,7 +106,8 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
                 Icon(AppIcons.ArrowBack, contentDescription = "返回")
             }
             Column(Modifier.weight(1f)) {
-                Text(if (fullscreen) "全屏预览 · DRAFT" else "AI 备考面谈",
+                Text(if (fullscreen) "全屏预览 · DRAFT"
+                    else if (state.mode == InterviewMode.ADJUST) "AI 行程小助手" else "AI 备考面谈",
                     style = MaterialTheme.typography.titleMedium)
                 // 副标题说明「AI 在问什么/已经确认了什么」，避免只有光秃秃一个对话框
                 if (!fullscreen && state.phase == InterviewPhase.CHATTING) {
@@ -116,6 +123,10 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
                 }
             }
         }
+        if (state.phase == InterviewPhase.CHATTING && state.mode == InterviewMode.BUILD) {
+            InterviewProgress(state.brief,
+                Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, bottom = 8.dp))
+        }
         when (state.phase) {
             InterviewPhase.LOADING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
@@ -126,6 +137,16 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
                 Button(onClick = { navController.navigate(Routes.planSetup(profileOnly = true)) }) { Text("填写备考档案") }
             }
             InterviewPhase.CHATTING -> {
+                if (adjustPreview && state.adjustment?.tier == "L2") {
+                    AdjustmentPreviewColumn(
+                        state = state,
+                        onBack = { adjustPreview = false },
+                        onConfirm = vm::confirmAdjustment,
+                        onRetry = vm::retry,
+                        onDismiss = vm::dismissError,
+                        bottom = padding.calculateBottomPadding(),
+                    )
+                } else {
                 LazyColumn(state = listState, modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     items(state.messages.size) { index ->
@@ -141,6 +162,18 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
                         )
                     }
                     if (state.sending) item { TypingRow() }
+                }
+                state.adjustment?.let { adjustment ->
+                    AdjustmentCard(
+                        summary = adjustment.summary ?: "已按你的情况算好新排法",
+                        tier = adjustment.tier,
+                        changes = adjustment.changes,
+                        confirming = state.confirming,
+                        onConfirm = vm::confirmAdjustment,
+                        onDismiss = vm::dismissAdjustmentCard,
+                        onPreview = if (adjustment.tier == "L2") ({ adjustPreview = true }) else null,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                    )
                 }
                 Surface(color = Color.White, shadowElevation = 4.dp) {
                     Column(Modifier.fillMaxWidth().padding(12.dp)) {
@@ -171,6 +204,7 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
                         }
                         Spacer(Modifier.height(padding.calculateBottomPadding()))
                     }
+                }
                 }
             }
             InterviewPhase.DRAFT -> {
@@ -205,10 +239,42 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
 
 /** 聊天区副标题：把「AI 现在在做什么/已经确认了什么」显式说出来，减少人机感 */
 private fun chatterSubtitle(state: InterviewUiState): String {
+    if (state.mode == InterviewMode.ADJUST) return "说说发生了什么,我帮你重排近期计划"
     if (state.done) return "关键信息已齐，可以生成计划草稿了"
     val summary = state.brief?.summary?.trim().orEmpty()
     if (summary.isNotEmpty()) return "已确认：$summary"
     return "AI 会先补齐关键事实，再按你的空档排计划"
+}
+
+/**
+ * 面谈进度的三个粗项：正式科目 / 空闲时段 / 固定占用，已确认显绿、未确认显灰。
+ * 判定条件与服务端生成前的检查一致(assessPlanningFacts)，但这里只报粗项——
+ * 逐科的范围、剩余量、里程碑等细项仍由服务端在回复里点名，免得两端各写一套规则互相漂移。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun InterviewProgress(brief: PlanBriefDto?, modifier: Modifier = Modifier) {
+    val subjectsReady = !brief?.examSubjects.isNullOrEmpty()
+    val availabilityReady = brief != null && brief.availabilityConfirmed &&
+        brief.availability.isNotEmpty() && brief.availability.any { it.windows.isNotEmpty() }
+    val commitmentsReady = brief?.commitmentsConfirmed == true
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        FactChip("正式科目", subjectsReady)
+        FactChip("空闲时段", availabilityReady)
+        FactChip("固定占用", commitmentsReady)
+    }
+}
+
+@Composable
+private fun FactChip(label: String, ready: Boolean) {
+    Surface(color = if (ready) Color(0xFFEFF6F1) else Color(0xFFF1F2F0),
+        shape = RoundedCornerShape(50.dp)) {
+        Text(if (ready) "✓ $label" else "待确认 · $label",
+            Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (ready) Color(0xFF1F5A3D) else Color(0xFF8A948D))
+    }
 }
 
 /** 一条回复拆成「一句接话」和「本轮要回答的问题」两类,只有后者需要被看见 */
@@ -382,6 +448,50 @@ private fun DraftWebView(html: String, modifier: Modifier = Modifier) {
             it.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
         }
     })
+}
+
+/**
+ * L2 整页预览浮层:用「active plan + 调整单 changes」本地合成预览计划,
+ * 复用 renderDraftHtml(含「本次调整」章节)与 DraftWebView,底部直接确认。
+ */
+@Composable
+private fun AdjustmentPreviewColumn(
+    state: InterviewUiState,
+    onBack: () -> Unit,
+    onConfirm: () -> Unit,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit,
+    bottom: androidx.compose.ui.unit.Dp,
+) {
+    val adjustment = state.adjustment ?: return
+    val preview = remember(state.activePlan, adjustment) { buildAdjustmentPreview(state.activePlan, adjustment) }
+    if (preview == null) {
+        Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+            Text("当前计划还没读到,无法整页预览", style = MaterialTheme.typography.bodyLarge)
+            TextButton(onClick = onBack) { Text("回聊天") }
+        }
+        return
+    }
+    val today = LocalDate.now()
+    val diff = remember(preview, state.activePlan, today) { compareTodayItems(preview, state.activePlan, today) }
+    val html = remember(preview, diff, today, adjustment) {
+        renderDraftHtml(preview, diff, today, activeCompared = true, adjustment = adjustment)
+    }
+    Column(Modifier.fillMaxSize()) {
+        DraftWebView(html, Modifier.weight(1f).fillMaxWidth())
+        Surface(shadowElevation = 6.dp) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                state.error?.let { ErrorRow(it, onRetry, onDismiss) }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text("回聊天") }
+                    Button(onClick = onConfirm, enabled = !state.busy, modifier = Modifier.weight(1f)) {
+                        Text(if (state.confirming) "正在生效…" else "确认调整")
+                    }
+                }
+                Spacer(Modifier.height(bottom))
+            }
+        }
+    }
 }
 
 @Composable

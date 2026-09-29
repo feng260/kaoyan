@@ -58,6 +58,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.data.db.RepeatRule
+import com.yanzhong.app.data.remote.AdjustmentDto
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
@@ -85,6 +86,8 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
     val loggedIn by vm.loggedIn.collectAsStateWithLifecycle()
     val planError by vm.planError.collectAsStateWithLifecycle()
     val updatingItemId by vm.updatingItemId.collectAsStateWithLifecycle()
+    val latestAdjustment by vm.latestAdjustment.collectAsStateWithLifecycle()
+    val undoing by vm.undoing.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var referenceExpanded by rememberSaveable { mutableStateOf(false) }
 
@@ -154,6 +157,9 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
                     plan = serverPlan!!,
                     today = todayDate,
                     updatingItemId = updatingItemId,
+                    latestAdjustment = latestAdjustment,
+                    undoing = undoing,
+                    onUndo = vm::undoLatestAdjustment,
                     onToggle = vm::toggleItem,
                     onOpenSetup = { navController.navigate(Routes.planSetup()) },
                     onOpenDocument = { navController.navigate(Routes.PLAN_DOCUMENT) },
@@ -360,6 +366,9 @@ private fun ServerPlanSummary(
     plan: PlanDto,
     today: LocalDate,
     updatingItemId: Long?,
+    latestAdjustment: AdjustmentDto?,
+    undoing: Boolean,
+    onUndo: () -> Unit,
     onToggle: (com.yanzhong.app.data.remote.PlanItemDto) -> Unit,
     onOpenSetup: () -> Unit,
     onOpenDocument: () -> Unit,
@@ -443,6 +452,16 @@ private fun ServerPlanSummary(
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold
                 )
+            }
+        }
+
+        // 撤销最近一次已生效的行程调整(spec §2 可撤销):无新打卡时才可用,服务端会再校验一次
+        if (latestAdjustment?.status == "applied") {
+            TextButton(onClick = onUndo, enabled = !busy && !undoing, modifier = Modifier.fillMaxWidth()) {
+                Icon(AppIcons.RotateCcw, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(if (undoing) "正在撤销…"
+                    else "撤销上次调整${latestAdjustment?.summary?.let { " · $it" }.orEmpty()}")
             }
         }
 

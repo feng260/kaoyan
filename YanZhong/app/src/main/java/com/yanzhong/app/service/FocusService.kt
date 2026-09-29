@@ -665,6 +665,27 @@ class FocusService : Service() {
             }
         }
 
+        /**
+         * 计划主动提醒(体检命中):与 postEvent 同通道但不抢屏 ——
+         * 无全屏 intent、普通优先级、不发声,安静地在通知栏放一句。
+         */
+        fun postPlanReminder(context: Context, text: String) {
+            if (text.isBlank()) return
+            ensureChannels(context)
+            val nm = context.getSystemService(NotificationManager::class.java) ?: return
+            val notification = NotificationCompat.Builder(context, CHANNEL_EVENT)
+                .setSmallIcon(R.drawable.ic_stat_pomodoro)
+                .setContentTitle("研钟计划")
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setAutoCancel(true)
+                .setContentIntent(contentIntent(context))
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setCategory(NotificationCompat.CATEGORY_REMINDER)
+                .build()
+            nm.notify(EVENT_ID + 1, notification)
+        }
+
         fun cancelOngoing(context: Context) {
             context.getSystemService(NotificationManager::class.java)?.cancel(ONGOING_ID)
         }

@@ -2,6 +2,8 @@ package com.yanzhong.app.data.remote
 
 import android.content.Context
 import com.yanzhong.app.YanZhongApp
+import com.yanzhong.app.service.FocusService
+import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -112,6 +114,14 @@ class DataSyncer(private val app: YanZhongApp) {
                     .collect { if (started) pullPlanOnce() }
             },
             scope.launch {
+                app.statusSync.notices.filterIsInstance<SyncNotice.PlanReminder>()
+                    .collect { notice ->
+                        if (started && notice.text.isNotBlank() && claimDailyReminder()) {
+                            FocusService.postPlanReminder(app, notice.text)
+                        }
+                    }
+            },
+            scope.launch {
                 app.settingsRepo.settings
                     .map { app.settingsRepo.syncMapOf(it) }
                     .distinctUntilChanged()
@@ -128,7 +138,10 @@ class DataSyncer(private val app: YanZhongApp) {
             scope.launch {
                 while (true) {
                     delay(15 * 60_000L)
-                    if (started) syncOnce()
+                    if (started) {
+                        syncOnce()
+                        pullCheckupOnce()
+                    }
                 }
             }
         )
@@ -169,6 +182,22 @@ class DataSyncer(private val app: YanZhongApp) {
             if (plan == null) app.repository.clearPlanProjections(account)
             else app.repository.applyPlanProjection(plan, account)
         }
+    }
+
+    /** 每天最多一条主动提醒:返回 true 表示抢到当天的名额(WS 与轮询两条通道共用,防双重弹通知) */
+    private fun claimDailyReminder(): Boolean {
+        val today = LocalDate.now().toString()
+        if (prefs.getString(PLAN_REMINDER_DAY_KEY, null) == today) return false
+        prefs.edit().putString(PLAN_REMINDER_DAY_KEY, today).apply()
+        return true
+    }
+
+    /** 计划体检轮询:命中且当天没提醒过 → 本地通知(spec §3.10 本地通道;无 WorkManager,复用 15 分钟周期循环) */
+    private suspend fun pullCheckupOnce() {
+        if (!started || TokenStore.currentAccess() == null) return
+        val checkup = runCatching { ApiClient.api().planCheckup() }.getOrNull() ?: return
+        if (checkup.suggestion.isBlank() || !claimDailyReminder()) return
+        FocusService.postPlanReminder(app, checkup.suggestion)
     }
 
     fun stop() {
@@ -237,5 +266,6 @@ class DataSyncer(private val app: YanZhongApp) {
         private const val SINCE_KEY = "since"
         private const val SETTINGS_SYNC_KEY = "settings_sync_at"
         private const val WATERMARK_ACCOUNT_KEY = "watermark_account"
+        private const val PLAN_REMINDER_DAY_KEY = "plan_reminder_day"
     }
 }

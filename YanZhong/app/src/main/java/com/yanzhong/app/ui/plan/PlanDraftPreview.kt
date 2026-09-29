@@ -1,5 +1,6 @@
 package com.yanzhong.app.ui.plan
 
+import com.yanzhong.app.data.remote.AdjustmentDto
 import com.yanzhong.app.data.remote.DocBlockDto
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.remote.PlanItemDto
@@ -39,7 +40,8 @@ private fun escapeHtml(value: String): String = buildString {
     }
 }
 
-internal fun renderDraftHtml(draft: PlanDto, diff: TodayItemDiff, today: LocalDate, activeCompared: Boolean = true): String = buildString {
+internal fun renderDraftHtml(draft: PlanDto, diff: TodayItemDiff, today: LocalDate,
+    activeCompared: Boolean = true, adjustment: AdjustmentDto? = null): String = buildString {
     fun text(value: String) = append(escapeHtml(value))
     fun itemList(items: List<PlanItemDto>, empty: String) {
         if (items.isEmpty()) { append("<p class='muted'>"); text(empty); append("</p>") }
@@ -70,7 +72,24 @@ internal fun renderDraftHtml(draft: PlanDto, diff: TodayItemDiff, today: LocalDa
     }
     append("<div class='change'>将新增 ${diff.added.size} 项</div>")
     itemList(diff.added, "今天没有新增的任务")
-    append("</section><section><h2>阶段安排</h2>")
+    append("</section>")
+    adjustment?.let { adj ->
+        append("<section><h2>本次调整</h2>")
+        append("<p class='note'>")
+        text(adj.summary ?: "")
+        append("</p>")
+        if (adj.changes.isEmpty()) {
+            append("<p class='muted'>没有可展示的变动明细</p>")
+        } else {
+            adj.changes.forEach { change ->
+                append("<div class='change'>")
+                text(adjustmentChangeLine(change))
+                append("</div>")
+            }
+        }
+        append("</section>")
+    }
+    append("<section><h2>阶段安排</h2>")
     draft.stages.sortedBy { it.sortOrder }.forEach { stage ->
         append("<div class='stage'><span>"); text(stage.name); append("</span><small>")
         text("${stage.startDate} — ${stage.endDate}"); append("</small></div>")
@@ -113,4 +132,34 @@ private fun StringBuilder.renderBlock(block: DocBlockDto, text: (String) -> Unit
         }
         else -> block.text?.let { append(if (block.emph) "<p class='block note'>" else "<p class='block'>"); text(it); append("</p>") }
     }
+}
+
+/**
+ * 用 active plan + 调整单 changes 本地拼出「确认后会长什么样」的预览计划:
+ * L2 整页预览没有服务端新计划可拉,就把 changes 应用到当前计划上。
+ */
+internal fun buildAdjustmentPreview(active: PlanDto?, adjustment: AdjustmentDto?): PlanDto? {
+    if (active == null || adjustment == null) return null
+    val items = active.items.toMutableList()
+    for (change in adjustment.changes) {
+        val to = change.to
+        when (change.kind) {
+            "removed" -> items.removeAll { it.id == change.id }
+            "moved", "updated" -> {
+                val index = items.indexOfFirst { it.id == change.id }
+                if (index >= 0 && to != null) {
+                    items[index] = items[index].copy(
+                        planDate = to.planDate, minutes = to.minutes.toInt(), title = to.title,
+                    )
+                }
+            }
+            "added" -> if (to != null) {
+                items += PlanItemDto(
+                    id = change.id, subject = change.subject, title = to.title,
+                    planDate = to.planDate, minutes = to.minutes.toInt(),
+                )
+            }
+        }
+    }
+    return active.copy(items = items)
 }

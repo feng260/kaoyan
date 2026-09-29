@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.yanzhong.app.data.remote.AdjustmentDto
+import com.yanzhong.app.data.remote.AdjustReq
 import com.yanzhong.app.data.remote.ApiClient
 import com.yanzhong.app.data.remote.InterviewMessageDto
 import com.yanzhong.app.data.remote.InterviewReq
@@ -16,9 +18,16 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import retrofit2.HttpException
 
 /** 草稿只在本页面预览；确认成功前不向计划页发送刷新事件。 */
 enum class InterviewPhase { LOADING, NEED_PROFILE, CHATTING, DRAFT, SUCCESS }
+
+/** 对话模式:BUILD=制定/重新生成计划;ADJUST=已有生效计划,对话即行程小助手 */
+enum class InterviewMode { BUILD, ADJUST }
 
 data class InterviewUiState(
     val phase: InterviewPhase = InterviewPhase.LOADING,
@@ -32,6 +41,8 @@ data class InterviewUiState(
     val error: String? = null,
     val plan: PlanDto? = null,
     val activePlan: PlanDto? = null,
+    val mode: InterviewMode = InterviewMode.BUILD,
+    val adjustment: AdjustmentDto? = null,
     val activeCompared: Boolean = false
 ) {
     val busy: Boolean get() = sending || generating || confirming
@@ -51,7 +62,8 @@ private data class InterviewSessionSnapshot(
     val messages: List<InterviewMessageDto> = emptyList(),
     val options: List<String> = emptyList(),
     val done: Boolean = false,
-    val brief: PlanBriefDto? = null
+    val brief: PlanBriefDto? = null,
+    val mode: InterviewMode = InterviewMode.BUILD
 )
 
 private class InterviewSessionStore(context: Context) {
@@ -96,9 +108,36 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
             }
             val saved = if (profileJustSaved) null else session.load()
                 ?.takeIf { it.messages.isNotEmpty() && it.accountGuid == accountGuid }
+            // 模式分流:刚改完档案 → 重新生成(BUILD);有存档 → 续上次的模式;
+            // 都没有 → 已有生效计划就是行程小助手,否则从头制定
+            val activePlan = runCatching { ApiClient.api().getActivePlan().plan }.getOrNull()
+            val mode = when {
+                profileJustSaved -> InterviewMode.BUILD
+                saved != null -> saved.mode
+                else -> if (activePlan != null) InterviewMode.ADJUST else InterviewMode.BUILD
+            }
+            _ui.update { it.copy(mode = mode) }
+            if (mode == InterviewMode.ADJUST) {
+                if (saved != null) {
+                    _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
+                        messages = saved.messages, activePlan = activePlan)
+                    // 存档停在「刚发完、AI 还没回」:补发一次
+                    if (saved.messages.last().role == "user") adjust(saved.messages.last().content)
+                } else {
+                    _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
+                        activePlan = activePlan,
+                        messages = listOf(InterviewMessageDto("assistant",
+                            "计划正在跑。临时有事、生病、换课表,直接跟我说一句,我帮你把近期计划调好——确认前不会改动现在的安排。")))
+                }
+                // 恢复还没确认的调整单:冷启动、切页回来不断片
+                runCatching { ApiClient.api().getLatestAdjustment() }.getOrNull()?.adjustment
+                    ?.takeIf { it.status == "draft" }
+                    ?.let { latest -> _ui.update { it.copy(adjustment = latest) } }
+                return@launch
+            }
             if (saved != null) {
-                _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, messages = saved.messages,
-                    options = saved.options, done = saved.done, brief = saved.brief)
+                _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
+                    messages = saved.messages, options = saved.options, done = saved.done, brief = saved.brief)
                 // 存档停在"考生刚发完、AI 还没回"：补问一次，否则续上也没得可点
                 if (saved.messages.last().role == "user") advance()
                 return@launch
@@ -117,7 +156,9 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
         }
         // 先落盘再发请求：请求途中被杀，考生刚打的内容也不会白费
         persist()
-        viewModelScope.launch { advance() }
+        viewModelScope.launch {
+            if (_ui.value.mode == InterviewMode.ADJUST) adjust(content) else advance()
+        }
     }
 
     fun generate() {
@@ -163,12 +204,56 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
         persist()
     }
 
+    /** 调整模式的一轮:这句话交给 POST /plans/adjust,回来的是追问、闲聊或一张待确认调整单 */
+    private suspend fun adjust(message: String) {
+        _ui.update { it.copy(sending = true, error = null) }
+        runCatching { ApiClient.aiApi().adjustPlan(AdjustReq(message = message)) }.fold({ resp ->
+            _ui.update {
+                it.copy(messages = it.messages + InterviewMessageDto("assistant", resp.reply.orEmpty()),
+                    adjustment = resp.adjustment ?: it.adjustment, sending = false)
+            }
+            persist()
+        }, { e ->
+            _ui.update { it.copy(sending = false, error = "这次没算好(${e.userMessage()})，点重试继续或换个说法") }
+            persist()
+        })
+    }
+
+    /** 确认调整单:服务端就地改写计划项并广播 planChanged,计划页自动更新 */
+    fun confirmAdjustment() {
+        val adjustment = _ui.value.adjustment?.takeIf { it.status == "draft" } ?: return
+        if (_ui.value.busy) return
+        viewModelScope.launch {
+            _ui.update { it.copy(confirming = true, error = null) }
+            runCatching { ApiClient.api().confirmAdjustment(adjustment.id).plan }
+                .fold({ plan ->
+                    _ui.update {
+                        it.copy(confirming = false, adjustment = null,
+                            phase = InterviewPhase.SUCCESS, plan = plan)
+                    }
+                    persist()
+                }, { e ->
+                    _ui.update { it.copy(confirming = false, error = "确认失败(${e.userMessage()})，请重试或重新描述") }
+                })
+        }
+    }
+
+    /** 「重说一次」:只收起卡片;服务端的 draft 会被下一次 adjust 原地覆盖 */
+    fun dismissAdjustmentCard() { _ui.update { it.copy(adjustment = null) } }
+
     fun retry() {
         if (_ui.value.busy) return
         when {
             _ui.value.phase == InterviewPhase.DRAFT -> confirm()
             _ui.value.canGenerate -> generate()
-            _ui.value.phase == InterviewPhase.CHATTING -> viewModelScope.launch { advance() }
+            _ui.value.phase == InterviewPhase.CHATTING -> viewModelScope.launch {
+                if (_ui.value.mode == InterviewMode.ADJUST) {
+                    val last = _ui.value.messages.lastOrNull { it.role == "user" }?.content
+                    if (last != null) adjust(last) else advance()
+                } else {
+                    advance()
+                }
+            }
         }
     }
 
@@ -201,12 +286,12 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
         if (s.phase == InterviewPhase.SUCCESS) { session.clear(); return }
         if (s.messages.isEmpty()) return
         session.save(InterviewSessionSnapshot(accountGuid = accountGuid, messages = s.messages,
-            options = s.options, done = s.done, brief = s.brief))
+            options = s.options, done = s.done, brief = s.brief, mode = s.mode))
     }
 
     /** 把异常翻译成人话；不要把服务端原始 body / HTTP 400 直接甩给考生 */
     private fun Throwable.userMessage(): String = when (this) {
-        is retrofit2.HttpException -> when (val code = code()) {
+        is HttpException -> serverError()?.friendly() ?: when (val code = code()) {
             400, 422 -> "这次请求没被接受，多半是输入太长，精简一下再试"
             401, 403 -> "登录已过期，请重新登录"
             503 -> "服务端还没配置好 AI"
@@ -214,5 +299,42 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
             else -> "请求失败($code)"
         }
         else -> message ?: "未知错误"
+    }
+}
+
+/** 服务端错误信封 { error, message }：error 是稳定业务码，message 是给考生看的中文说明 */
+private data class ServerError(val code: String, val message: String)
+
+/** 解析错误体；任何一步失败都当作「没有服务端说明」，退回按 HTTP 状态码兜底 */
+private fun HttpException.serverError(): ServerError? {
+    val body = runCatching { response()?.errorBody()?.string() }.getOrNull()
+        ?.takeIf { it.isNotBlank() } ?: return null
+    val obj = runCatching { Json.parseToJsonElement(body).jsonObject }.getOrNull() ?: return null
+    val code = obj["error"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() } ?: return null
+    return ServerError(code, obj["message"]?.jsonPrimitive?.contentOrNull.orEmpty())
+}
+
+/**
+ * 业务码 → 考生能照着做的提示。服务端 message 往往已含关键信息
+ * （如「考前可用 1200 分钟,无法完成:数学二 强化 缺 900 分钟」），能直接用就用原文；
+ * 只有纯技术性说明才换成人话，拿不准的码原样透出，也好过一律降级成「请求失败」。
+ */
+private fun ServerError.friendly(): String? {
+    fun or(fallback: String) = message.ifBlank { fallback }
+    return when (code) {
+        // 「考前可用 N 分钟,无法完成:科目 里程碑 缺 N 分钟」——考生要知道差多少才好调整
+        "PLAN_CAPACITY_INSUFFICIENT" -> or("考前可用时间不足以覆盖已确认的剩余任务")
+        // 「生成计划前请确认:xxx」
+        "PLANNING_FACTS_INCOMPLETE" -> or("还有关键信息没确认，先在对话里补上")
+        "PROFILE_INCOMPLETE" -> or("请先完成备考问卷，再生成计划")
+        "PLAN_PROFILE_CHANGED", "PLAN_PROGRESS_CHANGED" -> or("备考档案或进度已变化，请重新生成草稿")
+        // reason 偏技术（如「阶段之间有空隙或重叠:基础阶段」），换成能照着做的说法
+        "PLAN_GENERATION_FAILED" -> "这次生成的计划不合规，已拦下。可回聊天补充科目范围或剩余量后重试"
+        "PLAN_INTERVIEW_FAILED" -> "AI 面谈这次没接上，稍后重试"
+        "AI_NOT_CONFIGURED", "AI_VISION_NOT_CONFIGURED" -> or("服务端还没配置好 AI，请稍后再试")
+        "ADJUSTMENT_STALE" -> or("计划在生成调整单之后又被改过，这张调整单失效了，重新说一遍即可")
+        "ADJUSTMENT_NOT_FOUND" -> or("调整单不存在，可能已经确认或撤销过了")
+        "PLAN_NOT_FOUND", "PLAN_ITEM_NOT_FOUND" -> or("相关计划已失效，请重新生成")
+        else -> message.takeIf { it.isNotBlank() }
     }
 }

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createPlanningService, PlanningDb } from './service'
+import { createPlanningService, overdueSuggestion, PlanningDb } from './service'
 import { dayStart, addDays, profileInputSchema } from './schemas'
 import { generateRulePlan } from './generator'
 import { normalizeBrief } from './document'
@@ -40,8 +40,9 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean; beforeItemUpdat
     plans: [] as Row[],
     stages: [] as Row[],
     items: [] as Row[],
+    adjustments: [] as Row[],
   }
-  let seq = { plan: 0, stage: 0, item: 0 }
+  let seq = { plan: 0, stage: 0, item: 0, adjustment: 0 }
   let failNextItemInsert = options.failOnItemInsertOnce ?? false
 
   const snapshot = () => ({
@@ -49,6 +50,7 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean; beforeItemUpdat
     plans: structuredClone(state.plans),
     stages: structuredClone(state.stages),
     items: structuredClone(state.items),
+    adjustments: structuredClone(state.adjustments),
     seq: { ...seq },
     failNextItemInsert,
   })
@@ -57,6 +59,7 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean; beforeItemUpdat
     state.plans = snap.plans
     state.stages = snap.stages
     state.items = snap.items
+    state.adjustments = snap.adjustments
     seq = snap.seq
     failNextItemInsert = snap.failNextItemInsert
   }
@@ -172,6 +175,22 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean; beforeItemUpdat
         return { count: hit.length }
       },
     },
+    planAdjustment: {
+      findFirst: async ({ where }: any = {}) =>
+        state.adjustments.filter(r => !where || whereMatch(r, where))[0] ?? null,
+      findMany: async ({ where }: any = {}) =>
+        state.adjustments.filter(r => !where || whereMatch(r, where)),
+      create: async ({ data }: any) => {
+        const row = { id: ++seq.adjustment, createdAt: new Date(), ...structuredClone(data) }
+        state.adjustments.push(row)
+        return row
+      },
+      updateMany: async ({ where, data }: any) => {
+        const hit = state.adjustments.filter(r => whereMatch(r, where))
+        for (const row of hit) Object.assign(row, structuredClone(data))
+        return { count: hit.length }
+      },
+    },
     $transaction: async (fn: (tx: any) => Promise<any>) => {
       const snap = snapshot()
       try {
@@ -227,6 +246,68 @@ async function confirmGeneratedPlan(
   fake.state.profiles.find(row => row.userGuid === userGuid)!.briefJson = JSON.stringify(brief)
   const draft = await service.generatePlanDraft(userGuid)
   return service.confirmPlan(userGuid, draft.id)
+}
+
+// ---------- 行程调整(D1):播种与注入助手 ----------
+
+/** 行程测试的 brief:每天 19:00-22:00 空闲(180 分钟)、无固定占用,容量完全可预期 */
+function adjustBrief(): PlanBrief {
+  const brief = qualityBrief()
+  brief.availability = [1, 2, 3, 4, 5, 6, 7].map(weekday => ({
+    weekday, windows: [{ start: '19:00', end: '22:00' }],
+  }))
+  brief.fixedCommitments = []
+  return brief
+}
+
+const dayOnlyRow = (value: any) => new Date(value).toISOString().slice(0, 10)
+
+/** 播种一份 active plan:plan=900 / stage=901 / item=1000+i,stage 窗口与每日项均可控 */
+async function seedActivePlan(
+  fake: ReturnType<typeof createFakeDb>, userGuid = USER,
+  entries: Array<{ day: number; minutes: number; subject?: string; title?: string; status?: string }>,
+  options: { stageFrom?: number; stageTo?: number; brief?: PlanBrief; dailyMinutes?: number } = {},
+) {
+  fake.state.profiles.push({
+    id: 1, userGuid,
+    targetType: '考研', examDate: dayIso(120), dailyMinutes: options.dailyMinutes ?? 180,
+    studyWindowsJson: '["上午","晚上"]', foundation: '一般', weakSubjectsJson: '[]',
+    briefJson: JSON.stringify(options.brief ?? adjustBrief()), updatedAt: new Date(),
+  })
+  fake.state.plans.push({
+    id: 900, userGuid, profileId: 1, title: '测试计划', targetType: '考研',
+    source: 'rule', status: 'active', version: 1,
+    startDate: new Date(`${dayIso(options.stageFrom ?? 0)}T00:00:00.000Z`),
+    examDate: new Date(`${dayIso(120)}T00:00:00.000Z`),
+    updatedAt: new Date(),
+  })
+  fake.state.stages.push({
+    id: 901, planId: 900, name: '第一阶段', sortOrder: 0,
+    startDate: new Date(`${dayIso(options.stageFrom ?? 0)}T00:00:00.000Z`),
+    endDate: new Date(`${dayIso(options.stageTo ?? 6)}T00:00:00.000Z`),
+  })
+  entries.forEach((entry, index) => {
+    fake.state.items.push({
+      id: 1000 + index, planId: 900, stageId: 901,
+      subject: entry.subject ?? '数学', title: entry.title ?? `任务${1000 + index}`,
+      planDate: new Date(`${dayIso(entry.day)}T00:00:00.000Z`),
+      minutes: entry.minutes, priority: 0, sortOrder: index,
+      status: entry.status ?? 'pending', completedAt: null,
+    })
+  })
+}
+
+/** 注入固定意图返回值的 service;intent 里的字段覆盖默认值 */
+function serviceWithAdjust(fake: ReturnType<typeof createFakeDb>, intent: Row) {
+  return createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async input => ({ title: `${input.targetType}备考计划`, plan: generateRulePlan(input) }),
+    adjustIntent: async () => ({
+      kind: 'unavailable', days: [], windows: [], commitments: [],
+      note: '', summary: '临时有事', needClarify: false, clarifyQuestion: '',
+      ...intent,
+    }),
+  })
 }
 
 test('an old socket closing after reconnect does not remove the new device connection', () => {
@@ -1072,4 +1153,197 @@ test('upsertProfile keeps the brief gathered during the interview', async () => 
   // 改档案不该把面谈得到的画像一起丢掉
   assert.equal(typeof fake.state.profiles[0].briefJson, 'string')
   assert.equal((await service.getProfile(USER))!.brief?.summary, SAMPLE_BRIEF.summary)
+})
+
+// ---------- 行程调整(D1):集成用例 A-G ----------
+
+test('adjust A:明天没空 → 当天任务顺延次日;确认前零副作用,确认后计划项被挪动', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [
+    { day: 1, minutes: 120 },
+    { day: 2, minutes: 60 },
+  ])
+  const service = serviceWithAdjust(fake, { kind: 'unavailable', days: [dayIso(1)], summary: '明天没空' })
+
+  const result = await service.adjust(USER, { message: '明天有事,学不了' })
+  assert.ok(result.adjustment)
+  assert.equal(result.adjustment.status, 'draft')
+  assert.equal(result.adjustment.tier, 'L1')
+  assert.equal(result.adjustment.changes.length, 1)
+  assert.equal(result.adjustment.changes[0].kind, 'moved')
+  // 草稿不改变 active plan
+  assert.equal(dayOnlyRow(fake.state.items.find(row => row.id === 1000)!.planDate), dayIso(1))
+
+  const plan = await service.confirmAdjustment(USER, result.adjustment.id)
+  const moved = plan.items.find(row => row.id === 1000)!
+  assert.equal(moved.planDate, dayIso(2))
+  // 未受影响的原项保持原日期
+  assert.equal(plan.items.find(row => row.id === 1001)!.planDate, dayIso(2))
+})
+
+test('adjust B:窗口内塞不下 → PLAN_CAPACITY_INSUFFICIENT 且不落调整单', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [{ day: 1, minutes: 240 }], { stageTo: 1 })
+  const service = serviceWithAdjust(fake, { kind: 'unavailable', days: [dayIso(0), dayIso(1)], summary: '今明都没空' })
+
+  await assert.rejects(
+    () => service.adjust(USER, { message: '今明两天都没空' }),
+    (error: any) => error.code === 'PLAN_CAPACITY_INSUFFICIENT',
+  )
+  assert.equal(fake.state.adjustments.length, 0)
+})
+
+test('adjust C:已有 draft 时再次调整原地覆盖,不产生第二张', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [{ day: 1, minutes: 120 }, { day: 2, minutes: 60 }])
+  const first = await serviceWithAdjust(fake, { kind: 'unavailable', days: [dayIso(1)], summary: '明天有事' })
+    .adjust(USER, { message: '明天有事' })
+  const second = await serviceWithAdjust(fake, { kind: 'unavailable', days: [dayIso(2)], summary: '后天有事' })
+    .adjust(USER, { message: '后天也有事' })
+
+  assert.ok(first.adjustment && second.adjustment)
+  assert.equal(second.adjustment.id, first.adjustment.id)
+  assert.equal(fake.state.adjustments.filter(row => row.status === 'draft').length, 1)
+})
+
+test('adjust D:确认前窗口内计划被第三方改过 → ADJUSTMENT_STALE', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [{ day: 1, minutes: 120 }])
+  const service = serviceWithAdjust(fake, { kind: 'unavailable', days: [dayIso(1)], summary: '明天没空' })
+  const result = await service.adjust(USER, { message: '明天有事' })
+  assert.ok(result.adjustment)
+  const adjustmentId = result.adjustment.id
+
+  // 模拟另一台设备在确认前改了窗口内计划项的分钟数
+  const row = fake.state.items.find(item => item.id === 1000)!
+  row.minutes = 90
+
+  await assert.rejects(
+    () => service.confirmAdjustment(USER, adjustmentId),
+    (error: any) => error.code === 'ADJUSTMENT_STALE',
+  )
+})
+
+test('adjust E:追问/闲聊只回话不产调整单', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [{ day: 1, minutes: 120 }])
+  const service = serviceWithAdjust(fake,
+    { kind: 'chat', needClarify: true, clarifyQuestion: '哪天没空?', summary: '' })
+
+  const result = await service.adjust(USER, { message: '有点事' })
+  assert.equal(result.adjustment, null)
+  assert.equal(result.reply, '哪天没空?')
+  assert.equal(fake.state.adjustments.length, 0)
+})
+
+test('adjust F:确认后 latest 取到 applied,撤销后窗口内项回到原日期', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [{ day: 1, minutes: 120 }])
+  const service = serviceWithAdjust(fake, { kind: 'unavailable', days: [dayIso(1)], summary: '明天没空' })
+  const result = await service.adjust(USER, { message: '明天有事' })
+  assert.ok(result.adjustment)
+  await service.confirmAdjustment(USER, result.adjustment.id)
+
+  const latest = await service.latestAdjustment(USER)
+  assert.ok(latest)
+  assert.equal(latest.id, result.adjustment.id)
+  assert.equal(latest.status, 'applied')
+
+  const plan = await service.undoAdjustment(USER, result.adjustment.id)
+  assert.equal(plan.items.find(row => row.id === 1000)!.planDate, dayIso(1))
+  // 撤销后不再有可展示的调整单
+  assert.equal(await service.latestAdjustment(USER), null)
+})
+
+test('adjust G:调整生效后打了新卡 → 拒绝撤销', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [{ day: 1, minutes: 120 }])
+  const service = serviceWithAdjust(fake, { kind: 'unavailable', days: [dayIso(1)], summary: '明天没空' })
+  const result = await service.adjust(USER, { message: '明天有事' })
+  assert.ok(result.adjustment)
+  const adjustmentId = result.adjustment.id
+  await service.confirmAdjustment(USER, adjustmentId)
+
+  // 调整生效后完成了一次打卡
+  await service.setItemStatus(USER, 1000, 'done')
+
+  await assert.rejects(
+    () => service.undoAdjustment(USER, adjustmentId),
+    (error: any) => error.code === 'ADJUSTMENT_STALE',
+  )
+})
+
+// ---------- 行程调整(D3):档位升级与 L2 重排 ----------
+
+test('adjust L2-1:影响天数超阈值 → 升级 L2,模型序列由服务端展开并复用原项', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [
+    { day: 0, minutes: 60 }, { day: 1, minutes: 60 }, { day: 2, minutes: 60 }, { day: 3, minutes: 60 },
+  ])
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async input => ({ title: `${input.targetType}备考计划`, plan: generateRulePlan(input) }),
+    adjustIntent: async () => ({
+      kind: 'unavailable', days: [dayIso(0), dayIso(1), dayIso(2)], windows: [], commitments: [],
+      note: '前三天都没空', summary: '前三天没空', needClarify: false, clarifyQuestion: '',
+    }),
+    adjustL2: async () => [
+      { dayOffset: 3, subject: '数学', title: '任务1000', minutes: 60 },
+      { dayOffset: 3, subject: '数学', title: '任务1001', minutes: 60 },
+      { dayOffset: 4, subject: '数学', title: '任务1002', minutes: 60 },
+      { dayOffset: 4, subject: '数学', title: '任务1003', minutes: 60 },
+    ],
+  })
+
+  const result = await service.adjust(USER, { message: '前三天都有事' })
+  assert.ok(result.adjustment)
+  assert.equal(result.adjustment.tier, 'L2')
+  const plan = await service.confirmAdjustment(USER, result.adjustment.id)
+  const dates = plan.items.filter(item => item.id >= 1000 && item.id <= 1003)
+    .map(item => item.planDate).sort()
+  assert.deepEqual(dates, [dayIso(3), dayIso(3), dayIso(4), dayIso(4)])
+})
+
+test('adjust L2-2:校验两次不过 → PLAN_GENERATION_FAILED 且窗口内任务原封不动', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [
+    { day: 0, minutes: 60 }, { day: 1, minutes: 60 }, { day: 2, minutes: 60 }, { day: 3, minutes: 60 },
+  ])
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async input => ({ title: `${input.targetType}备考计划`, plan: generateRulePlan(input) }),
+    adjustIntent: async () => ({
+      kind: 'unavailable', days: [dayIso(0), dayIso(1), dayIso(2)], windows: [], commitments: [],
+      note: '', summary: '前三天没空', needClarify: false, clarifyQuestion: '',
+    }),
+    // 240 分钟排进 180 分钟的一天 → 每日容量校验两次失败
+    adjustL2: async () => [{ dayOffset: 3, subject: '数学', title: 'x', minutes: 240 }],
+  })
+
+  await assert.rejects(
+    () => service.adjust(USER, { message: '前三天都有事' }),
+    (error: any) => error.code === 'PLAN_GENERATION_FAILED',
+  )
+  assert.equal(fake.state.adjustments.length, 0)
+  assert.equal(fake.state.items.filter(item => item.status === 'pending').length, 4)
+})
+
+// ---------- 行程体检(D4) ----------
+
+test('checkup:数出过去未完成的任务;没有计划返回全零', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [
+    { day: -1, minutes: 60 },
+    { day: 0, minutes: 30, status: 'done' },
+    { day: 2, minutes: 45 },
+  ])
+  const checkup = await serviceWith(fake).checkup(USER)
+  assert.equal(checkup.overdueCount, 1)
+  assert.equal(checkup.behindMinutes, 60)
+  assert.ok(checkup.suggestion.includes('1 项'))
+
+  const none = await serviceWith(createFakeDb()).checkup('other-guid')
+  assert.deepEqual(none, { behindMinutes: 0, overdueCount: 0, suggestion: '' })
+
+  assert.equal(overdueSuggestion(0, 0), '')
 })

@@ -6,6 +6,7 @@ import { apiLimit } from '../../middlewares/ratelimit'
 import { hub } from '../../shared/ws/Hub'
 import { profileInputSchema, type ProfileInput } from './schemas'
 import { PLAN_ITEM_STATUSES, planningService } from './service'
+import { maybeNotifyPlanReminder } from './planReminder'
 
 const router = new Router({ prefix: '/api/v1' })
 
@@ -125,6 +126,52 @@ router.post('/plans/timetable', requireAuth, apiLimit(), async ctx => {
   }
   const result = await planningService.parseTimetable(ctx.state.auth!.userGuid, parsed.data)
   ctx.body = { ...result, serverTime: Date.now() }
+})
+
+/** 行程调整:一句话描述突发情况;长度口径与面谈消息一致 */
+const adjustSchema = z.object({
+  message: z.string().min(1).max(1000),
+})
+
+/**
+ * 行程调整:一句话描述突发情况,服务端解析意图并产出待确认调整单。
+ * 返回 { adjustment, reply, plan }:adjustment 为 null 时 reply 是追问/闲聊回复。
+ * 必须注册在 `/plans/:id` 之前(与 interview/timetable 同理)。
+ */
+router.post('/plans/adjust', requireAuth, apiLimit(), async ctx => {
+  const parsed = adjustSchema.safeParse(ctx.request.body)
+  if (!parsed.success) throw parsed.error
+  const result = await planningService.adjust(ctx.state.auth!.userGuid, { message: parsed.data.message })
+  ctx.body = { ...result, serverTime: Date.now() }
+})
+
+/** 最近一张待确认/已生效调整单:App 冷启动、切页恢复卡片 */
+router.get('/plans/adjustments/latest', requireAuth, async ctx => {
+  const adjustment = await planningService.latestAdjustment(ctx.state.auth!.userGuid)
+  ctx.body = { adjustment, serverTime: Date.now() }
+})
+
+/** 计划体检:落后分钟数/过期任务数/一句话建议。App 周期轮询;服务端顺手触发在线提醒( fire-and-forget ) */
+router.get('/plans/checkup', requireAuth, async ctx => {
+  const checkup = await planningService.checkup(ctx.state.auth!.userGuid)
+  void maybeNotifyPlanReminder(ctx.state.auth!.userGuid)
+  ctx.body = { ...checkup, serverTime: Date.now() }
+})
+
+router.post('/plans/adjustments/:id/confirm', requireAuth, apiLimit(), async ctx => {
+  const id = Number(ctx.params.id)
+  if (!Number.isInteger(id) || id <= 0) throw new ApiError(400, 'INVALID_PARAMS', '调整单 id 不合法')
+  const plan = await planningService.confirmAdjustment(ctx.state.auth!.userGuid, id)
+  ctx.body = { plan, serverTime: Date.now() }
+  notifyPlanChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)
+})
+
+router.post('/plans/adjustments/:id/undo', requireAuth, apiLimit(), async ctx => {
+  const id = Number(ctx.params.id)
+  if (!Number.isInteger(id) || id <= 0) throw new ApiError(400, 'INVALID_PARAMS', '调整单 id 不合法')
+  const plan = await planningService.undoAdjustment(ctx.state.auth!.userGuid, id)
+  ctx.body = { plan, serverTime: Date.now() }
+  notifyPlanChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)
 })
 
 /** 读取当前生效计划;没有档案/没有计划时返回 null,由客户端回退到本地计划 */

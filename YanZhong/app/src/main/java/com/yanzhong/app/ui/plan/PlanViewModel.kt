@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
+import com.yanzhong.app.data.remote.AdjustmentDto
 import com.yanzhong.app.data.remote.ApiClient
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.remote.PlanItemDto
@@ -84,6 +85,10 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
     val planError: StateFlow<String?> = _planError
     private val _updatingItemId = MutableStateFlow<Long?>(null)
     val updatingItemId: StateFlow<Long?> = _updatingItemId
+    private val _latestAdjustment = MutableStateFlow<AdjustmentDto?>(null)
+    val latestAdjustment: StateFlow<AdjustmentDto?> = _latestAdjustment
+    private val _undoing = MutableStateFlow(false)
+    val undoing: StateFlow<Boolean> = _undoing
 
     init {
         refreshPlan()
@@ -106,6 +111,7 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                     if (!authenticated) {
                         _serverPlan.value = null
                         _planUnavailable.value = false
+                        _latestAdjustment.value = null
                         return@withLock
                     }
                     val plan = ApiClient.api().getActivePlan().plan
@@ -113,6 +119,7 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                     else repo.applyPlanProjection(plan, account!!)
                     _serverPlan.value = plan
                     _planUnavailable.value = plan == null
+                    _latestAdjustment.value = runCatching { ApiClient.api().getLatestAdjustment().adjustment }.getOrNull()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
@@ -150,6 +157,33 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                 _planError.value = "更新失败，请重试；完成状态未改变"
             } finally {
                 _updatingItemId.value = null
+            }
+        }
+    }
+
+    /** 撤销最近一次已生效的调整:服务端把 beforeJson 写回,planChanged 广播后各端自动更新 */
+    fun undoLatestAdjustment() {
+        val latest = _latestAdjustment.value?.takeIf { it.status == "applied" } ?: return
+        if (_undoing.value) return
+        viewModelScope.launch {
+            _undoing.value = true
+            try {
+                requestLock.withLock {
+                    val account = TokenStore.currentAccountGuid()
+                    if (TokenStore.currentAccess() == null || account.isNullOrBlank()) return@withLock
+                    val plan = ApiClient.api().undoAdjustment(latest.id).plan
+                        ?: throw IllegalStateException("服务端未返回计划")
+                    repo.applyPlanProjection(plan, account)
+                    _serverPlan.value = plan
+                    _planError.value = null
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _planError.value = "撤销失败，请重试；计划未改变"
+            } finally {
+                _undoing.value = false
+                _latestAdjustment.value = runCatching { ApiClient.api().getLatestAdjustment().adjustment }.getOrNull()
             }
         }
     }

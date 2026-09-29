@@ -250,6 +250,7 @@ model Plan {
   profile UserProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
   stages  PlanStage[]
   items   PlanItem[]
+  adjustments PlanAdjustment[]
 
   @@unique([userGuid, version])
   @@index([userGuid, status])
@@ -289,6 +290,33 @@ model PlanItem {
 
   @@index([planId, planDate])
   @@map("plan_items")
+}
+
+// 行程调整单:AI 按用户一句突发情况算出的「待确认新排法」。
+// 确认前是 draft(不碰计划项);确认后 applied 并把 afterJson 写进 plan_items;
+// undo 把 beforeJson 写回去。调整是就地变更,不动 Plan.version。
+model PlanAdjustment {
+  id          Int       @id @default(autoincrement())
+  userGuid    String    @db.VarChar(36)
+  planId      Int
+  tier        String    @db.VarChar(4) // L1 顺延 / L2 重排
+  status      String    @default("draft") @db.VarChar(16) // draft/applied/undone/expired
+  reason      String?   @db.Text // 用户原始诉求(意图 note 或原话)
+  summary     String?   @db.Text // 面向用户的调整说明
+  windowFrom  DateTime
+  windowTo    DateTime
+  beforeJson  String?   @db.Text // 调整前窗口内计划项快照
+  afterJson   String?   @db.Text // 调整后窗口内计划项快照(确认即落这份)
+  fingerprint String    @db.VarChar(64) // 确认时校验窗口未被第三方改过
+  createdAt   DateTime  @default(now())
+  appliedAt   DateTime?
+  undoneAt    DateTime?
+
+  plan Plan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([userGuid, status])
+  @@index([planId])
+  @@map("plan_adjustments")
 }
 
 // ---------- 应用更新分发 ----------

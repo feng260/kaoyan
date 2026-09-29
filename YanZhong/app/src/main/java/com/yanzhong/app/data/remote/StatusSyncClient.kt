@@ -58,6 +58,8 @@ sealed interface SyncNotice {
     data class SettingsChanged(val deviceId: Long) : SyncNotice
     /** 他端重新生成计划或更新了计划项 */
     data class PlanChanged(val deviceId: Long) : SyncNotice
+    /** 服务端主动提醒:落后/积压(服务端已做每人每天 1 条去重) */
+    data class PlanReminder(val text: String) : SyncNotice
 }
 
 /**
@@ -301,6 +303,10 @@ class StatusSyncClient(private val app: YanZhongApp) {
             "planChanged" -> {
                 val deviceId = obj["deviceId"]?.jsonPrimitive?.longOrNull ?: return
                 if (deviceId != myDeviceId) _notices.tryEmit(SyncNotice.PlanChanged(deviceId))
+            }
+            "planReminder" -> {
+                val text = obj["text"]?.jsonPrimitive?.content ?: return
+                _notices.tryEmit(SyncNotice.PlanReminder(text))
             }
             "kicked" -> {
                 workScope?.launch {
