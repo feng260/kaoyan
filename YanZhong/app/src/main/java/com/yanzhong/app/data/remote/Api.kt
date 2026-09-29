@@ -333,8 +333,28 @@ data class PlanBriefDto(
     val constraints: List<String> = emptyList(),
     val focus: List<String> = emptyList(),
     val materials: List<String> = emptyList(),
-    val notes: List<String> = emptyList()
+    val notes: List<String> = emptyList(),
+    val examSubjects: List<BriefSubjectDto> = emptyList(),
+    val availability: List<BriefAvailabilityDto> = emptyList(),
+    val fixedCommitments: List<BriefCommitmentDto> = emptyList(),
+    val availabilityConfirmed: Boolean = false,
+    val commitmentsConfirmed: Boolean = false
 )
+
+@Serializable
+data class BriefSubjectDto(
+    val name: String, val progress: String, val scope: String,
+    val remainingMinutes: Int, val milestone: String
+)
+
+@Serializable
+data class BriefWindowDto(val start: String, val end: String)
+
+@Serializable
+data class BriefAvailabilityDto(val weekday: Int, val windows: List<BriefWindowDto>)
+
+@Serializable
+data class BriefCommitmentDto(val weekday: Int, val start: String, val end: String, val label: String)
 
 /** 面谈消息：role 只认 user / assistant */
 @Serializable
@@ -422,12 +442,14 @@ interface YanzhongApi {
     suspend fun putProfile(@Body body: ProfileReq): ProfileResp
 
     /**
-     * 依据当前档案重新生成计划。
-     * 服务端会覆盖旧计划并把结果推给同一账号的其他设备（planChanged）。
+     * 依据当前档案生成待确认草稿；旧计划保持生效，直到调用 confirmPlan。
      * 该接口可能耗时一两分钟（含长文档生成），调用方请走 [ApiClient.aiApi]。
      */
     @POST("api/v1/plans/generate")
     suspend fun generatePlan(): PlanResp
+
+    @POST("api/v1/plans/{id}/confirm")
+    suspend fun confirmPlan(@Path("id") id: Long): PlanResp
 
     /**
      * AI 面谈一轮：把已有对话发给服务端，拿回 AI 的下一个问题与快捷选项，

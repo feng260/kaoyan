@@ -66,8 +66,7 @@ object Routes {
     /**
      * 制定/调整备考档案页。
      *
-     * profileOnly=true 表示"只把档案存下来,不排计划"——首次问卷和 AI 面谈前的补档案走这条路,
-     * 因为真正的计划要等面谈谈完才排得出来。默认 false 保持原有"存档案并重新生成"的行为。
+     * 两种入口都只保存档案，随后进入面谈；profileOnly 表示来自面谈补档案。
      */
     const val PLAN_SETUP = "plan_setup?profileOnly={profileOnly}"
     /** AI 备考面谈页:聊几轮问清情况,再据此排全程计划 */
@@ -76,8 +75,9 @@ object Routes {
     const val PLAN_DOCUMENT = "plan_document"
     /** 历史计划页:按版本回看已归档的旧计划(只读) */
     const val PLAN_HISTORY = "plan_history"
-    /** 从 PLAN_SETUP 返回时告诉计划页"计划变了,刷新一下" */
+    /** 只有草稿确认生效后才通知计划页刷新。 */
     const val EXTRA_PLAN_SETUP_DONE = "plan_setup_done"
+    const val EXTRA_PLAN_PROFILE_SAVED = "plan_profile_saved"
 
     /** 应用白名单选择页:subjectId=-1 为全局,其余为科目定制 */
     fun appPicker(subjectId: Long) = "apppicker/$subjectId"

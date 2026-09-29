@@ -15,7 +15,7 @@ import java.time.ZoneId
  * 约束:
  * - 只处理当前账号下、来源键属于本次计划的任务,手工任务与其他账号的投影原样保留。
  * - 同一来源键重复投影复用同一条任务；完成状态以服务端为准，保留本地番茄数。
- * - 已从计划中消失的任务项会被移除。
+ * - 已完成任务保留其本地 ID 与番茄关联；失效的未完成任务会被移除。
  */
 fun TaskEntity.isServerPlanItem(): Boolean = planItemId != null
 
@@ -65,7 +65,7 @@ fun stalePlanTaskIds(
 ): List<Long> {
     val keep = plan.items.map { it.id }.toSet()
     return existing
-        .filter { it.planId != null && it.accountGuid == accountGuid }
+        .filter { it.planId != null && it.accountGuid == accountGuid && it.status != TaskStatus.DONE }
         .filter { it.planId != plan.id || it.planItemId !in keep }
         .map { it.id }
 }

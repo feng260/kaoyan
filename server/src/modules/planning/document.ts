@@ -91,6 +91,11 @@ export interface PlanBrief {
   focus: string[]
   materials: string[]
   notes: string[]
+  examSubjects: Array<{ name: string; progress: string; scope: string; remainingMinutes: number; milestone: string; milestoneDate: string; milestoneMinutes: number }>
+  availability: Array<{ weekday: number; windows: Array<{ start: string; end: string }> }>
+  fixedCommitments: Array<{ weekday: number; start: string; end: string; label: string }>
+  availabilityConfirmed: boolean
+  commitmentsConfirmed: boolean
 }
 
 export const EMPTY_BRIEF: PlanBrief = {
@@ -100,6 +105,11 @@ export const EMPTY_BRIEF: PlanBrief = {
   focus: [],
   materials: [],
   notes: [],
+  examSubjects: [],
+  availability: [],
+  fixedCommitments: [],
+  availabilityConfirmed: false,
+  commitmentsConfirmed: false,
 }
 
 const MAX_BLOCKS_PER_CHAPTER = 8
@@ -237,9 +247,19 @@ export function normalizeDocument(raw: any, fallbackTitle: string): PlanDocument
   }
 }
 
-/** 面试简报的收敛:字段全部可选,缺失时返回空数组而不是 null,客户端少一层判空 */
+const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/
+const clockMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3))
+
+/** 面试简报的收敛:旧简报仍可读,但缺少结构化事实不能通过生成门槛 */
 export function normalizeBrief(raw: any): PlanBrief {
   if (!raw || typeof raw !== 'object') return { ...EMPTY_BRIEF }
+  const window = (item: any) => {
+    const start = str(item?.start, 5)
+    const end = str(item?.end, 5)
+    return timePattern.test(start) && timePattern.test(end) && clockMinutes(start) < clockMinutes(end)
+      ? { start, end } : null
+  }
+  const weekday = (value: unknown) => Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 7
   return {
     summary: longText(raw.summary),
     goals: strList(raw.goals, 8, 120),
@@ -247,7 +267,33 @@ export function normalizeBrief(raw: any): PlanBrief {
     focus: strList(raw.focus, 8, 120),
     materials: strList(raw.materials, 12, 120),
     notes: strList(raw.notes, 8, 200),
+    examSubjects: (Array.isArray(raw.examSubjects) ? raw.examSubjects : []).slice(0, 12).map((item: any) => ({
+      name: str(item?.name), progress: str(item?.progress, 200), scope: str(item?.scope, 200),
+      remainingMinutes: Number.isSafeInteger(item?.remainingMinutes) && item.remainingMinutes > 0 ? item.remainingMinutes : 0,
+      milestone: str(item?.milestone, 120),
+      milestoneDate: typeof item?.milestoneDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(item.milestoneDate)
+        && !Number.isNaN(Date.parse(`${item.milestoneDate}T00:00:00.000Z`))
+        && new Date(`${item.milestoneDate}T00:00:00.000Z`).toISOString().slice(0, 10) === item.milestoneDate
+        ? item.milestoneDate : '',
+      milestoneMinutes: Number.isSafeInteger(item?.milestoneMinutes) && item.milestoneMinutes > 0 ? item.milestoneMinutes : 0,
+    })).filter((item: PlanBrief['examSubjects'][number]) => item.name),
+    availability: (Array.isArray(raw.availability) ? raw.availability : []).filter((item: any) => weekday(item?.weekday))
+      .map((item: any) => ({ weekday: item.weekday, windows: (Array.isArray(item.windows) ? item.windows : []).map(window).filter((value: any) => value !== null) })),
+    fixedCommitments: (Array.isArray(raw.fixedCommitments) ? raw.fixedCommitments : [])
+      .filter((item: any) => weekday(item?.weekday))
+      .map((item: any) => ({ ...window(item), weekday: item.weekday, label: str(item.label) }))
+      .filter((item: any) => item.start && item.end && item.label),
+    availabilityConfirmed: raw.availabilityConfirmed === true,
+    commitmentsConfirmed: raw.commitmentsConfirmed === true,
   }
+}
+
+export function documentMatchesSubjects(document: PlanDocument, subjects: string[]): boolean {
+  const allowed = new Set(subjects)
+  if (document.hero.subjects.some(subject => !allowed.has(subject))) return false
+  const text = JSON.stringify(document)
+  const knownNames = ['408', '数学一', '数学二', '数学三', '英语一', '英语二', '政治']
+  return knownNames.every(name => allowed.has(name) || !text.includes(name))
 }
 
 /** 简报是否「有内容」:全空时不值得存库,也不值得拼进 prompt */
@@ -258,6 +304,68 @@ export function briefIsEmpty(brief: PlanBrief): boolean {
     && brief.focus.length === 0
     && brief.materials.length === 0
     && brief.notes.length === 0
+    && brief.examSubjects.length === 0
+    && brief.availability.length === 0
+}
+
+export function netAvailableMinutes(brief: Pick<PlanBrief, 'availability' | 'fixedCommitments'>, date: Date): number {
+  const weekday = date.getUTCDay() || 7
+  const windows = brief.availability.filter(day => day.weekday === weekday).flatMap(day => day.windows)
+    .map(w => [clockMinutes(w.start), clockMinutes(w.end)] as const)
+  const occupied = brief.fixedCommitments.filter(event => event.weekday === weekday)
+    .map(event => [clockMinutes(event.start), clockMinutes(event.end)] as const)
+  const boundaries = [...new Set([...windows, ...occupied].flatMap(interval => [...interval]))].sort((a, b) => a - b)
+  let minutes = 0
+  for (let i = 1; i < boundaries.length; i++) {
+    const from = boundaries[i - 1], to = boundaries[i]
+    if (windows.some(([a, b]) => a <= from && b >= to)
+      && !occupied.some(([a, b]) => a <= from && b >= to)) minutes += to - from
+  }
+  return minutes
+}
+
+export function assessPlanningFacts(brief: PlanBrief, startDate: Date, examDate: Date, dailyMinutes = Infinity, allowCompletedMilestones = false) {
+  const missing: string[] = []
+  if (brief.examSubjects.length === 0) missing.push('正式考试科目')
+  if (new Set(brief.examSubjects.map(s => s.name)).size !== brief.examSubjects.length) missing.push('考试科目去重')
+  for (const subject of brief.examSubjects) {
+    if (!subject.progress || !subject.milestone || !Number.isSafeInteger(subject.remainingMinutes) || subject.remainingMinutes < 0) missing.push(`${subject.name}的进度与里程碑`)
+    if (!subject.scope && !subject.name.includes('自命题')) missing.push(`${subject.name}的考试范围`)
+    if (!subject.milestoneDate || !Number.isSafeInteger(subject.milestoneMinutes) || subject.milestoneMinutes < 0
+      || (subject.milestoneMinutes === 0 && !allowCompletedMilestones)
+      || subject.milestoneMinutes > subject.remainingMinutes
+      || subject.milestoneDate < startDate.toISOString().slice(0, 10)
+      || subject.milestoneDate >= examDate.toISOString().slice(0, 10)) missing.push(`${subject.name}的里程碑截止日与目标量`)
+  }
+  if (!brief.availabilityConfirmed || brief.availability.length === 0 || !brief.availability.some(day => day.windows.length)) missing.push('真实空闲时段')
+  if (!brief.commitmentsConfirmed) missing.push('固定占用确认')
+  let availableMinutes = 0
+  for (let date = startDate.getTime(); date < examDate.getTime(); date += 86_400_000) {
+    availableMinutes += Math.min(dailyMinutes, netAvailableMinutes(brief, new Date(date)))
+  }
+  const deadlines = brief.examSubjects.filter(subject => subject.milestoneDate && subject.milestoneMinutes > 0)
+    .sort((a, b) => a.milestoneDate.localeCompare(b.milestoneDate))
+  let committed = 0
+  const deficits = deadlines.flatMap(subject => {
+    committed += subject.milestoneMinutes
+    let capacity = 0
+    const deadline = new Date(`${subject.milestoneDate}T00:00:00.000Z`).getTime()
+    for (let date = startDate.getTime(); date <= deadline && date < examDate.getTime(); date += 86_400_000) {
+      capacity += Math.min(dailyMinutes, netAvailableMinutes(brief, new Date(date)))
+    }
+    const missingMinutes = committed - capacity
+    return missingMinutes > 0 ? [{ subject: subject.name, milestone: subject.milestone, missingMinutes }] : []
+  })
+  let remaining = availableMinutes
+  for (const subject of brief.examSubjects) {
+    const allocated = Math.min(remaining, subject.remainingMinutes)
+    remaining -= allocated
+    const missingMinutes = subject.remainingMinutes - allocated
+    if (missingMinutes > 0 && !deficits.some(item => item.subject === subject.name)) {
+      deficits.push({ subject: subject.name, milestone: subject.milestone, missingMinutes })
+    }
+  }
+  return { ready: missing.length === 0 && deficits.length === 0, missing, deficits, availableMinutes }
 }
 
 /** 简报 → 拼进 prompt 的文本块 */
@@ -269,5 +377,8 @@ export function briefToPrompt(brief: PlanBrief): string {
   if (brief.focus.length) lines.push(`需要重点倾斜:${brief.focus.join(';')}`)
   if (brief.materials.length) lines.push(`资料情况:${brief.materials.join(';')}`)
   if (brief.notes.length) lines.push(`其它补充:${brief.notes.join(';')}`)
+  if (brief.examSubjects.length) lines.push(`正式考试科目与逐科事实:${JSON.stringify(brief.examSubjects)}`)
+  if (brief.availability.length) lines.push(`真实空闲时段:${JSON.stringify(brief.availability)}`)
+  if (brief.commitmentsConfirmed) lines.push(`固定占用(空数组表示确认没有):${JSON.stringify(brief.fixedCommitments)}`)
   return lines.join('\n')
 }

@@ -1,7 +1,7 @@
 import { chatComplete, extractJson, LlmError, type ChatMessage } from '../../shared/llm/client'
 import { AiUnavailable } from './aiGenerator'
-import { normalizeBrief, briefIsEmpty, type PlanBrief } from './document'
-import type { ProfileInput } from './schemas'
+import { normalizeBrief, assessPlanningFacts, type PlanBrief } from './document'
+import { dayStart, type ProfileInput } from './schemas'
 
 /**
  * 「备考面谈」生成器:把「填问卷 → 直接出计划」换成「和 AI 规划师聊几轮 → 出一份真正贴身的计划」。
@@ -52,9 +52,8 @@ const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,正在�
    各科当前水平与最薄弱的环节 → 已有哪些资料/课程 → 最近一次自测或模考分数 → 复习环境与干扰因素。
    考生已经答过的不要重复问;档案里已有的信息(考试日期、每日时长、薄弱科目等)也不要再问。
 4. 先对考生上一句做一句简短的回应或点评(像真人一样接话,可以是提醒、确认或一句专业判断),再提问。
-5. 只有在目标、时间、各科基础、短板这四类信息都基本清楚时,才把 done 置为 true;
-   或者考生明确表示要开始时也置 true。信息明显不足时不要急着收尾。
-6. 如果考生要求直接开始(done 必须为 true),reply 要用一句话说明「信息已足够」,并概括你打算怎么排。
+5. 必须确认正式考试科目名称、每门的当前进度/已知范围/剩余任务分钟数/里程碑及其明确截止日期(YYYY-MM-DD)和目标分钟数,以及按星期与起止时间记录的真实空闲时段和固定占用(没有固定占用也须明确确认)。
+6. 即使考生要求直接开始或已达轮数上限,缺少上述事实也继续定向追问,绝不能声称信息足够;自命题范围不明时标为空,不得补写章节。
 
 严格只输出一个 JSON 对象,不要任何解释文字、不要 Markdown 代码块:
 {
@@ -71,9 +70,14 @@ const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,正在�
   "constraints": ["在职每周只有晚上 3 小时", "二战,已过一遍数学基础"],
   "focus": ["数学中值定理与级数反复失分", "408 操作系统薄弱"],
   "materials": ["已有王道 408 四本", "计划用张宇 1000 题"],
-  "notes": ["周末全天可支配", "易受手机干扰"]
+  "notes": ["周末全天可支配", "易受手机干扰"],
+  "examSubjects": [{"name":"考生确认的正式科目","progress":"当前具体进度","scope":"已知考试范围,未知留空","remainingMinutes":120,"milestone":"待完成的具体里程碑","milestoneDate":"YYYY-MM-DD","milestoneMinutes":60}],
+  "availability": [{"weekday":1,"windows":[{"start":"19:00","end":"21:00"}]}],
+  "fixedCommitments": [{"weekday":1,"start":"19:00","end":"20:00","label":"固定工作"}],
+  "availabilityConfirmed": true,
+  "commitmentsConfirmed": true
 }
-brief 里每一句都必须来自考生的真实回答,信息不足的字段就给空字符串或空数组,严禁编造。`
+brief 里的科目、进度、范围、时间和固定占用必须来自考生明确确认,未确认时标 false 或留空,严禁编造。`
 
 function clip(value: unknown, max: number): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -124,7 +128,7 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
   const messages = sanitizeMessages(input.messages)
   const turns = messages.filter(m => m.role === 'user').length
   const forced = input.force === true
-  const mustWrapUp = forced || turns >= MAX_INTERVIEW_TURNS
+  const wantsWrapUp = forced || turns >= MAX_INTERVIEW_TURNS
 
   const userPrompt = [
     profileContext(input.profile),
@@ -133,13 +137,11 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
     transcript(messages),
     '',
     `这已经是第 ${turns} 轮考生回答。`,
-    mustWrapUp
-      ? forced && turns < MIN_INTERVIEW_TURNS
-        ? '考生要求立刻开始:即使信息不算充分,也请把已知信息整理成 brief,done 置为 true。'
-        : '已经聊得足够久了:请立即收尾,done 置为 true,并把已知信息整理成 brief。'
+    wantsWrapUp
+      ? '请先汇总已确认的结构化事实为 brief;如有任一必要事实未确认,继续定向追问,done 必须为 false。'
       : turns < MIN_INTERVIEW_TURNS
-        ? `请继续追问,本轮 done 必须为 false(brief 为 null)。至少聊满 ${MIN_INTERVIEW_TURNS} 轮再考虑收尾。`
-        : '如果关键信息已经清楚,可以收尾(done 为 true);否则继续追问。',
+        ? `请继续追问,至少聊满 ${MIN_INTERVIEW_TURNS} 轮再考虑收尾,但可在 brief 中持续整理已确认的事实。`
+        : '仅当正式科目、逐科进度、空闲时段和固定占用全部确认后才可收尾;否则继续追问。',
   ].join('\n')
 
   let content: string
@@ -175,19 +177,13 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
     if (options.length >= MAX_OPTIONS) break
   }
 
-  // 模型说要收尾、或轮次兜底要求收尾,才认 done;否则即使模型抢跑也不收
-  const modelSaysDone = parsed?.done === true
-  const done = mustWrapUp || (modelSaysDone && turns >= MIN_INTERVIEW_TURNS)
-
-  if (!done) return { reply, options, done: false, brief: null }
-
   const brief = normalizeBrief(parsed?.brief)
-  // 收尾却没给出任何可用信息时,不要假装成功(除非是强制收尾,那时只能拿现有信息硬上)
-  const briefOrNull = briefIsEmpty(brief) && !mustWrapUp ? null : brief
-  return {
-    reply,
-    options: briefOrNull ? [] : options,
-    done: briefOrNull !== null,
-    brief: briefOrNull,
+  const facts = assessPlanningFacts(brief, dayStart(new Date()), input.profile?.examDate ?? dayStart(new Date()))
+  const done = (parsed?.done === true || wantsWrapUp) && facts.ready && (turns >= MIN_INTERVIEW_TURNS || forced)
+  if (!done) {
+    const question = facts.missing.length ? `还需确认:${facts.missing.join('、')}`
+      : facts.deficits.length ? `现有空闲时间不足以完成:${facts.deficits.map(d => `${d.subject} ${d.milestone}缺${d.missingMinutes}分钟`).join('、')};请确认增加时段或调整里程碑。` : ''
+    return { reply: question || reply, options, done: false, brief: null }
   }
+  return { reply, options: [], done: true, brief }
 }

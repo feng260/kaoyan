@@ -5,7 +5,7 @@ import { dayStart, diffDays, profileInputSchema, type ProfileInput } from './sch
 import type { GeneratedPlan } from './generator'
 import { generateAiPlan, type AiPlanningInput } from './aiGenerator'
 import { runPlanInterview, type InterviewInput, type InterviewResult } from './aiCoach'
-import { briefIsEmpty, normalizeBrief, type PlanBrief, type PlanDocument } from './document'
+import { briefIsEmpty, normalizeBrief, assessPlanningFacts, netAvailableMinutes, type PlanBrief, type PlanDocument } from './document'
 
 /**
  * 备考档案与计划的持久化(Phase 0)。
@@ -159,6 +159,30 @@ function toDay(value: unknown): Date {
   return dayStart(d)
 }
 
+function profileSnapshot(row: any): string {
+  return JSON.stringify({
+    targetType: row.targetType, examDate: dateOnly(row.examDate), dailyMinutes: row.dailyMinutes,
+    studyWindows: jsonArray(row.studyWindowsJson), foundation: row.foundation,
+    weakSubjects: jsonArray(row.weakSubjectsJson), brief: jsonObject(row.briefJson),
+  })
+}
+
+async function progressSnapshot(db: PlanningDb, userGuid: string): Promise<string> {
+  const active = await db.plan.findFirst({ where: { userGuid, status: 'active' }, orderBy: { version: 'desc' } })
+  if (!active) return JSON.stringify({ planId: null, completed: [] })
+  const items = await db.planItem.findMany({ where: { planId: active.id }, orderBy: { id: 'asc' } })
+  return JSON.stringify({ planId: active.id, completed: items.filter(item => item.status === 'done').map(item => item.id) })
+}
+
+function requirePlanningFacts(brief: PlanBrief | null, start: Date, exam: Date, dailyMinutes: number, allowCompletedMilestones = false): void {
+  const result = assessPlanningFacts(brief ?? normalizeBrief(null), start, exam, dailyMinutes, allowCompletedMilestones)
+  if (result.missing.length) throw new ApiError(400, 'PLANNING_FACTS_INCOMPLETE', `生成计划前请确认:${result.missing.join('、')}`)
+  if (result.deficits.length) {
+    const details = result.deficits.map(d => `${d.subject}「${d.milestone}」缺口 ${d.missingMinutes} 分钟`).join('；')
+    throw new ApiError(400, 'PLAN_CAPACITY_INSUFFICIENT', `考前可用 ${result.availableMinutes} 分钟,无法完成:${details}`)
+  }
+}
+
 function serializeProfile(row: any): PublicProfile {
   const briefRaw = jsonObject(row.briefJson)
   return {
@@ -264,7 +288,7 @@ function profileInputFromRow(row: any): ProfileInput | null {
  * 落库前的最后一道闸:宁可在这里抛错让事务不开始,也不要写进一份自相矛盾的计划。
  * 检查项对应生成器的核心承诺 —— 阶段连续、计划项落在所属阶段区间内、每天不超预算。
  */
-function assertGeneratedPlanValid(generated: GeneratedPlan, dailyMinutes: number, examDate: Date): void {
+function assertGeneratedPlanValid(generated: GeneratedPlan, dailyMinutes: number, examDate: Date, brief?: PlanBrief | null): void {
   const fail = (reason: string): never => {
     throw new ApiError(500, 'PLAN_GENERATION_FAILED', `计划生成结果不完整:${reason}`)
   }
@@ -295,7 +319,8 @@ function assertGeneratedPlanValid(generated: GeneratedPlan, dailyMinutes: number
     perDay.set(key, (perDay.get(key) ?? 0) + item.minutes)
   }
   for (const [day, minutes] of perDay) {
-    if (minutes > dailyMinutes) fail(`${day} 安排 ${minutes} 分钟,超出每日可用 ${dailyMinutes} 分钟`)
+    const available = brief ? Math.min(dailyMinutes, netAvailableMinutes(brief, new Date(`${day}T00:00:00.000Z`))) : dailyMinutes
+    if (minutes > available) fail(`${day} 安排 ${minutes} 分钟,超出当天净空闲 ${available} 分钟`)
   }
 }
 
@@ -378,13 +403,13 @@ export function createPlanningService(
     /**
      * 历史计划列表:当前计划 + 所有已归档计划,按版本倒序(最新的在前)。
      *
-     * 重新生成会把旧计划归档并清空打卡(新计划全部 pending),用户需要一个地方回看
+     * 确认新版草稿后旧计划归档,已完成任务和打卡保留,用户仍可回看
      * 「上一版计划长什么样」。这里只返回摘要,进度用一条 groupBy 聚合出来,
      * 不把每份上千条的 items 拉回内存。
      */
     async listPlanHistory(userGuid: string): Promise<PublicPlanSummary[]> {
       const rows = await db.plan.findMany({
-        where: { userGuid },
+        where: { userGuid, status: { in: ['active', 'archived'] } },
         orderBy: { version: 'desc' },
       })
       if (rows.length === 0) return []
@@ -410,8 +435,105 @@ export function createPlanningService(
       return row ? loadPlan(userGuid, row) : null
     },
 
-    async generatePlan(userGuid: string): Promise<PublicPlan> {
-      const profileRow = await requireProfileRow(userGuid)
+    async generatePlanDraft(userGuid: string): Promise<PublicPlan> {
+      return buildPlan(userGuid)
+    },
+
+    async confirmPlan(userGuid: string, planId: number): Promise<PublicPlan> {
+      await db.$transaction(async tx => {
+        const draft = await tx.plan.findFirst({ where: { id: planId, userGuid, status: 'draft' } })
+        if (!draft) throw new ApiError(404, 'PLAN_NOT_FOUND', '待确认计划不存在')
+        const profile = await tx.userProfile.findUnique({ where: { userGuid } })
+        if (!profile || !draft.profileSnapshotJson || profileSnapshot(profile) !== draft.profileSnapshotJson) {
+          throw new ApiError(409, 'PLAN_PROFILE_CHANGED', '备考档案已变化,请重新生成草稿')
+        }
+        const raw = jsonObject(profile.briefJson)
+        requirePlanningFacts(raw ? normalizeBrief(raw) : null, dayStart(new Date()), toDay(profile.examDate), Number(profile.dailyMinutes))
+        if (!draft.progressSnapshotJson || await progressSnapshot(tx, userGuid) !== draft.progressSnapshotJson) {
+          throw new ApiError(409, 'PLAN_PROGRESS_CHANGED', '计划进度已变化,请重新生成草稿')
+        }
+        await tx.plan.updateMany({ where: { userGuid, status: 'active' }, data: { status: 'archived', updatedAt: new Date() } })
+        await tx.plan.updateMany({ where: { id: planId, userGuid, status: 'draft' }, data: { status: 'active', updatedAt: new Date() } })
+      })
+      const row = await db.plan.findFirst({ where: { id: planId, userGuid, status: 'active' } })
+      return loadPlan(userGuid, row)
+    },
+
+    /**
+     * 备考面谈:把「填问卷 → 直接出计划」换成「和 AI 规划师聊几轮 → 出一份真正贴身的计划」。
+     *
+     * 无状态:客户端把整段对话历史带上来,这里只推进一轮。轮次上限在 aiCoach 里兜底,
+     * 到点强制收尾,避免用户一直聊下去而永远生成不出计划。
+     * 收尾拿到有效简报时落进档案,下次生成计划直接带上,不必重新面谈。
+     */
+    async interview(userGuid: string, input: { messages?: unknown; force?: boolean }): Promise<InterviewResult> {
+      if (!ai.interview || !ai.configured()) {
+        throw new ApiError(503, 'AI_NOT_CONFIGURED', 'AI 面谈服务尚未配置,请稍后再试')
+      }
+
+      const profileRow = await db.userProfile.findUnique({ where: { userGuid } })
+      const profile = profileRow ? profileInputFromRow(profileRow) : null
+      const messages = Array.isArray(input.messages) ? (input.messages as InterviewInput['messages']) : []
+
+      let result: InterviewResult
+      try {
+        result = await ai.interview({ messages, profile, force: input.force === true })
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        console.warn(`[planning] 备考面谈失败:${reason}`)
+        throw new ApiError(502, 'PLAN_INTERVIEW_FAILED', 'AI 面谈失败,请稍后重试')
+      }
+
+      const brief = normalizeBrief(result.brief)
+      const facts = assessPlanningFacts(brief, dayStart(new Date()), profile?.examDate ?? dayStart(new Date()), profile?.dailyMinutes ?? 0)
+      if (!facts.ready || !profile) {
+        const followUp = facts.missing.length ? `还需确认:${facts.missing.join('、')}`
+          : facts.deficits.length ? `考前时间不足:${facts.deficits.map(d => `${d.subject}「${d.milestone}」缺${d.missingMinutes}分钟`).join('、')}`
+            : '请先完成备考档案'
+        return { reply: result.done ? followUp : result.reply, options: result.done ? [] : result.options, done: false, brief: null }
+      }
+      if (result.done && !briefIsEmpty(brief) && profileRow) {
+        await db.userProfile.update({
+          where: { userGuid },
+          data: { briefJson: JSON.stringify(brief), updatedAt: new Date() },
+        })
+      }
+
+      return { ...result, brief: result.done ? brief : null }
+    },
+
+    async setItemStatus(userGuid: string, itemId: number, status: PlanItemStatus): Promise<PublicPlan> {
+      const planRow = await db.plan.findFirst({
+        where: { userGuid, status: 'active' },
+        orderBy: { version: 'desc' },
+      })
+      if (!planRow) throw new ApiError(404, 'PLAN_NOT_FOUND', '当前没有生效中的计划')
+
+      if (status === 'done') {
+        await db.planItem.updateMany({
+          where: { id: itemId, planId: planRow.id, status: 'pending' },
+          data: { status: 'done', completedAt: new Date(), updatedAt: new Date() },
+        })
+      } else {
+        await db.planItem.updateMany({
+          where: { id: itemId, planId: planRow.id },
+          data: { status: 'pending', completedAt: null, updatedAt: new Date() },
+        })
+      }
+      const current = (await db.planItem.findMany({ where: { id: itemId, planId: planRow.id } }))[0]
+      if (!current) throw new ApiError(404, 'PLAN_ITEM_NOT_FOUND', '计划项不存在')
+
+      await db.plan.updateMany({
+        where: { id: planRow.id },
+        data: { updatedAt: new Date() },
+      })
+      return loadPlan(userGuid, planRow)
+    },
+  }
+
+  async function buildPlan(userGuid: string): Promise<PublicPlan> {
+    const profileRow = await requireProfileRow(userGuid)
+      const initialSnapshot = profileSnapshot(profileRow)
       const profile = serializeProfile(profileRow)
       const examDate = toDay(profileRow.examDate)
 
@@ -440,29 +562,81 @@ export function createPlanningService(
       // 面谈得到的画像简报:有就一起喂给生成器,让阶段与每日安排贴合考生真实情况
       const briefRaw = jsonObject(profileRow.briefJson)
       const brief = briefRaw ? normalizeBrief(briefRaw) : null
+      const initialProgress = await progressSnapshot(db, userGuid)
+      const active = await db.plan.findFirst({ where: { userGuid, status: 'active' }, orderBy: { version: 'desc' } })
+      const activeItems = active ? await db.planItem.findMany({ where: { planId: active.id }, orderBy: [{ planDate: 'asc' }, { sortOrder: 'asc' }] }) : []
+      const completed = new Map<string, number>()
+      const history = active && active.profileSnapshotJson === initialSnapshot
+        ? await db.plan.findMany({ where: { userGuid, status: { in: ['active', 'archived'] } } })
+        : []
+      const matchingIds = history.filter(row => row.profileSnapshotJson === initialSnapshot).map(row => row.id)
+      if (matchingIds.length) {
+        const doneItems = await db.planItem.findMany({ where: { planId: { in: matchingIds }, status: 'done' } })
+        for (const item of doneItems) {
+          completed.set(item.subject, (completed.get(item.subject) ?? 0) + Number(item.minutes))
+        }
+      }
+      const remainingBrief = brief && active ? {
+        ...brief,
+        examSubjects: brief.examSubjects.map(subject => ({
+          ...subject,
+          remainingMinutes: Math.max(0, subject.remainingMinutes - (completed.get(subject.name) ?? 0)),
+          milestoneMinutes: Math.max(0, subject.milestoneMinutes - (completed.get(subject.name) ?? 0)),
+        })),
+      } : brief
+      const backlog = activeItems.filter(item => item.status !== 'done')
+        .map(item => ({ subject: String(item.subject), title: String(item.title), minutes: Number(item.minutes) }))
+      requirePlanningFacts(brief, dayStart(new Date()), examDate, profile.dailyMinutes)
+      if (active && brief) requirePlanningFacts(remainingBrief, dayStart(new Date()), examDate, profile.dailyMinutes, true)
 
       let generated: GeneratedPlan
       let title: string
       let document: PlanDocument | null = null
       try {
-        const result = await ai.generate({ ...parsedProfile.data, startDate: dayStart(new Date()), brief })
-        assertGeneratedPlanValid(result.plan, profile.dailyMinutes, examDate)
+        const result = await ai.generate({ ...parsedProfile.data, startDate: dayStart(new Date()), brief: remainingBrief, backlog })
+        assertGeneratedPlanValid(result.plan, profile.dailyMinutes, examDate, brief)
+        if (brief) {
+          const allowed = new Set(brief.examSubjects.map(subject => subject.name))
+          const invalid = result.plan.items.find(item => !allowed.has(item.subject))
+          if (invalid) throw new ApiError(502, 'PLAN_GENERATION_FAILED', `计划包含未确认的考试科目:${invalid.subject}`)
+          for (const subject of brief.examSubjects) {
+            if (!subject.scope && result.plan.items.some(item => item.subject === subject.name && item.title !== subject.milestone)) {
+              throw new ApiError(502, 'PLAN_GENERATION_FAILED', `${subject.name}考试范围不明,不得编造具体任务`)
+            }
+          }
+          const deficits = remainingBrief!.examSubjects.flatMap(subject => {
+            const tasks = result.plan.items.filter(item => item.subject === subject.name)
+            const scheduled = tasks.reduce((sum, item) => sum + item.minutes, 0)
+            const beforeDeadline = tasks.filter(item => dateOnly(item.planDate) <= subject.milestoneDate)
+              .reduce((sum, item) => sum + item.minutes, 0)
+            const missingMinutes = Math.max(subject.remainingMinutes - scheduled, subject.milestoneMinutes - beforeDeadline)
+            return missingMinutes > 0 ? [`${subject.name}「${subject.milestone}」缺口 ${missingMinutes} 分钟`] : []
+          })
+          if (deficits.length) throw new ApiError(400, 'PLAN_CAPACITY_INSUFFICIENT', `草稿安排未覆盖已确认的剩余任务:${deficits.join('；')}`)
+        }
         generated = result.plan
         title = result.title
         document = result.document ?? null
       } catch (error) {
+        if (error instanceof ApiError) throw error
         const reason = error instanceof Error ? error.message : String(error)
         console.warn(`[planning] AI 计划生成失败:${reason}`)
-        throw new ApiError(502, 'PLAN_GENERATION_FAILED', 'AI 计划生成失败,请稍后重试')
+        throw new ApiError(502, 'PLAN_GENERATION_FAILED', `AI 计划生成失败:${reason}`)
       }
 
       const lastPlan = await db.plan.findFirst({ where: { userGuid }, orderBy: { version: 'desc' } })
       const version = Number(lastPlan?.version ?? 0) + 1
 
       const created = await db.$transaction(async tx => {
-        // 先把旧计划归档,再建新的;整个过程在同一事务里,失败一起回滚
+        const latestProfile = await tx.userProfile.findUnique({ where: { userGuid } })
+        if (!latestProfile || profileSnapshot(latestProfile) !== initialSnapshot) {
+          throw new ApiError(409, 'PLAN_PROFILE_CHANGED', '备考档案已变化,请重新生成草稿')
+        }
+        if (await progressSnapshot(tx, userGuid) !== initialProgress) {
+          throw new ApiError(409, 'PLAN_PROGRESS_CHANGED', '计划进度已变化,请重新生成草稿')
+        }
         await tx.plan.updateMany({
-          where: { userGuid, status: 'active' },
+          where: { userGuid, status: 'draft' },
           data: { status: 'archived', updatedAt: new Date() },
         })
         const planRow = await tx.plan.create({
@@ -472,11 +646,13 @@ export function createPlanningService(
             title,
             targetType: profileRow.targetType ?? '考研',
             source: 'ai',
-            status: 'active',
+            status: 'draft',
             startDate: generated.stages[0].startDate,
             examDate,
             version,
             documentJson: document ? JSON.stringify(document) : null,
+            profileSnapshotJson: initialSnapshot,
+            progressSnapshotJson: initialProgress,
             createdAt: new Date(),
             updatedAt: new Date(),
           },
@@ -512,82 +688,7 @@ export function createPlanningService(
       })
 
       return loadPlan(userGuid, created)
-    },
-
-    /**
-     * 备考面谈:把「填问卷 → 直接出计划」换成「和 AI 规划师聊几轮 → 出一份真正贴身的计划」。
-     *
-     * 无状态:客户端把整段对话历史带上来,这里只推进一轮。轮次上限在 aiCoach 里兜底,
-     * 到点强制收尾,避免用户一直聊下去而永远生成不出计划。
-     * 收尾拿到有效简报时落进档案,下次生成计划直接带上,不必重新面谈。
-     */
-    async interview(
-      userGuid: string,
-      input: { messages?: unknown; force?: boolean },
-    ): Promise<InterviewResult> {
-      if (!ai.interview || !ai.configured()) {
-        throw new ApiError(503, 'AI_NOT_CONFIGURED', 'AI 面谈服务尚未配置,请稍后再试')
-      }
-
-      const profileRow = await db.userProfile.findUnique({ where: { userGuid } })
-      const profile = profileRow ? profileInputFromRow(profileRow) : null
-      const messages = Array.isArray(input.messages) ? (input.messages as InterviewInput['messages']) : []
-
-      let result: InterviewResult
-      try {
-        result = await ai.interview({ messages, profile, force: input.force === true })
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error)
-        console.warn(`[planning] 备考面谈失败:${reason}`)
-        throw new ApiError(502, 'PLAN_INTERVIEW_FAILED', 'AI 面谈失败,请稍后重试')
-      }
-
-      // 只有档案已经存在时才落库:没有档案行时凭空建一条会让后续生成报「档案不完整」而非「请先填问卷」
-      if (result.done && result.brief && !briefIsEmpty(result.brief) && profileRow) {
-        await db.userProfile.update({
-          where: { userGuid },
-          data: { briefJson: JSON.stringify(result.brief), updatedAt: new Date() },
-        })
-      }
-
-      return result
-    },
-
-    /**
-     * 回写单个计划项的完成状态 —— 「每日完成的计划」同步的唯一入口。
-     *
-     * 用 updateMany + where 里带上 userGuid 归属校验:itemId 是自增主键,若只按 id 更新,
-     * 任何人猜到别人的 id 就能改别人的计划。updateMany 影响行数为 0 一律当「不存在」处理,
-     * 不区分「没这条」和「不是你的」,避免把他人计划的存在性泄露出去。
-     */
-    async setItemStatus(userGuid: string, itemId: number, status: PlanItemStatus): Promise<PublicPlan> {
-      const planRow = await db.plan.findFirst({
-        where: { userGuid, status: 'active' },
-        orderBy: { version: 'desc' },
-      })
-      if (!planRow) throw new ApiError(404, 'PLAN_NOT_FOUND', '当前没有生效中的计划')
-
-      if (status === 'done') {
-        await db.planItem.updateMany({
-          where: { id: itemId, planId: planRow.id, status: 'pending' },
-          data: { status: 'done', completedAt: new Date(), updatedAt: new Date() },
-        })
-      } else {
-        await db.planItem.updateMany({
-          where: { id: itemId, planId: planRow.id },
-          data: { status: 'pending', completedAt: null, updatedAt: new Date() },
-        })
-      }
-      const current = (await db.planItem.findMany({ where: { id: itemId, planId: planRow.id } }))[0]
-      if (!current) throw new ApiError(404, 'PLAN_ITEM_NOT_FOUND', '计划项不存在')
-
-      await db.plan.updateMany({
-        where: { id: planRow.id },
-        data: { updatedAt: new Date() },
-      })
-      return loadPlan(userGuid, planRow)
-    },
-  }
+    }
 }
 
 export type PlanningService = ReturnType<typeof createPlanningService>

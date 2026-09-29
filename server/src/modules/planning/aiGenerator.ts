@@ -2,7 +2,7 @@ import { addDays, dayStart, diffDays, type ProfileInput } from './schemas'
 import { chatComplete, extractJson, LlmError } from '../../shared/llm/client'
 import type { GeneratedItem, GeneratedPlan, GeneratedStage } from './generator'
 import { generatePlanDocument } from './aiDocument'
-import { briefIsEmpty, briefToPrompt, type PlanBrief, type PlanDocument } from './document'
+import { briefIsEmpty, briefToPrompt, documentMatchesSubjects, netAvailableMinutes, type PlanBrief, type PlanDocument } from './document'
 
 /**
  * AI 版计划生成器。
@@ -24,6 +24,7 @@ export type AiPlanningInput = ProfileInput & {
   startDate: Date
   /** 面谈得到的考生画像;没聊过就是 null,生成器退化为只看问卷 */
   brief?: PlanBrief | null
+  backlog?: Array<{ subject: string; title: string; minutes: number }>
 }
 
 type AiWeeklySlot = {
@@ -31,6 +32,7 @@ type AiWeeklySlot = {
   subject: string
   title: string
   minutes: number
+  weekParity?: 'odd' | 'even'
 }
 
 type AiStage = {
@@ -59,7 +61,7 @@ const MIN_STAGES = 2
 const MIN_SLOT_MINUTES = 5
 const DEFAULT_MINUTES = 45
 
-const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,服务过大量「408 计算机学科专业基础 + 数学二 + 英语二 + 政治」的考生。
+const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,只根据考生已确认的事实制定计划。
 你的任务:根据考生的备考档案,输出一份分阶段、可执行的备考计划骨架。
 严格只输出一个 JSON 对象,不要任何解释文字、不要 Markdown 代码块。JSON 结构:
 {
@@ -71,7 +73,7 @@ const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,服务�
       "startDate": "YYYY-MM-DD",
       "endDate": "YYYY-MM-DD",
       "weeklySlots": [
-        { "weekdays": [1,2,3,4,5], "subject": "数学", "title": "具体到章节或题型的任务名", "minutes": 90 }
+        { "weekdays": [1,2,3,4,5], "weekParity": "odd", "subject": "已确认的正式考试科目名称", "title": "已确认范围内的具体任务", "minutes": 90 }
       ]
     }
   ]
@@ -80,14 +82,14 @@ const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,服务�
 硬性要求:
 1. stages 2-6 个,按时间顺序排列,首尾相接、不重叠。startDate 为今天,endDate 为考前一天。
 2. 各阶段的相对长度要符合考研备考规律:基础期最长,强化期次之,冲刺期最短。若考期在半年内则压缩为基础/强化/冲刺三段。
-3. weeklySlots 描述「这个阶段的每一周怎么过」,不是某一周的安排:
-   - weekdays 用 1-7 表示周一到周日,可以把多个同安排的日子写在一起(如 [1,2,3,4,5] 表示工作日);
-   - 每个阶段给 4-6 条 weeklySlots,覆盖考生每周可学习的时段;
-   - 所有 weeklySlots 的 minutes 之和不得超过考生的「每日可用分钟数」;
-   - title 必须具体到知识点或题型,如「高数 · 中值定理证明题专项」「408 · 进程与线程真题」「英语二 · 2015 阅读逐句精读」,禁止「数学 · 基础梳理」这类空话。
-4. subject 必须优先取自考生的薄弱科目,薄弱科目应获得更多时段。不属于薄弱科目的公共课(如政治)也要在合适阶段出现。
+3. weeklySlots 是按科目和星期匹配的任务队列:同一科目的后续条目在后续周推进,不可每周重放已完成的标题。
+   - weekdays 用 1-7 表示周一到周日;weekParity 用 odd/even 区分从本阶段起点算起的奇周/偶周,省略表示不限定;任务完成后不循环重播;
+   - 每个阶段提供足够覆盖实际空闲时段的任务,按先修顺序排列;
+   - 每日安排总时长不能超过真实空闲时段扣除固定占用后的容量;
+   - title 只能涉及已确认科目的已知范围、进度和里程碑;自命题范围不明确时只能使用考生确认的里程碑原文,不得推测章节、教材或题型。
+4. subject 只能取自考生已确认的正式考试科目;不得按薄弱科目或常见组合补充其他考试科目。
 5. 阶段推进要有明显的难度与任务变化:基础期打基础、强化期刷题专项、冲刺期真题模考与背诵。
-6. 每天至少安排 1 条 weeklySlots 覆盖,不要出现某天完全没有安排。`
+6. 无剩余任务或无空闲时段的日期不要凭空补任务。`
 
 function buildUserPrompt(input: AiPlanningInput): string {
   const today = dayStart(new Date())
@@ -100,11 +102,14 @@ function buildUserPrompt(input: AiPlanningInput): string {
     `考试日期:${fmt(exam)}(距今 ${totalDays} 天)`,
     `每日可用学习时长:${input.dailyMinutes} 分钟`,
     `基础水平:${input.foundation}`,
-    `固定学习时段:${input.studyWindows.join('、')}`,
-    `薄弱科目(需要重点倾斜):${weak.join('、')}`,
+    `问卷学习时段(以面谈确认的真实空闲时段为准):${input.studyWindows.join('、')}`,
+    `问卷薄弱科目(仅在正式科目中倾斜):${weak.join('、')}`,
   ]
   if (input.brief && !briefIsEmpty(input.brief)) {
     lines.push('', '面谈得到的补充信息(必须体现在阶段与任务安排里):', briefToPrompt(input.brief))
+  }
+  if (input.backlog?.length) {
+    lines.push('', '上一版未完成任务(按原顺序优先安排;不要在新模板中重复生成同一任务):', JSON.stringify(input.backlog))
   }
   lines.push('', `请输出从 ${fmt(today)} 到 ${fmt(addDays(exam, -1))} 的备考计划骨架。`)
   return lines.join('\n')
@@ -147,10 +152,12 @@ function normalizeStages(parsed: AiPlanJson, weakSubjects: string[]): AiStage[] 
       const title = String((slot as AiWeeklySlot)?.title ?? '').trim()
       if (weekdays.length === 0 || !subject || !title) continue
       const minutes = Math.max(MIN_SLOT_MINUTES, Math.round(Number((slot as AiWeeklySlot)?.minutes) || DEFAULT_MINUTES))
-      const key = `${weekdays.join(',')}|${subject}|${title}`
+      const parity = (slot as AiWeeklySlot)?.weekParity
+      const weekParity = parity === 'odd' || parity === 'even' ? parity : undefined
+      const key = `${weekdays.join(',')}|${weekParity ?? ''}|${subject}|${title}`
       if (seen.has(key)) continue
       seen.add(key)
-      slots.push({ weekdays, subject: subject.slice(0, 24), title: title.slice(0, 80), minutes })
+      slots.push({ weekdays, weekParity, subject: subject.slice(0, 24), title: title.slice(0, 80), minutes })
     }
     if (slots.length === 0) continue
     stages.push({
@@ -172,6 +179,9 @@ function normalizeStages(parsed: AiPlanJson, weakSubjects: string[]): AiStage[] 
 /**
  * 按模型给出的阶段长度(拿不到就用默认比例)重新切出连续区间,
  * 保证「起点是今天、终点是考前一天、阶段首尾相接」三条硬约束一定成立。
+ *
+ * 前置条件:stages 的个数不超过「今天到考前一天」的总天数(调用方已先截断),
+ * 否则「每段至少 1 天」必然把末段推到考前一天之后,校验一定失败。
  */
 function layoutStages(stages: AiStage[], today: Date, exam: Date): GeneratedStage[] {
   const totalDays = diffDays(exam, today)
@@ -184,17 +194,16 @@ function layoutStages(stages: AiStage[], today: Date, exam: Date): GeneratedStag
   const sum = desired.reduce((a, b) => a + b, 0)
   const weights = sum > 0 ? desired.map(d => d / sum) : stages.map(() => 1 / stages.length)
 
+  // 每段至少 1 天,四舍五入后的总和未必正好等于总天数,这里多退少补修正:
+  // 多了就从后往前削(不削到 1 以下),少了就全补给最后一段。
   const counts = weights.map(w => Math.max(1, Math.round(totalDays * w)))
-  // 四舍五入后修正总天数,多退少补都落在最后一段上
   let diff = totalDays - counts.reduce((a, b) => a + b, 0)
-  for (let i = counts.length - 1; diff !== 0 && i >= 0; i--) {
-    const next = counts[i] + diff
-    if (next >= 1) {
-      counts[i] = next
-      diff = 0
-    }
+  for (let i = counts.length - 1; diff < 0 && i >= 0; i--) {
+    const cut = Math.min(counts[i] - 1, -diff)
+    counts[i] -= cut
+    diff += cut
   }
-  if (diff !== 0) counts[counts.length - 1] = Math.max(1, counts[counts.length - 1] + diff)
+  if (diff > 0) counts[counts.length - 1] += diff
 
   const out: GeneratedStage[] = []
   let cursor = today
@@ -214,33 +223,49 @@ function isoWeekday(d: Date): number {
 
 /**
  * 把阶段模板铺满整个阶段:
- * - 命中的 weeklySlots 全部排上;若合计超出每日预算,按比例等比压缩到预算内;
+ * - 命中的 weeklySlots 排上;合计超出每日预算时先按比例等比压缩,若受 5 分钟下限所限压不下来,
+ *   则按上限裁掉多出的条目,保证每天的合计一定不超过预算;
  * - 某天一条都没命中(模型漏写星期几),用该阶段第一条模板兜底,保证每天都有安排。
  */
-function expandStage(stage: AiStage, range: GeneratedStage, dailyMinutes: number): GeneratedItem[] {
+export function expandStage(stage: AiStage, range: GeneratedStage, dailyMinutes: number, brief?: Pick<PlanBrief, 'availability' | 'fixedCommitments'> | null): GeneratedItem[] {
   const items: GeneratedItem[] = []
   const stageLength = diffDays(range.endDate, range.startDate) + 1
+  const subjects = [...new Set(stage.weeklySlots.map(slot => slot.subject))]
+  const completed = new Map(subjects.map(subject => [subject, new Set<number>()]))
   for (let offset = 0; offset < stageLength; offset++) {
     const planDate = addDays(range.startDate, offset)
+    const budget = brief ? Math.min(dailyMinutes, netAvailableMinutes(brief, planDate)) : dailyMinutes
+    if (budget < MIN_SLOT_MINUTES) continue
     const dow = isoWeekday(planDate)
-    let matched = stage.weeklySlots.filter(slot => slot.weekdays.includes(dow))
-    if (matched.length === 0) matched = [stage.weeklySlots[0]]
+    const weekParity = Math.floor(offset / 7) % 2 === 0 ? 'odd' : 'even'
+    const matched = subjects.flatMap(subject => {
+      const next = stage.weeklySlots.findIndex((slot, index) => slot.subject === subject
+        && !completed.get(subject)?.has(index)
+        && (!slot.weekParity || slot.weekParity === weekParity) && slot.weekdays.includes(dow))
+      return next >= 0 ? [{ slot: stage.weeklySlots[next], next }] : []
+    })
+    if (matched.length === 0) continue
 
-    let total = matched.reduce((sum, s) => sum + s.minutes, 0)
-    const scale = total > dailyMinutes ? dailyMinutes / total : 1
+    // 每项都有 MIN_SLOT_MINUTES 的下限,命中条数 × 下限若已超出每日预算,
+    // 再怎么压缩也降不下来,落库前校验必然判定「超出每日可用」。这里先按预算裁掉超出的条目。
+    const slots = matched.slice(0, Math.floor(budget / MIN_SLOT_MINUTES))
+
+    let total = slots.reduce((sum, entry) => sum + entry.slot.minutes, 0)
+    const scale = total > budget ? budget / total : 1
     // 压缩后每项不低于 MIN_SLOT_MINUTES;宁可略微超出也不再往下砍,避免出现无意义的碎片任务
-    const minutes = matched.map(s => Math.max(MIN_SLOT_MINUTES, Math.floor(s.minutes * scale)))
+    const minutes = slots.map(entry => Math.max(MIN_SLOT_MINUTES, Math.floor(entry.slot.minutes * scale)))
     total = minutes.reduce((a, b) => a + b, 0)
     // 压缩后仍超出预算则从最后一项起逐分钟削减
-    for (let i = minutes.length - 1; total > dailyMinutes && i >= 0; i--) {
-      const cut = Math.min(minutes[i] - MIN_SLOT_MINUTES, total - dailyMinutes)
+    for (let i = minutes.length - 1; total > budget && i >= 0; i--) {
+      const cut = Math.min(minutes[i] - MIN_SLOT_MINUTES, total - budget)
       if (cut > 0) {
         minutes[i] -= cut
         total -= cut
       }
     }
 
-    matched.forEach((slot, i) => {
+    slots.forEach(({ slot, next }, i) => {
+      completed.get(slot.subject)?.add(next)
       items.push({
         stageOrder: range.sortOrder,
         subject: slot.subject,
@@ -253,6 +278,58 @@ function expandStage(stage: AiStage, range: GeneratedStage, dailyMinutes: number
     })
   }
   return items
+}
+
+export function scheduleBacklog(
+  stages: GeneratedStage[],
+  generated: GeneratedItem[],
+  backlog: NonNullable<AiPlanningInput['backlog']>,
+  dailyMinutes: number,
+  brief?: Pick<PlanBrief, 'availability' | 'fixedCommitments'> | null,
+  confirmedSubjects?: string[],
+): GeneratedItem[] {
+  if (backlog.length === 0) return generated
+  const allowed = new Set(confirmedSubjects ?? generated.map(item => item.subject))
+  const invalid = backlog.find(item => !allowed.has(item.subject))
+  if (invalid) throw new AiUnavailable(`旧任务不属于已确认的考试科目:${invalid.subject}`)
+  const overlap = new Map<string, number>()
+  for (const item of backlog) {
+    const key = `${item.subject}\u0000${item.title.trim()}`
+    overlap.set(key, (overlap.get(key) ?? 0) + item.minutes)
+  }
+  const newWork = generated.flatMap(item => {
+    const key = `${item.subject}\u0000${item.title.trim()}`
+    const duplicate = Math.min(item.minutes, overlap.get(key) ?? 0)
+    overlap.set(key, (overlap.get(key) ?? 0) - duplicate)
+    return item.minutes > duplicate ? [{ ...item, minutes: item.minutes - duplicate }] : []
+  })
+  const demand = [
+    ...backlog.map(item => ({ ...item, earliest: stages[0].startDate })),
+    ...newWork.map(item => ({ ...item, earliest: item.planDate })),
+  ]
+  const output: GeneratedItem[] = []
+  let index = 0
+  let remaining = demand[0]?.minutes ?? 0
+  for (const stage of stages) {
+    for (let date = stage.startDate; date <= stage.endDate; date = addDays(date, 1)) {
+      let budget = brief ? Math.min(dailyMinutes, netAvailableMinutes(brief, date)) : dailyMinutes
+      let sortOrder = 0
+      while (budget > 0 && index < demand.length && demand[index].earliest <= date) {
+        const item = demand[index]
+        const minutes = Math.min(remaining, budget)
+        output.push({ stageOrder: stage.sortOrder, subject: item.subject, title: item.title,
+          planDate: date, minutes, priority: stage.sortOrder, sortOrder: sortOrder++ })
+        budget -= minutes
+        remaining -= minutes
+        if (remaining === 0) {
+          index++
+          remaining = demand[index]?.minutes ?? 0
+        }
+      }
+    }
+  }
+  if (index < demand.length) throw new AiUnavailable(`旧任务与新任务无法在考前排完:${demand[index].subject}`)
+  return output
 }
 
 /**
@@ -292,14 +369,19 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
   }
 
   const stages = normalizeStages(parsed, input.weakSubjects)
-  const ranges = layoutStages(stages, today, exam)
+  // 备考天数不足以容纳模型的全部阶段时(考试日期很近),只保留时间上最后的几段:
+  // 临考时冲刺/模考的模板比基础段的更有用,也避免「每段至少 1 天」把计划推到考后。
+  const usable = stages.slice(-Math.max(1, diffDays(exam, today)))
+  const ranges = layoutStages(usable, today, exam)
 
   const items: GeneratedItem[] = []
-  stages.forEach((stage, index) => {
-    items.push(...expandStage(stage, ranges[index], input.dailyMinutes))
+  usable.forEach((stage, index) => {
+    items.push(...expandStage(stage, ranges[index], input.dailyMinutes, input.brief))
   })
+  const scheduledItems = scheduleBacklog(ranges, items, input.backlog ?? [], input.dailyMinutes,
+    input.brief, input.brief?.examSubjects.map(subject => subject.name))
 
-  if (items.length === 0) {
+  if (scheduledItems.length === 0) {
     throw new AiUnavailable('模型给出的模板无法展开出任何计划项')
   }
 
@@ -310,16 +392,19 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
   // 长文档是加分项:任何异常都只降级为 null,绝不能把已经成型的每日清单一起废掉
   let document: PlanDocument | null = null
   try {
-    document = await generatePlanDocument({
+    const generatedDocument = await generatePlanDocument({
       title,
       profile: input,
       brief: input.brief ?? null,
       stages: ranges,
       startDate: today,
     })
+    if (generatedDocument && input.brief && documentMatchesSubjects(generatedDocument, input.brief.examSubjects.map(subject => subject.name))) {
+      document = generatedDocument
+    }
   } catch (error) {
     console.warn('[planning] 生成计划长文档失败,仅保留每日清单:', (error as Error)?.message ?? error)
   }
 
-  return { title, plan: { stages: ranges, items }, document }
+  return { title, plan: { stages: ranges, items: scheduledItems }, document }
 }

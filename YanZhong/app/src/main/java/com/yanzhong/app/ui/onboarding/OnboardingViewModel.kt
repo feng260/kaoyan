@@ -175,42 +175,8 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(step = (it.step - 1).coerceAtLeast(0), message = "", messageIsError = false) }
     }
 
-    /** 提交问卷:先存档案,再让服务端排计划。两步分开是为了能说清"到底卡在哪一步" */
-    fun submit() {
-        val s = _ui.value
-        if (s.phase == OnboardingPhase.SUBMITTING) return
-        val err = validate(s, 1)
-        if (err != null) {
-            _ui.update { it.copy(message = err, messageIsError = true) }
-            return
-        }
-        _ui.update { it.copy(phase = OnboardingPhase.SUBMITTING, message = "", messageIsError = false) }
-
-        viewModelScope.launch {
-            val body = ProfileReq(
-                targetType = s.targetType,
-                examDate = s.examDate.trim(),
-                dailyMinutes = s.dailyMinutes,
-                studyWindows = STUDY_WINDOWS.filter { it in s.studyWindows },
-                foundation = s.foundation,
-                weakSubjects = s.weakSubjects.toList()
-            )
-            val saved = runCatching { ApiClient.api().putProfile(body) }.getOrElse { e ->
-                // 退回可编辑态,一个字都不清:用户填了三分钟的东西不能因为一次超时就没了
-                _ui.update { st ->
-                    st.copy(
-                        phase = OnboardingPhase.EDITING,
-                        step = 1,
-                        message = "档案没存上:${e.userMessage()}。你填的内容都还在,网络好了再点一次就好",
-                        messageIsError = true
-                    )
-                }
-                return@launch
-            }
-            _ui.update { it.copy(profile = saved.profile, profileSaved = true) }
-            generatePlanInternal()
-        }
-    }
+    /** 旧入口只保存档案，计划必须经面谈和草稿确认。 */
+    fun submit() = saveProfileOnly()
 
     /**
      * 只把档案存到服务端,不排计划。
@@ -261,17 +227,10 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 只重排计划(档案已在服务端):改完档案想立刻生效时也走这里 */
-    fun regenerate() {
-        if (_ui.value.phase == OnboardingPhase.SUBMITTING) return
-        _ui.update { it.copy(phase = OnboardingPhase.SUBMITTING, message = "", messageIsError = false) }
-        viewModelScope.launch { generatePlanInternal() }
-    }
+    /** 兼容旧调用方；不允许绕过面谈及草稿确认。 */
+    fun regenerate() = saveProfileOnly()
 
-    /** 失败后的统一入口:档案存好了就只补计划,否则从头重来 */
-    fun retry() {
-        if (_ui.value.profileSaved) regenerate() else load()
-    }
+    fun retry() = load()
 
     /**
      * 用户选择「先不管,照样开始学」。
@@ -285,23 +244,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     /** 校验失败时的提示清理(用户开始改输入时可以主动调用) */
     fun clearMessage() {
         if (_ui.value.message.isNotEmpty()) _ui.update { it.copy(message = "", messageIsError = false) }
-    }
-
-    private suspend fun generatePlanInternal() {
-        // 走 aiApi():生成含长文档,默认 20s 的 callTimeout 会把请求掐死
-        runCatching { ApiClient.aiApi().generatePlan() }.fold({ resp ->
-            _ui.update { it.copy(phase = OnboardingPhase.SUCCESS, plan = resp.plan, message = "", messageIsError = false) }
-        }, { e ->
-            _ui.update { st ->
-                st.copy(
-                    phase = OnboardingPhase.FALLBACK,
-                    // 档案已经落库了,这一屏必须让用户看见:否则他会以为问卷白填了
-                    awaitingChoice = true,
-                    message = "档案已经保存了,只是计划没排出来(${e.userMessage()})。你先按本机原来的计划学,稍后点「重试」我再跑一遍",
-                    messageIsError = true
-                )
-            }
-        })
     }
 
     // ---------------- 表单编辑 ----------------

@@ -1,6 +1,16 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { profileInputSchema, SUPPORTED_TARGET_TYPES } from './schemas'
+import { normalizeBrief, briefIsEmpty, assessPlanningFacts, documentMatchesSubjects } from './document'
+
+test('rejects a generated document that mentions unconfirmed exam subjects', () => {
+  const document = {
+    title: '考研计划',
+    hero: { badge: '', titleLead: '', titleAccent: '', titleTail: '', subtitle: '', subjects: ['英语一', '数学二'], stats: [] },
+    chapters: [{ no: '01', title: '科目规划', blocks: [{ type: 'text' as const, text: '按照 408 题型训练' }] }],
+  }
+  assert.equal(documentMatchesSubjects(document, ['英语一']), false)
+})
 
 /** 用相对今天的日期构造,避免写死日期导致测试随时间失效 */
 function dayIso(offsetDays: number): string {
@@ -123,4 +133,67 @@ test('rejects an empty study window list', () => {
 
 test('rejects weak subjects that are only whitespace', () => {
   assert.ok(hasErrorOn({ ...validPayload(), weakSubjects: ['   '] }, 'weakSubjects'))
+})
+
+test('allows structured interview facts to be normalized without inventing exam subjects', () => {
+  const brief = normalizeBrief({
+    examSubjects: [{ name: '英语一', progress: '真题做至 2015 年', scope: '阅读', remainingMinutes: 120, milestone: '完成真题一轮' }],
+    availability: [{ weekday: 1, windows: [{ start: '19:00', end: '21:00' }] }],
+    fixedCommitments: [], availabilityConfirmed: true, commitmentsConfirmed: true,
+  })
+  assert.equal(briefIsEmpty(brief), false)
+  assert.deepEqual(brief.examSubjects.map(subject => subject.name), ['英语一'])
+  assert.equal(brief.availability[0].windows[0].start, '19:00')
+  assert.equal(brief.commitmentsConfirmed, true)
+})
+
+test('a dated milestone is blocked when its deadline capacity is insufficient even if the exam total fits', () => {
+  const brief = normalizeBrief({
+    examSubjects: [{ name: '英语一', progress: '已做阅读', scope: '阅读', remainingMinutes: 120,
+      milestone: '一轮阅读', milestoneDate: '2026-09-28', milestoneMinutes: 120 }],
+    availability: [1, 2].map(weekday => ({ weekday, windows: [{ start: '19:00', end: '20:00' }] })),
+    fixedCommitments: [], availabilityConfirmed: true, commitmentsConfirmed: true,
+  })
+  const result = assessPlanningFacts(brief, new Date('2026-09-28T00:00:00.000Z'), new Date('2026-10-06T00:00:00.000Z'))
+  assert.equal(result.availableMinutes, 180)
+  assert.deepEqual(result.deficits, [{ subject: '英语一', milestone: '一轮阅读', missingMinutes: 60 }])
+})
+
+test('a milestone deadline and target amount must be explicitly confirmed together', () => {
+  const brief = normalizeBrief({
+    examSubjects: [{ name: '英语一', progress: '已做阅读', scope: '阅读', remainingMinutes: 120,
+      milestone: '一轮阅读', milestoneDate: '2026-09-29' }],
+    availability: [{ weekday: 1, windows: [{ start: '19:00', end: '22:00' }] }],
+    fixedCommitments: [], availabilityConfirmed: true, commitmentsConfirmed: true,
+  })
+  const result = assessPlanningFacts(brief, new Date('2026-09-28T00:00:00.000Z'), new Date('2026-10-06T00:00:00.000Z'))
+  assert.ok(result.missing.includes('英语一的里程碑截止日与目标量'))
+})
+
+test('capacity assessment subtracts fixed commitments and names unmet subject milestones', () => {
+  const brief = normalizeBrief({
+    examSubjects: [
+      { name: '英语一', progress: '做过阅读', scope: '阅读', remainingMinutes: 120, milestone: '一轮真题' },
+      { name: '自命题 912', progress: '教材第一章', scope: '', remainingMinutes: 240, milestone: '完成大纲章节' },
+    ],
+    availability: [{ weekday: 1, windows: [{ start: '19:00', end: '21:00' }] }],
+    fixedCommitments: [{ weekday: 1, start: '19:00', end: '20:00', label: '固定会议' }],
+    availabilityConfirmed: true, commitmentsConfirmed: true,
+  })
+  const start = new Date('2026-09-28T00:00:00.000Z')
+  const result = assessPlanningFacts(brief, start, new Date('2026-10-05T00:00:00.000Z'))
+  assert.equal(result.availableMinutes, 60)
+  assert.equal(result.ready, false)
+  assert.ok(result.deficits.some(d => d.subject === '自命题 912' && d.milestone === '完成大纲章节' && d.missingMinutes > 0))
+})
+
+test('confirmed structured facts with adequate capacity pass the quality gate', () => {
+  const brief = normalizeBrief({
+    examSubjects: [{ name: '英语一', progress: '真题做至 2015 年', scope: '阅读', remainingMinutes: 60, milestone: '真题一轮', milestoneDate: '2026-09-28', milestoneMinutes: 60 }],
+    availability: [{ weekday: 1, windows: [{ start: '19:00', end: '21:00' }] }],
+    fixedCommitments: [], availabilityConfirmed: true, commitmentsConfirmed: true,
+  })
+  const result = assessPlanningFacts(brief, new Date('2026-09-28T00:00:00.000Z'), new Date('2026-10-05T00:00:00.000Z'))
+  assert.equal(result.ready, true)
+  assert.equal(result.availableMinutes, 120)
 })

@@ -72,8 +72,17 @@ router.put('/profile', requireAuth, apiLimit(), async ctx => {
 
 /** 生成计划:同一档案重复调用是幂等的(内容一致),但会产出新版本并归档旧版本 */
 router.post('/plans/generate', requireAuth, apiLimit(), async ctx => {
-  const plan = await planningService.generatePlan(ctx.state.auth!.userGuid)
+  const plan = await planningService.generatePlanDraft(ctx.state.auth!.userGuid)
   ctx.status = 201
+  ctx.body = { plan, serverTime: Date.now() }
+})
+
+router.post('/plans/:id/confirm', requireAuth, apiLimit(), async ctx => {
+  const planId = Number(ctx.params.id)
+  if (!Number.isInteger(planId) || planId <= 0) {
+    throw new ApiError(400, 'INVALID_PARAMS', '计划 id 不合法')
+  }
+  const plan = await planningService.confirmPlan(ctx.state.auth!.userGuid, planId)
   ctx.body = { plan, serverTime: Date.now() }
   notifyPlanChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)
 })

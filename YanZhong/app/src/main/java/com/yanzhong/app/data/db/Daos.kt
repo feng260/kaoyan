@@ -209,7 +209,7 @@ interface TaskDao {
     @Query("DELETE FROM task WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<Long>)
 
-    @Query("DELETE FROM task WHERE accountGuid = :accountGuid AND planId IS NOT NULL")
+    @Query("DELETE FROM task WHERE accountGuid = :accountGuid AND planId IS NOT NULL AND status != 1")
     suspend fun deleteByPlanAccount(accountGuid: String)
 
     @Query("UPDATE task SET dirty = 0 WHERE clientGuid IN (:guids)")

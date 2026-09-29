@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { createPlanningService, PlanningDb } from './service'
 import { dayStart, addDays, profileInputSchema } from './schemas'
 import { generateRulePlan } from './generator'
+import { normalizeBrief } from './document'
+import type { PlanBrief } from './document'
 import type { AiPlanningInput } from './aiGenerator'
 import { EventEmitter } from 'node:events'
 import { WsHub } from '../../shared/ws/Hub'
@@ -193,6 +195,40 @@ const serviceWith = (fake: ReturnType<typeof createFakeDb>) => createPlanningSer
 })
 const USER = 'user-guid-0000-0000-0000-000000000001'
 
+function serviceWithConfirmedSubject(fake: ReturnType<typeof createFakeDb>) {
+  return createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async input => {
+      const plan = generateRulePlan({ ...input, weakSubjects: ['英语一'] })
+      for (const item of plan.items) {
+        if (item.subject === '复盘') {
+          item.subject = '英语一'
+          item.title = '一轮阅读真题'
+        }
+      }
+      return { title: '英语计划', plan }
+    },
+  })
+}
+
+function confirmedBrief(subjects: string[]): PlanBrief {
+  const brief = qualityBrief()
+  brief.examSubjects = subjects.map(name => ({
+    name, progress: '已完成基础复习', scope: '基础复习', remainingMinutes: 30,
+    milestone: '完成基础复习', milestoneDate: dayIso(59), milestoneMinutes: 15,
+  }))
+  return brief
+}
+
+async function confirmGeneratedPlan(
+  service: ReturnType<typeof createPlanningService>, fake: ReturnType<typeof createFakeDb>,
+  userGuid = USER, brief: PlanBrief = qualityBrief(),
+) {
+  fake.state.profiles.find(row => row.userGuid === userGuid)!.briefJson = JSON.stringify(brief)
+  const draft = await service.generatePlanDraft(userGuid)
+  return service.confirmPlan(userGuid, draft.id)
+}
+
 test('an old socket closing after reconnect does not remove the new device connection', () => {
   const hub = new WsHub()
   const oldSocket = new EventEmitter() as WebSocket
@@ -275,9 +311,9 @@ test('upsertProfile overwrites an existing profile for the same user only', asyn
 
 test('setItemStatus persists completion time and clears it when reopened', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile(USER, validProfile() as any)
-  const plan = await service.generatePlan(USER)
+  const plan = await confirmGeneratedPlan(service, fake)
   const itemId = plan.items[0].id
   assert.equal(plan.items[0].completedAt, null)
 
@@ -306,9 +342,9 @@ test('a stale completion cannot restore its old timestamp after another device r
       await blocked
     }
   } })
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile(USER, validProfile() as any)
-  const plan = await service.generatePlan(USER)
+  const plan = await confirmGeneratedPlan(service, fake)
   const itemId = plan.items[0].id
   await service.setItemStatus(USER, itemId, 'done')
   const original = fake.state.items.find(i => i.id === itemId)!.completedAt
@@ -330,16 +366,16 @@ test('getActivePlan returns null when the user has no plan', async () => {
   assert.equal(await serviceWith(fake).getActivePlan(USER), null)
 })
 
-test('generatePlan rejects users without a profile', async () => {
+test('generatePlanDraft rejects users without a profile', async () => {
   const fake = createFakeDb()
   await assert.rejects(
-    () => serviceWith(fake).generatePlan(USER),
+    () => serviceWith(fake).generatePlanDraft(USER),
     (error: any) => error.code === 'PROFILE_INCOMPLETE',
   )
   assert.equal(fake.state.plans.length, 0)
 })
 
-test('generatePlan refuses to create a rule plan when AI is unavailable', async () => {
+test('generatePlanDraft refuses to create a rule plan when AI is unavailable', async () => {
   const fake = createFakeDb()
   const service = createPlanningService(fake.db, {
     configured: () => false,
@@ -348,36 +384,67 @@ test('generatePlan refuses to create a rule plan when AI is unavailable', async 
   await service.upsertProfile(USER, validProfile() as any)
 
   await assert.rejects(
-    () => service.generatePlan(USER),
+    () => service.generatePlanDraft(USER),
     (error: any) => error.code === 'AI_NOT_CONFIGURED',
   )
   assert.equal(fake.state.plans.length, 0)
 })
 
-test('generatePlan preserves the active plan when AI fails', async () => {
+test('generatePlanDraft preserves the active plan when AI fails', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile(USER, validProfile() as any)
-  const previous = await service.generatePlan(USER)
+  const previous = await confirmGeneratedPlan(service, fake)
   const failedService = createPlanningService(fake.db, {
     configured: () => true,
     generate: async () => { throw new Error('model unavailable') },
   })
 
   await assert.rejects(
-    () => failedService.generatePlan(USER),
+    () => failedService.generatePlanDraft(USER),
     (error: any) => error.code === 'PLAN_GENERATION_FAILED',
   )
   assert.equal(fake.state.plans.length, 1)
   assert.equal((await service.getActivePlan(USER))!.id, previous.id)
 })
 
-test('generatePlan persists an active plan with stages covering the whole preparation window', async () => {
+test('the planning service exposes no direct active generation entry', () => {
+  const service = serviceWith(createFakeDb())
+  assert.equal('generatePlan' in service, false)
+})
+
+test('generatePlanDraft creates a draft without changing the active plan', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const active = await confirmGeneratedPlan(service, fake)
+
+  const draft = await service.generatePlanDraft(USER)
+
+  assert.equal(draft.status, 'draft')
+  assert.equal((await service.getActivePlan(USER))!.id, active.id)
+  assert.equal(fake.state.plans.find(p => p.id === active.id)!.status, 'active')
+})
+
+test('confirmPlan activates the draft and archives the previous active plan', async () => {
+  const fake = createFakeDb()
+  const service = serviceWithConfirmedSubject(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const active = await confirmGeneratedPlan(service, fake)
+  const draft = await service.generatePlanDraft(USER)
+
+  const confirmed = await service.confirmPlan(USER, draft.id)
+
+  assert.equal(confirmed.status, 'active')
+  assert.equal((await service.getActivePlan(USER))!.id, draft.id)
+  assert.equal(fake.state.plans.find(p => p.id === active.id)!.status, 'archived')
+})
+test('generatePlanDraft persists an active plan with stages covering the whole preparation window', async () => {
+  const fake = createFakeDb()
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile(USER, validProfile() as any)
 
-  const plan = await service.generatePlan(USER)
+  const plan = await confirmGeneratedPlan(service, fake)
 
   assert.equal(plan.status, 'active')
   assert.equal(plan.version, 1)
@@ -395,12 +462,12 @@ test('generatePlan persists an active plan with stages covering the whole prepar
   assert.equal(plan.progress.totalMinutes > 0, true)
 })
 
-test('generatePlan covers every weak subject and never exceeds the daily budget', async () => {
+test('generatePlanDraft covers every weak subject and never exceeds the daily budget', async () => {
   const fake = createFakeDb()
   const service = serviceWith(fake)
   await service.upsertProfile(USER, validProfile({ dailyMinutes: 180, weakSubjects: ['数学', '英语', '政治'] }) as any)
 
-  const plan = await service.generatePlan(USER)
+  const plan = await confirmGeneratedPlan(service, fake, USER, confirmedBrief(['数学', '英语', '政治', '复盘']))
 
   const byDay = new Map<string, any[]>()
   for (const item of plan.items) {
@@ -418,12 +485,12 @@ test('generatePlan covers every weak subject and never exceeds the daily budget'
   }
 })
 
-test('generatePlan keeps every weak subject on the same day when the budget is small', async () => {
+test('generatePlanDraft keeps every weak subject on the same day when the budget is small', async () => {
   const fake = createFakeDb()
   const service = serviceWith(fake)
   await service.upsertProfile(USER, validProfile({ dailyMinutes: 90, weakSubjects: ['数学', '英语', '政治'] }) as any)
 
-  const plan = await service.generatePlan(USER)
+  const plan = await confirmGeneratedPlan(service, fake, USER, confirmedBrief(['数学', '英语', '政治']))
 
   const firstDay = plan.items.filter((i: any) => i.planDate === dayIso(0))
   // 90 分钟 < 120:不插复盘,三门课当天全排上
@@ -431,13 +498,13 @@ test('generatePlan keeps every weak subject on the same day when the budget is s
   assert.equal(firstDay.reduce((sum, i) => sum + i.minutes, 0), 90)
 })
 
-test('generatePlan archives the previous plan and keeps its items for history', async () => {
+test('generatePlanDraft archives the previous plan and keeps its items for history', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile(USER, validProfile() as any)
-  const first = await service.generatePlan(USER)
+  const first = await confirmGeneratedPlan(service, fake)
 
-  const second = await service.generatePlan(USER)
+  const second = await confirmGeneratedPlan(service, fake)
 
   assert.equal(second.version, 2)
   assert.equal(second.status, 'active')
@@ -448,27 +515,27 @@ test('generatePlan archives the previous plan and keeps its items for history', 
   assert.equal((await service.getActivePlan(USER))!.version, 2)
 })
 
-test('generatePlan is scoped to the authenticated user', async () => {
+test('generatePlanDraft is scoped to the authenticated user', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile('other-user', validProfile({ weakSubjects: ['政治'] }) as any)
-  const otherPlan = await service.generatePlan('other-user')
+  const otherPlan = await confirmGeneratedPlan(service, fake, 'other-user')
   await service.upsertProfile(USER, validProfile() as any)
 
-  await service.generatePlan(USER)
+  await confirmGeneratedPlan(service, fake)
 
   assert.equal(fake.state.plans.find(p => p.id === otherPlan.id)!.status, 'active')
   assert.equal((await service.getActivePlan('other-user'))!.id, otherPlan.id)
 })
 
-test('generatePlan rolls back completely when persisting items fails', async () => {
+test('generatePlanDraft rolls back completely when persisting items fails', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile(USER, validProfile() as any)
-  const previous = await service.generatePlan(USER)
+  const previous = await confirmGeneratedPlan(service, fake)
   fake.breakNextItemInsert()
 
-  await assert.rejects(() => service.generatePlan(USER))
+  await assert.rejects(() => service.generatePlanDraft(USER))
 
   // 事务回滚:没有新计划、新阶段、新计划项残留,旧计划仍是唯一 active
   assert.equal(fake.state.plans.length, 1)
@@ -481,7 +548,7 @@ test('generatePlan rolls back completely when persisting items fails', async () 
   assert.equal(active!.items.length, previous.items.length)
 })
 
-test('generatePlan reports INVALID_EXAM_DATE when the stored exam date has already passed', async () => {
+test('generatePlanDraft reports INVALID_EXAM_DATE when the stored exam date has already passed', async () => {
   const fake = createFakeDb()
   const service = serviceWith(fake)
   // 直接塞入一份「过期」档案,模拟档案建立后考试日期已过
@@ -500,13 +567,13 @@ test('generatePlan reports INVALID_EXAM_DATE when the stored exam date has alrea
   })
 
   await assert.rejects(
-    () => service.generatePlan(USER),
+    () => service.generatePlanDraft(USER),
     (error: any) => error.code === 'INVALID_EXAM_DATE',
   )
   assert.equal(fake.state.plans.length, 0)
 })
 
-test('generatePlan reports INVALID_DAILY_MINUTES when the stored profile is too short', async () => {
+test('generatePlanDraft reports INVALID_DAILY_MINUTES when the stored profile is too short', async () => {
   const fake = createFakeDb()
   const service = serviceWith(fake)
   fake.state.profiles.push({
@@ -524,7 +591,7 @@ test('generatePlan reports INVALID_DAILY_MINUTES when the stored profile is too 
   })
 
   await assert.rejects(
-    () => service.generatePlan(USER),
+    () => service.generatePlanDraft(USER),
     (error: any) => error.code === 'INVALID_DAILY_MINUTES',
   )
   assert.equal(fake.state.plans.length, 0)
@@ -532,9 +599,9 @@ test('generatePlan reports INVALID_DAILY_MINUTES when the stored profile is too 
 
 test('getActivePlan flags the plan as stale when the profile no longer matches it', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile(USER, validProfile() as any)
-  await service.generatePlan(USER)
+  await confirmGeneratedPlan(service, fake)
   assert.equal((await service.getActivePlan(USER))!.stale, false)
 
   await service.upsertProfile(USER, validProfile({ examDate: dayIso(150), dailyMinutes: 240 }) as any)
@@ -553,10 +620,10 @@ test('listPlanHistory returns an empty list before any plan is generated', async
 
 test('listPlanHistory lists the active plan and every archived version, newest first', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile(USER, validProfile() as any)
-  const first = await service.generatePlan(USER)
-  const second = await service.generatePlan(USER)
+  const first = await confirmGeneratedPlan(service, fake)
+  const second = await confirmGeneratedPlan(service, fake)
 
   // 勾一个第一版的项,确认归档计划保留自己的打卡数据
   await service.setItemStatus(USER, second.items[0].id, 'done')
@@ -578,11 +645,11 @@ test('listPlanHistory lists the active plan and every archived version, newest f
 
 test('listPlanHistory only counts items that belong to each plan', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile('other-user', validProfile() as any)
-  const otherPlan = await service.generatePlan('other-user')
+  const otherPlan = await confirmGeneratedPlan(service, fake, 'other-user')
   await service.upsertProfile(USER, validProfile() as any)
-  const mine = await service.generatePlan(USER)
+  const mine = await confirmGeneratedPlan(service, fake)
 
   const history = await service.listPlanHistory(USER)
 
@@ -594,10 +661,10 @@ test('listPlanHistory only counts items that belong to each plan', async () => {
 
 test('getPlanById returns the archived plan with its stages and items intact', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile(USER, validProfile() as any)
-  const first = await service.generatePlan(USER)
-  await service.generatePlan(USER)
+  const first = await confirmGeneratedPlan(service, fake)
+  await confirmGeneratedPlan(service, fake)
 
   const archived = (await service.getPlanById(USER, first.id))!
 
@@ -613,9 +680,9 @@ test('getPlanById returns the archived plan with its stages and items intact', a
 
 test('getPlanById refuses to read another user\'s plan', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile('other-user', validProfile() as any)
-  const otherPlan = await service.generatePlan('other-user')
+  const otherPlan = await confirmGeneratedPlan(service, fake, 'other-user')
   await service.upsertProfile(USER, validProfile() as any)
 
   assert.equal(await service.getPlanById(USER, otherPlan.id), null)
@@ -659,19 +726,19 @@ const SAMPLE_DOCUMENT = {
   ],
 }
 
-test('generatePlan persists the long document and exposes it on the plan', async () => {
+test('generatePlanDraft persists the long document and exposes it on the plan', async () => {
   const fake = createFakeDb()
   const service = createPlanningService(fake.db, {
     configured: () => true,
-    generate: async (input: AiPlanningInput) => ({
-      title: '考研备考计划',
-      plan: generateRulePlan(input),
-      document: SAMPLE_DOCUMENT as any,
-    }),
+    generate: async (input: AiPlanningInput) => {
+      const plan = generateRulePlan({ ...input, weakSubjects: ['英语一'] })
+      plan.items = plan.items.filter(item => item.subject === '英语一')
+      return { title: '考研备考计划', plan, document: SAMPLE_DOCUMENT as any }
+    },
   })
   await service.upsertProfile(USER, validProfile() as any)
 
-  const plan = await service.generatePlan(USER)
+  const plan = await confirmGeneratedPlan(service, fake)
 
   assert.equal(plan.document?.title, '468 天考研全程作战计划')
   assert.equal(plan.document?.chapters.length, 2)
@@ -680,12 +747,12 @@ test('generatePlan persists the long document and exposes it on the plan', async
   assert.equal(JSON.parse(fake.state.plans[0].documentJson).hero.titleAccent, '468')
 })
 
-test('generatePlan degrades to a null document when the AI cannot produce one', async () => {
+test('generatePlanDraft degrades to a null document when the AI cannot produce one', async () => {
   const fake = createFakeDb()
-  const service = serviceWith(fake)
+  const service = serviceWithConfirmedSubject(fake)
   await service.upsertProfile(USER, validProfile() as any)
 
-  const plan = await service.generatePlan(USER)
+  const plan = await confirmGeneratedPlan(service, fake)
 
   // 长文档是加分项:生成不出来也不能影响每日清单
   assert.equal(plan.document, null)
@@ -693,20 +760,22 @@ test('generatePlan degrades to a null document when the AI cannot produce one', 
   assert.equal(plan.items.length > 0, true)
 })
 
-test('generatePlan feeds the interview brief stored on the profile into the AI input', async () => {
+test('generatePlanDraft feeds the interview brief stored on the profile into the AI input', async () => {
   const fake = createFakeDb()
   let captured: AiPlanningInput | null = null
   const service = createPlanningService(fake.db, {
     configured: () => true,
     generate: async (input: AiPlanningInput) => {
       captured = input
-      return { title: '考研备考计划', plan: generateRulePlan(input) }
+      const plan = generateRulePlan({ ...input, weakSubjects: ['英语一'] })
+      plan.items = plan.items.filter(item => item.subject === '英语一')
+      return { title: '考研备考计划', plan }
     },
   })
   await service.upsertProfile(USER, validProfile() as any)
-  fake.state.profiles[0].briefJson = JSON.stringify(SAMPLE_BRIEF)
+  const brief = { ...qualityBrief(), ...SAMPLE_BRIEF }
 
-  await service.generatePlan(USER)
+  await confirmGeneratedPlan(service, fake, USER, brief)
 
   assert.equal(captured!.brief?.summary, SAMPLE_BRIEF.summary)
   assert.deepEqual(captured!.brief?.focus, SAMPLE_BRIEF.focus)
@@ -717,7 +786,7 @@ test('interview returns the AI result and stores the brief for the next generati
   const service = createPlanningService(fake.db, {
     configured: () => true,
     generate: async (input: AiPlanningInput) => ({ title: '考研备考计划', plan: generateRulePlan(input) }),
-    interview: async () => ({ reply: '信息够了,我这就开始排', options: [], done: true, brief: SAMPLE_BRIEF as any }),
+    interview: async () => ({ reply: '信息够了,我这就开始排', options: [], done: true, brief: { ...qualityBrief(), ...SAMPLE_BRIEF } }),
   })
   await service.upsertProfile(USER, validProfile() as any)
   fake.state.profiles[0].briefJson = undefined
@@ -726,7 +795,7 @@ test('interview returns the AI result and stores the brief for the next generati
 
   assert.equal(result.done, true)
   assert.equal(result.brief?.summary, SAMPLE_BRIEF.summary)
-  // 收尾后简报落库,generatePlan 下次直接读得到
+  // 收尾后简报落库,generatePlanDraft 下次直接读得到
   assert.equal(typeof fake.state.profiles[0].briefJson, 'string')
   assert.equal(JSON.parse(fake.state.profiles[0].briefJson).goals[0], SAMPLE_BRIEF.goals[0])
   assert.equal((await service.getProfile(USER))!.brief?.summary, SAMPLE_BRIEF.summary)
@@ -741,7 +810,7 @@ test('interview does not store an empty brief when the AI wrapped up with nothin
       reply: '那我们开始吧',
       options: [],
       done: true,
-      brief: { summary: '', goals: [], constraints: [], focus: [], materials: [], notes: [] },
+      brief: normalizeBrief({ summary: '', goals: [], constraints: [], focus: [], materials: [], notes: [] }),
     }),
   })
   await service.upsertProfile(USER, validProfile() as any)
@@ -762,6 +831,236 @@ test('interview reports AI_NOT_CONFIGURED when no interviewer is wired up', asyn
   )
 })
 
+const qualityBrief = () => normalizeBrief({
+  examSubjects: [{ name: '英语一', progress: '真题阅读做至 2015 年', scope: '阅读', remainingMinutes: 120,
+    milestone: '一轮阅读真题', milestoneDate: dayIso(59), milestoneMinutes: 60 }],
+  availability: [1, 2, 3, 4, 5, 6, 7].map(weekday => ({ weekday, windows: [{ start: '19:00', end: '22:00' }] })),
+  fixedCommitments: [], availabilityConfirmed: true, commitmentsConfirmed: true,
+})
+
+test('interview cannot finish on force or turn count without structured facts', async () => {
+  const fake = createFakeDb()
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async input => ({ title: 'test', plan: generateRulePlan(input) }),
+    interview: async () => ({ reply: '可以开始', options: [], done: true, brief: normalizeBrief(SAMPLE_BRIEF) }),
+  })
+  await service.upsertProfile(USER, validProfile() as any)
+  const result = await service.interview(USER, { force: true, messages: Array.from({ length: 9 }, () => ({ role: 'user', content: '直接开始' })) })
+  assert.equal(result.done, false)
+  assert.equal(fake.state.profiles[0].briefJson, undefined)
+})
+
+test('a replacement draft subtracts completed task estimates and exposes pending backlog to AI', async () => {
+  const fake = createFakeDb()
+  let captured: AiPlanningInput | undefined
+  const service = createPlanningService(fake.db, { configured: () => true, generate: async input => {
+    captured = input
+    const plan = generateRulePlan({ ...input, weakSubjects: ['英语一'] })
+    plan.items = plan.items.filter(item => item.subject === '英语一')
+    return { title: '英语计划', plan }
+  } })
+  await service.upsertProfile(USER, validProfile() as any)
+  fake.state.profiles[0].briefJson = JSON.stringify(qualityBrief())
+  const active = await service.generatePlanDraft(USER)
+  await service.confirmPlan(USER, active.id)
+  const first = active.items[0]
+  await service.setItemStatus(USER, first.id, 'done')
+  const draft = await service.generatePlanDraft(USER)
+  assert.equal(draft.status, 'draft')
+  assert.equal(captured!.brief!.examSubjects[0].remainingMinutes, Math.max(0, 120 - first.minutes))
+  assert.equal(captured!.brief!.examSubjects[0].milestoneMinutes, Math.max(0, 60 - first.minutes))
+  assert.equal(captured!.backlog?.[0]?.title, active.items[1].title)
+  assert.equal((await service.getActivePlan(USER))!.id, active.id)
+})
+
+test('a second replacement keeps the completion credit after the first active plan is archived', async () => {
+  const fake = createFakeDb()
+  const inputs: AiPlanningInput[] = []
+  const service = createPlanningService(fake.db, { configured: () => true, generate: async input => {
+    inputs.push(input)
+    const plan = generateRulePlan({ ...input, weakSubjects: ['英语一'] })
+    plan.items = plan.items.filter(item => item.subject === '英语一')
+    return { title: '英语计划', plan }
+  } })
+  await service.upsertProfile(USER, validProfile() as any)
+  const brief = qualityBrief()
+  brief.examSubjects[0].remainingMinutes = 500
+  fake.state.profiles[0].briefJson = JSON.stringify(brief)
+  const first = await service.generatePlanDraft(USER)
+  await service.confirmPlan(USER, first.id)
+  await service.setItemStatus(USER, first.items[0].id, 'done')
+  const second = await service.generatePlanDraft(USER)
+  await service.confirmPlan(USER, second.id)
+  await service.generatePlanDraft(USER)
+  assert.equal(inputs[2].brief!.examSubjects[0].remainingMinutes, 500 - first.items[0].minutes)
+})
+
+test('completed minutes from a different interview brief are not deducted from a new goal', async () => {
+  const fake = createFakeDb()
+  const inputs: AiPlanningInput[] = []
+  const service = createPlanningService(fake.db, { configured: () => true, generate: async input => {
+    inputs.push(input)
+    const plan = generateRulePlan({ ...input, weakSubjects: ['英语一'] })
+    plan.items = plan.items.filter(item => item.subject === '英语一')
+    return { title: '英语计划', plan }
+  } })
+  await service.upsertProfile(USER, validProfile() as any)
+  const brief = qualityBrief()
+  brief.examSubjects[0].remainingMinutes = 500
+  fake.state.profiles[0].briefJson = JSON.stringify(brief)
+  const first = await service.generatePlanDraft(USER)
+  await service.confirmPlan(USER, first.id)
+  await service.setItemStatus(USER, first.items[0].id, 'done')
+  brief.examSubjects[0].progress = '重新确认了基础'
+  brief.examSubjects[0].remainingMinutes = 600
+  fake.state.profiles[0].briefJson = JSON.stringify(brief)
+  await service.generatePlanDraft(USER)
+  assert.equal(inputs[1].brief!.examSubjects[0].remainingMinutes, 600)
+})
+
+test('draft generation requires structured exam facts before invoking AI', async () => {
+  const fake = createFakeDb()
+  let invoked = false
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async input => { invoked = true; return { title: 'test', plan: generateRulePlan(input) } },
+  })
+  await service.upsertProfile(USER, validProfile() as any)
+  await assert.rejects(() => service.generatePlanDraft(USER), (error: any) => error.code === 'PLANNING_FACTS_INCOMPLETE')
+  assert.equal(invoked, false)
+  assert.equal(fake.state.plans.length, 0)
+})
+
+test('insufficient capacity blocks drafts with a subject and milestone deficit', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const brief = qualityBrief()
+  brief.examSubjects[0].remainingMinutes = 999999
+  fake.state.profiles[0].briefJson = JSON.stringify(brief)
+  await assert.rejects(() => service.generatePlanDraft(USER), (error: any) => error.code === 'PLAN_CAPACITY_INSUFFICIENT'
+    && error.message.includes('英语一') && error.message.includes('一轮阅读真题'))
+  assert.equal(fake.state.plans.length, 0)
+})
+
+test('draft generation blocks work that fits free windows but exceeds the confirmed daily budget', async () => {
+  const fake = createFakeDb()
+  const service = serviceWithConfirmedSubject(fake)
+  await service.upsertProfile(USER, validProfile({ dailyMinutes: 60 }) as any)
+  const brief = qualityBrief()
+  brief.examSubjects[0].remainingMinutes = 10000
+  fake.state.profiles[0].briefJson = JSON.stringify(brief)
+  await assert.rejects(() => service.generatePlanDraft(USER), (error: any) => error.code === 'PLAN_CAPACITY_INSUFFICIENT'
+    && error.message.includes('英语一'))
+  assert.equal(fake.state.plans.length, 0)
+})
+
+test('draft generation rejects a schedule that does not cover confirmed subject work', async () => {
+  const fake = createFakeDb()
+  const service = createPlanningService(fake.db, { configured: () => true, generate: async input => {
+    const plan = generateRulePlan({ ...input, weakSubjects: ['英语一'] })
+    plan.items = plan.items.slice(0, 1).map(item => ({ ...item, subject: '英语一', title: '一轮阅读真题' }))
+    return { title: '英语计划', plan }
+  } })
+  await service.upsertProfile(USER, validProfile() as any)
+  const brief = qualityBrief()
+  brief.examSubjects[0].remainingMinutes = 240
+  fake.state.profiles[0].briefJson = JSON.stringify(brief)
+  await assert.rejects(() => service.generatePlanDraft(USER), (error: any) => error.code === 'PLAN_CAPACITY_INSUFFICIENT'
+    && error.message.includes('英语一') && error.message.includes('一轮阅读真题'))
+  assert.equal(fake.state.plans.length, 0)
+})
+
+test('draft generation rejects a milestone whose scheduled work lands after its deadline', async () => {
+  const fake = createFakeDb()
+  const service = createPlanningService(fake.db, { configured: () => true, generate: async input => {
+    const plan = generateRulePlan({ ...input, weakSubjects: ['英语一'] })
+    plan.items = plan.items.filter(item => item.subject === '英语一' && item.planDate.getTime() > addDays(dayStart(new Date()), 1).getTime())
+    return { title: '英语计划', plan }
+  } })
+  await service.upsertProfile(USER, validProfile() as any)
+  const brief = qualityBrief()
+  brief.examSubjects[0].milestoneDate = dayIso(1)
+  fake.state.profiles[0].briefJson = JSON.stringify(brief)
+  await assert.rejects(() => service.generatePlanDraft(USER), (error: any) => error.code === 'PLAN_CAPACITY_INSUFFICIENT'
+    && error.message.includes('英语一') && error.message.includes('一轮阅读真题') && error.message.includes('60 分钟'))
+  assert.equal(fake.state.plans.length, 0)
+})
+
+test('draft generation rejects tasks exceeding the net availability on their date', async () => {
+  const fake = createFakeDb()
+  const service = serviceWithConfirmedSubject(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const brief = qualityBrief()
+  brief.fixedCommitments = [1, 2, 3, 4, 5, 6, 7].map(weekday => ({ weekday, start: '20:00', end: '22:00', label: '工作' }))
+  fake.state.profiles[0].briefJson = JSON.stringify(brief)
+
+  await assert.rejects(() => service.generatePlanDraft(USER), (error: any) => error.code === 'PLAN_GENERATION_FAILED')
+  assert.equal(fake.state.plans.length, 0)
+})
+
+test('draft generation rejects AI subjects not present in the confirmed exam facts', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  fake.state.profiles[0].briefJson = JSON.stringify(qualityBrief())
+  await assert.rejects(() => service.generatePlanDraft(USER), (error: any) => error.code === 'PLAN_GENERATION_FAILED')
+  assert.equal(fake.state.plans.length, 0)
+})
+
+test('confirmation rejects another user and a changed profile without archiving the active plan', async () => {
+  const fake = createFakeDb()
+  const service = serviceWithConfirmedSubject(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const active = await confirmGeneratedPlan(service, fake)
+  const invalid = serviceWith(fake)
+  await assert.rejects(() => invalid.generatePlanDraft(USER), (error: any) => error.code === 'PLAN_GENERATION_FAILED')
+  const newDraft = await service.generatePlanDraft(USER)
+  await assert.rejects(() => service.confirmPlan('other-user', newDraft.id), (error: any) => error.code === 'PLAN_NOT_FOUND')
+  await service.upsertProfile(USER, validProfile({ dailyMinutes: 240 }) as any)
+  await assert.rejects(() => service.confirmPlan(USER, newDraft.id), (error: any) => error.code === 'PLAN_PROFILE_CHANGED')
+  assert.equal(fake.state.plans.find(p => p.id === active.id)!.status, 'active')
+})
+
+test('confirmation rejects a draft after active plan progress changes', async () => {
+  const fake = createFakeDb()
+  const service = serviceWithConfirmedSubject(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const active = await confirmGeneratedPlan(service, fake)
+  const draft = await service.generatePlanDraft(USER)
+  await service.setItemStatus(USER, active.items[0].id, 'done')
+
+  await assert.rejects(() => service.confirmPlan(USER, draft.id), (error: any) => error.code === 'PLAN_PROGRESS_CHANGED')
+  assert.equal((await service.getActivePlan(USER))!.id, active.id)
+  assert.equal(fake.state.plans.find(p => p.id === draft.id)!.status, 'draft')
+})
+
+test('draft generation refuses a profile changed while AI was generating', async () => {
+  const fake = createFakeDb()
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async input => {
+      fake.state.profiles[0].dailyMinutes += 30
+      const plan = generateRulePlan({ ...input, weakSubjects: ['英语一'] })
+      plan.items = plan.items.map(item => ({ ...item, subject: '英语一' }))
+      return { title: 'test', plan }
+    },
+  })
+  await service.upsertProfile(USER, validProfile() as any)
+  fake.state.profiles[0].briefJson = JSON.stringify(qualityBrief())
+  await assert.rejects(() => service.generatePlanDraft(USER), (error: any) => error.code === 'PLAN_PROFILE_CHANGED')
+  assert.equal(fake.state.plans.length, 0)
+})
+
+test('history excludes drafts', async () => {
+  const fake = createFakeDb()
+  const service = serviceWithConfirmedSubject(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  await confirmGeneratedPlan(service, fake)
+  fake.state.plans.push({ ...fake.state.plans[0], id: 999, status: 'draft', version: 2 })
+  assert.deepEqual((await service.listPlanHistory(USER)).map(row => row.status), ['active'])
+})
 test('upsertProfile keeps the brief gathered during the interview', async () => {
   const fake = createFakeDb()
   const service = serviceWith(fake)

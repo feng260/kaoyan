@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateRulePlan, PlanGenerationError, type PlanningInput } from './generator'
+import { AiUnavailable, expandStage, scheduleBacklog } from './aiGenerator'
 
 const DAY = 24 * 3600_000
 
@@ -164,4 +165,101 @@ test('produces identical output for repeated calls with the same input', () => {
   const first = generateRulePlan(input({ examDate: dayStart(90) }))
   const second = generateRulePlan(input({ examDate: dayStart(90) }))
   assert.deepEqual(second, first)
+})
+
+test('AI stage uses net availability and keeps queued work for a later free day', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const brief = {
+    availability: [1, 2, 3].map(weekday => ({ weekday, windows: [{ start: '19:00', end: '21:00' }] })),
+    fixedCommitments: [{ weekday: 1, start: '19:00', end: '21:00', label: '值班' }, { weekday: 2, start: '20:00', end: '21:00', label: '会议' }],
+  }
+  const items = expandStage({ name: '基础', weeklySlots: [
+    { weekdays: [1, 2, 3], subject: '英语一', title: '2015 阅读', minutes: 90 },
+    { weekdays: [1, 2, 3], subject: '英语一', title: '2016 阅读', minutes: 90 },
+  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-09-30T00:00:00.000Z'), sortOrder: 0 }, 120, brief as any)
+  assert.deepEqual(items.map(item => [item.planDate.getUTCDay(), item.title, item.minutes]),
+    [[2, '2015 阅读', 60], [3, '2016 阅读', 90]])
+})
+
+test('AI stage waits for the next queued task weekday rather than skipping it', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const items = expandStage({ name: '基础', weeklySlots: [
+    { weekdays: [1], subject: '英语一', title: '先读 2015', minutes: 60 },
+    { weekdays: [2], subject: '英语一', title: '再读 2016', minutes: 60 },
+  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-06T00:00:00.000Z'), sortOrder: 0 }, 120)
+  assert.deepEqual(items.map(item => [item.planDate.toISOString().slice(0, 10), item.title]), [
+    ['2026-09-28', '先读 2015'], ['2026-09-29', '再读 2016'],
+  ])
+})
+
+test('AI stage advances a subject task queue across consecutive weeks', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const items = expandStage({ name: '基础', weeklySlots: [
+    { weekdays: [1], subject: '英语一', title: '2015 阅读', minutes: 60 },
+    { weekdays: [1], subject: '英语一', title: '2016 阅读', minutes: 60 },
+  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-12T00:00:00.000Z'), sortOrder: 0 }, 120)
+  assert.deepEqual(items.filter(item => item.planDate.getUTCDay() === 1).map(item => item.title),
+    ['2015 阅读', '2016 阅读'])
+})
+
+test('AI stage alternates odd and even week queues without replaying finished work', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const items = expandStage({ name: '基础', weeklySlots: [
+    { weekdays: [1], subject: '英语一', title: '偶周阅读', minutes: 60, weekParity: 'even' },
+    { weekdays: [1], subject: '英语一', title: '奇周阅读', minutes: 60, weekParity: 'odd' },
+    { weekdays: [1], subject: '英语一', title: '下一奇周阅读', minutes: 60, weekParity: 'odd' },
+  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-26T00:00:00.000Z'), sortOrder: 0 }, 60)
+  assert.deepEqual(items.map(item => [item.planDate.toISOString().slice(0, 10), item.title]), [
+    ['2026-09-28', '奇周阅读'], ['2026-10-05', '偶周阅读'], ['2026-10-12', '下一奇周阅读'],
+  ])
+})
+
+test('pending backlog is not duplicated when AI repeats the same subject and title', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
+  const generated = [{ stageOrder: 0, subject: '英语一', title: '旧阅读', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 }]
+  const items = scheduleBacklog(stages, generated, [{ subject: '英语一', title: '旧阅读', minutes: 60 }], 60,
+    undefined, ['英语一'])
+  assert.deepEqual(items.map(item => [item.title, item.minutes]), [['旧阅读', 60]])
+})
+
+test('pending backlog for a confirmed subject is not dropped when the model omits that subject', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
+  const items = scheduleBacklog(stages, [], [{ subject: '自命题 912', title: '旧大纲', minutes: 60 }], 60,
+    undefined, ['自命题 912'])
+  assert.deepEqual(items.map(item => [item.subject, item.title, item.minutes]), [['自命题 912', '旧大纲', 60]])
+})
+
+test('pending backlog and new work cannot silently exceed available capacity', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
+  const generated = [{ stageOrder: 0, subject: '英语一', title: '新阅读', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 }]
+  assert.throws(() => scheduleBacklog(stages, generated,
+    [{ subject: '英语一', title: '旧阅读', minutes: 60 }], 60, undefined, ['英语一']), AiUnavailable)
+})
+
+test('pending backlog does not pull an even-week task into an odd week', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const nextMonday = new Date('2026-10-05T00:00:00.000Z')
+  const stages = [{ name: '基础', startDate: monday, endDate: nextMonday, sortOrder: 0 }]
+  const generated = [{ stageOrder: 0, subject: '英语一', title: '偶周阅读', planDate: nextMonday, minutes: 60, priority: 0, sortOrder: 0 }]
+  const items = scheduleBacklog(stages, generated, [{ subject: '英语一', title: '旧阅读', minutes: 60 }], 60, undefined, ['英语一'])
+  assert.deepEqual(items.map(item => [item.planDate.toISOString().slice(0, 10), item.title]), [
+    ['2026-09-28', '旧阅读'], ['2026-10-05', '偶周阅读'],
+  ])
+})
+
+test('pending backlog is scheduled before new work and carries across a stage boundary', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const stages = [
+    { name: '基础', startDate: monday, endDate: monday, sortOrder: 0 },
+    { name: '强化', startDate: new Date('2026-09-29T00:00:00.000Z'), endDate: new Date('2026-09-30T00:00:00.000Z'), sortOrder: 1 },
+  ]
+  const backlog = [{ subject: '英语一', title: '旧阅读', minutes: 90 }]
+  const newItems = [{ stageOrder: 0, subject: '英语一', title: '新阅读', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 }]
+  const items = scheduleBacklog(stages, newItems, backlog, 60)
+  assert.deepEqual(items.map(item => [item.stageOrder, item.title, item.minutes]), [
+    [0, '旧阅读', 60], [1, '旧阅读', 30], [1, '新阅读', 30], [1, '新阅读', 30],
+  ])
 })

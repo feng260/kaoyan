@@ -236,11 +236,13 @@ model Plan {
   title      String   @db.VarChar(64)
   targetType String   @db.VarChar(16)
   source     String   @default("rule") @db.VarChar(16) // 计划来源:rule(规则版)/ai(后续版本)
-  status     String   @default("active") @db.VarChar(16) // active/archived
+  status     String   @default("active") @db.VarChar(16) // draft/active/archived
   startDate  DateTime
   examDate   DateTime
   version    Int      @default(1)
   documentJson String? @db.Text // 计划长文档(PlanDocument);旧版本计划可能为空
+  profileSnapshotJson String? @db.Text // 草稿生成时档案与面谈事实的快照,确认时防止过期激活
+  progressSnapshotJson String? @db.Text // 草稿生成时生效计划的完成状态快照
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

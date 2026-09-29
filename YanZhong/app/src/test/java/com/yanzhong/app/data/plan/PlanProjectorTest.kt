@@ -150,6 +150,34 @@ class PlanProjectorTest {
     }
 
     @Test
+    fun completedTasksFromPreviousPlanVersionArePreserved() {
+        val existing = listOf(
+            planTask(id = 20L, planId = 41L, planItemId = 899L).copy(status = TaskStatus.DONE),
+            planTask(id = 21L, planId = 41L, planItemId = 900L),
+        )
+
+        val stale = stalePlanTaskIds(
+            existing = existing,
+            accountGuid = "account-a",
+            plan = plan(itemId = 1001L, title = "数学 · 基础梳理"),
+        )
+
+        assertEquals(listOf(21L), stale)
+    }
+
+    @Test
+    fun completedDisappearedItemKeepsItsLocalTaskId() {
+        val completed = planTask(id = 22L, planId = 42L, planItemId = 1002L)
+            .copy(status = TaskStatus.DONE, completedPomodoros = 3)
+        val plan = plan(itemId = 1001L, title = "数学 · 基础梳理")
+
+        assertEquals(emptyList<Long>(), stalePlanTaskIds(listOf(completed), "account-a", plan))
+        val projected = projectPlanTasks(listOf(completed), plan, "account-a", emptyMap(), now = 100L)
+        assertEquals(22L, projected.first().id)
+        assertEquals(3, projected.first().completedPomodoros)
+    }
+
+    @Test
     fun previousPlanVersionTasksAreRemoved() {
         val existing = listOf(
             planTask(id = 21L, planId = 41L, planItemId = 900L),
