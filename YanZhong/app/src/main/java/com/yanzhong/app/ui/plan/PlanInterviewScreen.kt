@@ -64,7 +64,12 @@ import com.yanzhong.app.ui.theme.AppIcons
 import java.time.LocalDate
 
 @Composable
-fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController) {
+fun PlanInterviewScreen(
+    padding: PaddingValues,
+    navController: NavHostController,
+    /** 入口写进路由的模式意图,见 Routes.planInterview;空串=由本页自行判断 */
+    mode: String = ""
+) {
     val vm: PlanInterviewViewModel = viewModel()
     val state by vm.state.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
@@ -75,11 +80,9 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
     val profileSaved by (entry?.savedStateHandle?.getStateFlow(Routes.EXTRA_PLAN_PROFILE_SAVED, false)
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }).collectAsStateWithLifecycle()
 
-    LaunchedEffect(entry, profileSaved) {
-        if (entry?.destination?.route == Routes.PLAN_INTERVIEW) {
-            vm.beginSession(profileJustSaved = profileSaved)
-            if (profileSaved) entry?.savedStateHandle?.remove<Boolean>(Routes.EXTRA_PLAN_PROFILE_SAVED)
-        }
+    LaunchedEffect(profileSaved) {
+        vm.beginSession(profileJustSaved = profileSaved, forcedMode = parseModeIntent(mode))
+        if (profileSaved) entry?.savedStateHandle?.remove<Boolean>(Routes.EXTRA_PLAN_PROFILE_SAVED)
     }
     LaunchedEffect(state.phase) {
         if (state.phase == InterviewPhase.SUCCESS) {
@@ -235,6 +238,13 @@ fun PlanInterviewScreen(padding: PaddingValues, navController: NavHostController
             }
         }
     }
+}
+
+/** 入口声明的模式意图:空串表示「没指定」,交回面谈页按有没有生效计划自行判断 */
+private fun parseModeIntent(raw: String): InterviewMode? = when (raw) {
+    "build" -> InterviewMode.BUILD
+    "adjust" -> InterviewMode.ADJUST
+    else -> null
 }
 
 /** 聊天区副标题：把「AI 现在在做什么/已经确认了什么」显式说出来，减少人机感 */

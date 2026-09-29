@@ -93,30 +93,34 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
     private val session = InterviewSessionStore(app)
     private var accountGuid: String? = null
 
-    fun beginSession(profileJustSaved: Boolean = false) {
+    fun beginSession(profileJustSaved: Boolean = false, forcedMode: InterviewMode? = null) {
         if (started && !profileJustSaved) return
         started = true
         _ui.value = InterviewUiState()
         viewModelScope.launch {
             accountGuid = runCatching { TokenStore.currentAccountGuid() }.getOrNull()
-            // 问卷刚改过：正式科目/空档这些事实已并进简报，旧对话的前提变了，作废重问
-            if (profileJustSaved) session.clear()
+            // 两种情况都算「从头来」:问卷刚改过(前提变了),或入口明确要求重新生成
+            val regenerate = profileJustSaved || forcedMode == InterviewMode.BUILD
+            if (regenerate) session.clear()
             val profile = runCatching { ApiClient.api().getProfile() }.getOrNull()?.profile
             if (profile?.isComplete != true) {
                 _ui.update { it.copy(phase = InterviewPhase.NEED_PROFILE) }
                 return@launch
             }
-            val saved = if (profileJustSaved) null else session.load()
+            val resumed = if (regenerate) null else session.load()
                 ?.takeIf { it.messages.isNotEmpty() && it.accountGuid == accountGuid }
-            // 模式分流:刚改完档案 → 重新生成(BUILD);有存档 → 续上次的模式;
-            // 都没有 → 已有生效计划就是行程小助手,否则从头制定
             val activePlan = runCatching { ApiClient.api().getActivePlan().plan }.getOrNull()
-            val mode = when {
-                profileJustSaved -> InterviewMode.BUILD
-                saved != null -> saved.mode
-                else -> if (activePlan != null) InterviewMode.ADJUST else InterviewMode.BUILD
+            // 模式来源:入口显式指定 > 续上一次的模式 > 有生效计划就走行程小助手,否则从头制定。
+            // 入口优先是这次的关键修正——「调整档案并重新生成」进来必须走制定,不能再被猜成行程小助手。
+            val mode = forcedMode ?: when {
+                regenerate -> InterviewMode.BUILD
+                resumed != null -> resumed.mode
+                activePlan != null -> InterviewMode.ADJUST
+                else -> InterviewMode.BUILD
             }
             _ui.update { it.copy(mode = mode) }
+            // 存档模式与本次模式不符时不续:上次是制定对话、这次从「行程小助手」入口进来,续上会驴唇不对马嘴
+            val saved = resumed?.takeIf { it.mode == mode }
             if (mode == InterviewMode.ADJUST) {
                 if (saved != null) {
                     _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,

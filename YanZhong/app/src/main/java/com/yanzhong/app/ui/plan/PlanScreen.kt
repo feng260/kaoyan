@@ -162,6 +162,10 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
                     onUndo = vm::undoLatestAdjustment,
                     onToggle = vm::toggleItem,
                     onOpenSetup = { navController.navigate(Routes.planSetup()) },
+                    onOpenAssistant = {
+                        // 显式声明「调整模式」:面谈页只看有没有生效计划的话,这条入口也会被猜成制定
+                        navController.navigate(Routes.planInterview("adjust"))
+                    },
                     onOpenDocument = { navController.navigate(Routes.PLAN_DOCUMENT) },
                     onOpenHistory = { navController.navigate(Routes.PLAN_HISTORY) }
                 )
@@ -178,7 +182,7 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
                     desc = "一份几百天的全程计划,靠两页问卷是排不出来的。先和 AI 聊几句——" +
                         "它问清你的目标院校、每天能学多久、哪科最弱,再照着一整份规划书的样子给你排。",
                     primaryLabel = "和 AI 聊 5 分钟,制定计划",
-                    onPrimary = { navController.navigate(Routes.PLAN_INTERVIEW) },
+                    onPrimary = { navController.navigate(Routes.planInterview()) },
                     secondaryLabel = "看历史计划",
                     onSecondary = { navController.navigate(Routes.PLAN_HISTORY) }
                 )
@@ -371,6 +375,7 @@ private fun ServerPlanSummary(
     onUndo: () -> Unit,
     onToggle: (com.yanzhong.app.data.remote.PlanItemDto) -> Unit,
     onOpenSetup: () -> Unit,
+    onOpenAssistant: () -> Unit,
     onOpenDocument: () -> Unit,
     onOpenHistory: () -> Unit
 ) {
@@ -432,6 +437,23 @@ private fun ServerPlanSummary(
             Spacer(Modifier.width(8.dp))
             Text(
                 if (plan.stale) "重新生成计划" else "调整档案并重新生成",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+
+        // 行程小助手:同一份生效计划上的「临时有事」入口。和上面「改档案重建」是两件事,
+        // 分开两个按钮,考生一眼就知道点哪个会进哪个模式,不用再靠猜
+        OutlinedButton(
+            onClick = onOpenAssistant,
+            enabled = !busy,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp)
+        ) {
+            Icon(AppIcons.Chat, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(
+                "有事？让 AI 调整近期计划",
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold
             )

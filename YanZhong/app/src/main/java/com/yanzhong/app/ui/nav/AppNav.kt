@@ -69,8 +69,14 @@ object Routes {
      * 两种入口都只保存档案，随后进入面谈；profileOnly 表示来自面谈补档案。
      */
     const val PLAN_SETUP = "plan_setup?profileOnly={profileOnly}"
-    /** AI 备考面谈页:聊几轮问清情况,再据此排全程计划 */
-    const val PLAN_INTERVIEW = "plan_interview"
+    /**
+     * AI 备考面谈页:聊几轮问清情况,再据此排全程计划。
+     *
+     * mode 由入口在导航时写进路由:"build"=制定/重新生成,"adjust"=行程小助手,空=由面谈页自行判断。
+     * 用路由参数而不是 savedStateHandle:后者要在 navigate() 之后回写 currentBackStackEntry,
+     * 时机不受控,写不进去就会退化成「有生效计划就猜成行程小助手」。
+     */
+    const val PLAN_INTERVIEW = "plan_interview?mode={mode}"
     /** 全程规划长文档页:AI 排出的 8 章文档,按参考计划的样子分段渲染 */
     const val PLAN_DOCUMENT = "plan_document"
     /** 历史计划页:按版本回看已归档的旧计划(只读) */
@@ -84,6 +90,9 @@ object Routes {
 
     /** 备考档案页的具体去向;必须用这个函数而不是直接拼 PLAN_SETUP,否则查询参数会被当成路径 */
     fun planSetup(profileOnly: Boolean = false) = "plan_setup?profileOnly=$profileOnly"
+
+    /** 面谈页的具体去向;mode 为空表示不指定,由面谈页按「有没有生效计划」自行判断 */
+    fun planInterview(mode: String = "") = "plan_interview?mode=$mode"
 }
 
 private data class TabSpec(
@@ -220,8 +229,20 @@ fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
                             profileOnly = entry.arguments?.getBoolean("profileOnly") ?: false
                         )
                     }
-                    composable(Routes.PLAN_INTERVIEW) {
-                        com.yanzhong.app.ui.plan.PlanInterviewScreen(padding, navController)
+                    composable(
+                        Routes.PLAN_INTERVIEW,
+                        arguments = listOf(
+                            androidx.navigation.navArgument("mode") {
+                                type = androidx.navigation.NavType.StringType
+                                defaultValue = ""
+                            }
+                        )
+                    ) { entry ->
+                        com.yanzhong.app.ui.plan.PlanInterviewScreen(
+                            padding,
+                            navController,
+                            mode = entry.arguments?.getString("mode").orEmpty()
+                        )
                     }
                     composable(Routes.PLAN_DOCUMENT) {
                         com.yanzhong.app.ui.plan.PlanDocumentScreen(padding, navController)

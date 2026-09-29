@@ -181,7 +181,10 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                     _ui.update { s ->
                         s.copy(
                             phase = OnboardingPhase.EDITING,
-                            step = 0,
+                            // 主动来改档案、且档案本来就完整:直接落在最后一题。
+                            // 上次的答案已全部回填,没必要再从第 1 题一路点「下一步」重走一遍;
+                            // 真要改前面的题,点「返回上一步」即可。
+                            step = if (manage && p?.isComplete == true) ONBOARDING_STEPS - 1 else 0,
                             profile = p,
                             profileSaved = p != null,
                             targetType = p?.targetType?.takeIf { it in TARGET_TYPES } ?: s.targetType,

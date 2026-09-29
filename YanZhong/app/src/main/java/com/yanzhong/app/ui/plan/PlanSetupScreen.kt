@@ -46,7 +46,9 @@ fun PlanSetupScreen(padding: PaddingValues, navController: NavHostController, pr
                 navController.previousBackStackEntry?.savedStateHandle?.set(Routes.EXTRA_PLAN_PROFILE_SAVED, true)
                 navController.popBackStack()
             } else {
-                navController.navigate(Routes.PLAN_INTERVIEW) {
+                // 这条路径就是「调整档案并重新生成」:档案已改、计划必然重排,所以把模式直接写进路由,
+                // 让面谈页确定性地走制定模式,而不是靠「有没有生效计划」去猜成行程小助手
+                navController.navigate(Routes.planInterview("build")) {
                     popUpTo(Routes.PLAN_SETUP) { inclusive = true }
                 }
             }
