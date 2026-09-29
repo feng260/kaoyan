@@ -219,6 +219,7 @@ fun PlanInterviewScreen(
                         renderDraftHtml(draft, diff, today, state.activeCompared)
                     }
                     DraftContent(draft, diff, html, fullscreen, state.activeCompared,
+                        estimatedSubjects = state.brief?.examSubjects?.filter { it.estimated }?.map { it.name }.orEmpty(),
                         onFullscreen = { fullscreen = !fullscreen },
                         onConfirm = vm::confirm, onChat = { fullscreen = false; vm.backToChat() },
                         onProfile = { fullscreen = false; navController.navigate(Routes.planSetup(profileOnly = true)) },
@@ -397,6 +398,7 @@ private fun QuickAnswers(options: List<String>, enabled: Boolean, onOption: (Str
 @Composable
 private fun ColumnScope.DraftContent(
     draft: PlanDto, diff: TodayItemDiff, html: String, fullscreen: Boolean, activeCompared: Boolean,
+    estimatedSubjects: List<String>,
     onFullscreen: () -> Unit, onConfirm: () -> Unit, onChat: () -> Unit,
     onProfile: () -> Unit, onRetry: () -> Unit, onDismiss: () -> Unit,
     canConfirm: Boolean, error: String?, bottom: androidx.compose.ui.unit.Dp
@@ -405,6 +407,9 @@ private fun ColumnScope.DraftContent(
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
             Text("DRAFT · 尚未生效", color = Color(0xFFAA5D38), style = MaterialTheme.typography.labelMedium)
             Text(draft.title, style = MaterialTheme.typography.titleMedium)
+            if (estimatedSubjects.isNotEmpty()) Text(
+                "其中 ${estimatedSubjects.joinToString("、")} 的细节是 AI 按经验估的，「回聊天更正」可逐项改",
+                color = Color(0xFFAA5D38), style = MaterialTheme.typography.bodySmall)
             Text(if (activeCompared) "今天将移除 ${diff.removed.size} 项，新增 ${diff.added.size} 项"
                 else "当前计划读取失败，无法对比今日移除项", style = MaterialTheme.typography.bodySmall)
             if (activeCompared && diff.removed.isNotEmpty()) Text("移除：${diff.removed.joinToString("、") { it.title }}", style = MaterialTheme.typography.bodySmall)

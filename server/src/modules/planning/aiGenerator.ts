@@ -106,7 +106,6 @@ function buildUserPrompt(input: AiPlanningInput): string {
     `目标类型:${input.targetType}`,
     `今天:${fmt(today)}`,
     `考试日期:${fmt(exam)}(距今 ${totalDays} 天)`,
-    `每日可用学习时长:${input.dailyMinutes} 分钟`,
     `基础水平:${input.foundation}`,
     `问卷学习时段(以面谈确认的真实空闲时段为准):${input.studyWindows.join('、')}`,
     `问卷薄弱科目(仅在正式科目中倾斜):${weak.join('、')}`,
@@ -233,14 +232,14 @@ function isoWeekday(d: Date): number {
  *   则按上限裁掉多出的条目,保证每天的合计一定不超过预算;
  * - 某天一条都没命中(模型漏写星期几),用该阶段第一条模板兜底,保证每天都有安排。
  */
-export function expandStage(stage: AiStage, range: GeneratedStage, dailyMinutes: number, brief?: Pick<PlanBrief, 'availability' | 'fixedCommitments'> | null): GeneratedItem[] {
+export function expandStage(stage: AiStage, range: GeneratedStage, brief: Pick<PlanBrief, 'availability' | 'fixedCommitments'>): GeneratedItem[] {
   const items: GeneratedItem[] = []
   const stageLength = diffDays(range.endDate, range.startDate) + 1
   const subjects = [...new Set(stage.weeklySlots.map(slot => slot.subject))]
   const completed = new Map(subjects.map(subject => [subject, new Set<number>()]))
   for (let offset = 0; offset < stageLength; offset++) {
     const planDate = addDays(range.startDate, offset)
-    const budget = brief ? Math.min(dailyMinutes, netAvailableMinutes(brief, planDate)) : dailyMinutes
+    const budget = netAvailableMinutes(brief, planDate)
     if (budget < MIN_SLOT_MINUTES) continue
     const dow = isoWeekday(planDate)
     const weekParity = Math.floor(offset / 7) % 2 === 0 ? 'odd' : 'even'
@@ -290,8 +289,7 @@ export function scheduleBacklog(
   stages: GeneratedStage[],
   generated: GeneratedItem[],
   backlog: NonNullable<AiPlanningInput['backlog']>,
-  dailyMinutes: number,
-  brief?: Pick<PlanBrief, 'availability' | 'fixedCommitments'> | null,
+  brief: Pick<PlanBrief, 'availability' | 'fixedCommitments'>,
   confirmedSubjects?: string[],
 ): GeneratedItem[] {
   if (backlog.length === 0) return generated
@@ -318,7 +316,7 @@ export function scheduleBacklog(
   let remaining = demand[0]?.minutes ?? 0
   for (const stage of stages) {
     for (let date = stage.startDate; date <= stage.endDate; date = addDays(date, 1)) {
-      let budget = brief ? Math.min(dailyMinutes, netAvailableMinutes(brief, date)) : dailyMinutes
+      let budget = netAvailableMinutes(brief, date)
       let sortOrder = 0
       while (budget > 0 && index < demand.length && demand[index].earliest <= date) {
         const item = demand[index]
@@ -351,6 +349,9 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
 }> {
   const today = dayStart(new Date())
   const exam = dayStart(input.examDate)
+  const brief = input.brief
+  // 每日容量以课表净空闲为准,没有已确认的空闲时段就无法排计划
+  if (!brief) throw new AiUnavailable('缺少已确认的空闲时段(课表/固定占用),无法排计划')
 
   let content: string
   try {
@@ -383,10 +384,10 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
 
   const items: GeneratedItem[] = []
   usable.forEach((stage, index) => {
-    items.push(...expandStage(stage, ranges[index], input.dailyMinutes, input.brief))
+    items.push(...expandStage(stage, ranges[index], brief))
   })
-  const scheduledItems = scheduleBacklog(ranges, items, input.backlog ?? [], input.dailyMinutes,
-    input.brief, input.brief?.examSubjects.map(subject => subject.name))
+  const scheduledItems = scheduleBacklog(ranges, items, input.backlog ?? [],
+    brief, brief.examSubjects.map(subject => subject.name))
 
   if (scheduledItems.length === 0) {
     throw new AiUnavailable('模型给出的模板无法展开出任何计划项')
@@ -402,11 +403,11 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
     const generatedDocument = await generatePlanDocument({
       title,
       profile: input,
-      brief: input.brief ?? null,
+      brief,
       stages: ranges,
       startDate: today,
     })
-    if (generatedDocument && input.brief && documentMatchesSubjects(generatedDocument, input.brief.examSubjects.map(subject => subject.name))) {
+    if (generatedDocument && documentMatchesSubjects(generatedDocument, brief.examSubjects.map(subject => subject.name))) {
       document = generatedDocument
     }
   } catch (error) {

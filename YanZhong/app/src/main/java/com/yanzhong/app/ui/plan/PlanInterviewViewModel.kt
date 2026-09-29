@@ -63,7 +63,9 @@ private data class InterviewSessionSnapshot(
     val options: List<String> = emptyList(),
     val done: Boolean = false,
     val brief: PlanBriefDto? = null,
-    val mode: InterviewMode = InterviewMode.BUILD
+    val mode: InterviewMode = InterviewMode.BUILD,
+    /** 已生成但还没确认的草稿：退出后重进直接回到草稿预览，不用再点一次「生成」 */
+    val plan: PlanDto? = null
 )
 
 private class InterviewSessionStore(context: Context) {
@@ -99,16 +101,18 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = InterviewUiState()
         viewModelScope.launch {
             accountGuid = runCatching { TokenStore.currentAccountGuid() }.getOrNull()
-            // 两种情况都算「从头来」:问卷刚改过(前提变了),或入口明确要求重新生成
-            val regenerate = profileJustSaved || forcedMode == InterviewMode.BUILD
+            // 只有「问卷刚改过」才算从头来:入口要求重新生成不再清档,否则聊到一半退出重进会白白丢掉已聊的内容
+            val regenerate = profileJustSaved
             if (regenerate) session.clear()
             val profile = runCatching { ApiClient.api().getProfile() }.getOrNull()?.profile
             if (profile?.isComplete != true) {
                 _ui.update { it.copy(phase = InterviewPhase.NEED_PROFILE) }
                 return@launch
             }
+            // 归属校验放宽:只有两边都拿得到账号且对不上时才拒绝,避免读不到 guid 就静默把上一场对话丢掉
             val resumed = if (regenerate) null else session.load()
-                ?.takeIf { it.messages.isNotEmpty() && it.accountGuid == accountGuid }
+                ?.takeIf { it.messages.isNotEmpty()
+                    && (it.accountGuid == null || accountGuid == null || it.accountGuid == accountGuid) }
             val activePlan = runCatching { ApiClient.api().getActivePlan().plan }.getOrNull()
             // 模式来源:入口显式指定 > 续上一次的模式 > 有生效计划就走行程小助手,否则从头制定。
             // 入口优先是这次的关键修正——「调整档案并重新生成」进来必须走制定,不能再被猜成行程小助手。
@@ -140,6 +144,18 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             if (saved != null) {
+                val draft = saved.plan?.takeIf { it.status == "draft" }
+                if (draft != null) {
+                    // 上次已经生成过草稿:直接恢复到草稿预览，不用再点一次「生成」
+                    _ui.value = InterviewUiState(phase = InterviewPhase.DRAFT, mode = mode,
+                        messages = saved.messages, options = saved.options, done = saved.done,
+                        brief = saved.brief, plan = draft)
+                    // 与 generate() 对齐:草稿预览顶部要显示与生效计划的今日对比
+                    runCatching { ApiClient.api().getActivePlan().plan }.onSuccess { active ->
+                        _ui.update { it.copy(activePlan = active, activeCompared = true) }
+                    }
+                    return@launch
+                }
                 _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
                     messages = saved.messages, options = saved.options, done = saved.done, brief = saved.brief)
                 // 存档停在"考生刚发完、AI 还没回"：补问一次，否则续上也没得可点
@@ -290,7 +306,7 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
         if (s.phase == InterviewPhase.SUCCESS) { session.clear(); return }
         if (s.messages.isEmpty()) return
         session.save(InterviewSessionSnapshot(accountGuid = accountGuid, messages = s.messages,
-            options = s.options, done = s.done, brief = s.brief, mode = s.mode))
+            options = s.options, done = s.done, brief = s.brief, mode = s.mode, plan = s.plan))
     }
 
     /** 把异常翻译成人话；不要把服务端原始 body / HTTP 400 直接甩给考生 */

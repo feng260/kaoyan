@@ -82,10 +82,10 @@ export function datesBetween(from: string, to: string): string[] {
   return days
 }
 
-/** 某天容量 = min(每日目标分钟, 当天净空闲);无 brief 时退化为 dailyMinutes。与 assertGeneratedPlanValid 同口径 */
-export function dailyCapacity(brief: PlanBrief | null, dailyMinutes: number, date: string): number {
-  if (!brief) return Math.max(0, dailyMinutes)
-  return Math.max(0, Math.min(dailyMinutes, netAvailableMinutes(brief, new Date(`${date}T00:00:00.000Z`))))
+/** 某天容量 = 当天课表净空闲(扣除固定占用);无 brief 时无可用容量。与 assertGeneratedPlanValid 同口径 */
+export function dailyCapacity(brief: PlanBrief | null, date: string): number {
+  if (!brief) return 0
+  return Math.max(0, netAvailableMinutes(brief, new Date(`${date}T00:00:00.000Z`)))
 }
 
 /**

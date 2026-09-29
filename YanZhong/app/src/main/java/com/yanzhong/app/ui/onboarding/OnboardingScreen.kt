@@ -204,22 +204,6 @@ internal fun StepTarget(state: OnboardingUiState, vm: OnboardingViewModel) {
 @Composable
 internal fun StepRhythm(state: OnboardingUiState, vm: OnboardingViewModel) {
     val colors = MaterialTheme.colorScheme
-    FieldLabel("平时一天能拿出多少时间", "按真实情况填。填多了计划会一直在欠账,反而容易放弃")
-    Spacer(Modifier.height(10.dp))
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        DAILY_MINUTE_CHOICES.forEach { minutes ->
-            FilterChip(
-                selected = state.dailyMinutes == minutes,
-                onClick = { vm.setDailyMinutes(minutes) },
-                label = { Text(minutesLabel(minutes)) }
-            )
-        }
-    }
-
-    Spacer(Modifier.height(20.dp))
     FieldLabel("哪些时段你基本固定学得进去", "可以多选。排课会优先落进这些时段")
     Spacer(Modifier.height(10.dp))
     FlowRow(
@@ -600,13 +584,3 @@ fun OnboardingFallbackScreen(vm: OnboardingViewModel, modifier: Modifier = Modif
     }
 }
 
-/** 时长档位的人话写法:180 → "3 小时",90 → "1 小时 30 分" */
-internal fun minutesLabel(minutes: Int): String {
-    val h = minutes / 60
-    val m = minutes % 60
-    return when {
-        h == 0 -> "$m 分钟"
-        m == 0 -> "$h 小时"
-        else -> "$h 小时 $m 分"
-    }
-}

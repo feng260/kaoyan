@@ -157,11 +157,13 @@ const examSubjectsSchema = z.preprocess(
 export const profileInputSchema = z.object({
   targetType: z.enum(SUPPORTED_TARGET_TYPES).default('考研'),
   examDate: examDateSchema,
+  // 每日容量以课表净空闲为准,问卷不再收「每天投入多少分钟」;字段保留以兼容旧数据,传了仍校验范围
   dailyMinutes: z
     .number()
     .int('每日时长应为整数分钟')
     .min(MIN_DAILY_MINUTES, `每日可用时长至少 ${MIN_DAILY_MINUTES} 分钟`)
-    .max(MAX_DAILY_MINUTES, `每日可用时长最多 ${MAX_DAILY_MINUTES} 分钟`),
+    .max(MAX_DAILY_MINUTES, `每日可用时长最多 ${MAX_DAILY_MINUTES} 分钟`)
+    .optional(),
   studyWindows: studyWindowsSchema,
   foundation: z.enum(FOUNDATION_LEVELS).default('一般'),
   weakSubjects: weakSubjectsSchema,

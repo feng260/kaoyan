@@ -46,13 +46,20 @@ function futureDate(days) {
   return d.toISOString().slice(0, 10)
 }
 
+// 排计划容量完全由课表净空闲决定:每天 19:00-22:00 共 180 分钟,无固定占用
+const DAILY_WINDOW_MINUTES = 180
+const availability = [1, 2, 3, 4, 5, 6, 7].map(weekday => ({ weekday, windows: [{ start: '19:00', end: '22:00' }] }))
+
 const profileBody = {
   targetType: '考研',
   examDate: futureDate(200),
-  dailyMinutes: 180,
   studyWindows: ['上午', '晚上'],
   foundation: '一般',
   weakSubjects: ['数学', '英语'],
+  availability,
+  fixedCommitments: [],
+  availabilityConfirmed: true,
+  commitmentsConfirmed: true,
 }
 
 async function main() {
@@ -101,7 +108,7 @@ async function main() {
   // 6. 写入档案
   const put = await call('PUT', '/profile', { token: access, body: profileBody })
   record('提交备考档案成功',
-    put.status === 200 && put.json?.profile?.dailyMinutes === 180,
+    put.status === 200 && put.json?.profile?.examDate === profileBody.examDate,
     `status=${put.status}`)
 
   // 6b. 非法考试日期应报 INVALID_EXAM_DATE
@@ -135,7 +142,7 @@ async function main() {
     const day = item?.planDate
     minutesByDay.set(day, (minutesByDay.get(day) ?? 0) + Number(item?.minutes ?? 0))
   }
-  const overBudget = [...minutesByDay.entries()].filter(([, sum]) => sum > profileBody.dailyMinutes)
+  const overBudget = [...minutesByDay.entries()].filter(([, sum]) => sum > DAILY_WINDOW_MINUTES)
   record('每日计划项不超预算', items.length > 0 && overBudget.length === 0,
     `items=${items.length} days=${minutesByDay.size} over=${overBudget.length}`)
 

@@ -74,7 +74,6 @@ function buildContext(input: AiDocumentInput): string {
     `目标类型:${input.profile.targetType}`,
     `今天:${iso(today)}`,
     `考试日期:${iso(exam)}(距今 ${diffDays(exam, today)} 天)`,
-    `每日可用学习时长:${input.profile.dailyMinutes} 分钟`,
     `固定学习时段:${input.profile.studyWindows.join('、')}`,
     `自评基础:${input.profile.foundation}`,
     `薄弱科目:${input.profile.weakSubjects.join('、')}`,

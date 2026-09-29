@@ -68,11 +68,17 @@ const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,正在�
    不要给出与问题无关、或还需要考生再解释一遍的选项。不提问(收尾)时 options 给空数组。
 4. 提问顺序建议:目标院校与专业方向 → 一战/二战/三战、是否跨考、全职还是在职 →
    各科当前水平与最薄弱的环节 → 已有哪些资料/课程 → 最近一次自测或模考分数 → 复习环境与干扰因素。
-   考生已经答过的不要重复问;档案里已有的信息(考试日期、每日时长、薄弱科目、正式科目、空闲时段、固定占用)也不要再问。
-   若上面「考生已填写问卷档案」里已经确认了正式科目/空闲时段/固定占用,你只需要补齐每一科的:
-   当前进度、已知考试范围(自命题范围不明就留空)、剩余任务分钟数、里程碑及其截止日期与目标分钟数。
-5. 需要逐步确认的事实:正式考试科目名称;每门的当前进度/已知范围/剩余任务分钟数/里程碑及其明确截止日期(YYYY-MM-DD)和目标分钟数;按星期与起止时间记录的真实空闲时段和固定占用(没有固定占用也须明确确认)。已经聊清楚的不要重复问,直接进入下一项。
-6. 缺少上述事实时不要声称信息足够;但要用自然对话的方式补齐,不要输出核对清单。自命题范围不明时标为空,不得补写章节。
+   不必逐项问完:问到目标院校与最薄弱环节这两个关键点,就可以按经验把其余项估出来收尾。
+   考生已经答过的不要重复问;档案里已有的信息(考试日期、薄弱科目、正式科目、空闲时段、固定占用)也不要再问。
+   每日可投入时长一律以已确认的空闲时段为准,不要再问考生每天能拿出多少时间。
+   若上面「考生已填写问卷档案」里已经确认了正式科目/空闲时段/固定占用,逐科细节不必逐条追问:
+   考生说了就照实写进 brief;没说的按考研常识合理估一版(进度、范围、剩余任务分钟数、里程碑及其截止日期与目标分钟数),
+   并把该科 estimated 标为 true,让考生在草稿里一眼看到哪些是估的、可以改。
+5. 必须问到的事实只有三件:正式考试科目名称;按星期与起止时间记录的真实空闲时段;固定占用(没有也要明确确认)。
+   逐科细节(进度/范围/剩余任务分钟数/里程碑及其明确截止日期 YYYY-MM-DD 和目标分钟数)是加分项:考生说得清就照实填、
+   estimated 标 false;说不清就别硬问,按经验估并把 estimated 标 true。已经聊清楚的不要重复问,直接进入下一项。
+6. 不要在回复里输出核对清单;也不要因为逐科细节没问全就拖着不收尾——估的项用 estimated 标记即可。
+   自命题范围不明时 scope 留空,不得补写章节。
 7. 时间一律以提示里给出的「今天」为基准:考生说「明天/后天/下周/下个月/还剩多久」时,先按今天换算出 YYYY-MM-DD 再确认。
    不要凭训练记忆里的日期作答,也不要用「下个月」「年底」这类模糊说法代替具体日期。
 
@@ -96,13 +102,14 @@ brief 形如:{
   "focus": ["数学中值定理与级数反复失分", "408 操作系统薄弱"],
   "materials": ["已有王道 408 四本", "计划用张宇 1000 题"],
   "notes": ["周末全天可支配", "易受手机干扰"],
-  "examSubjects": [{"name":"考生确认的正式科目","progress":"当前具体进度","scope":"已知考试范围,未知留空","remainingMinutes":120,"milestone":"待完成的具体里程碑","milestoneDate":"YYYY-MM-DD","milestoneMinutes":60}],
+  "examSubjects": [{"name":"考生确认的正式科目","progress":"当前具体进度或按经验估计","scope":"已知考试范围,未知留空","remainingMinutes":120,"milestone":"待完成的具体里程碑","milestoneDate":"YYYY-MM-DD","milestoneMinutes":60,"estimated":false}],
   "availability": [{"weekday":1,"windows":[{"start":"19:00","end":"21:00"}]}],
   "fixedCommitments": [{"weekday":1,"start":"19:00","end":"20:00","label":"固定工作"}],
   "availabilityConfirmed": true,
   "commitmentsConfirmed": true
 }
-brief 里的科目、进度、范围、时间和固定占用必须来自考生明确确认,未确认时标 false 或留空,严禁编造。`
+brief 里的科目名称、真实空闲时段、固定占用必须来自考生确认,严禁编造;
+逐科进度/范围/剩余量/里程碑:考生说了就照实写 estimated=false,没说就按考研常识合理估计并标 estimated=true,数字要贴考研实际。`
 
 function clip(value: unknown, max: number): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, max)
@@ -142,11 +149,10 @@ function iso(d: Date): string {
 
 /** 档案里已有的信息不能让 AI 再问一遍 —— 直接写进系统侧上下文 */
 function profileContext(profile: ProfileInput | null, brief: PlanBrief | null): string {
-  if (!profile) return '考生尚未填写问卷档案(考试日期、每日时长等未知,需要你在对话里问清楚)。'
+  if (!profile) return '考生尚未填写问卷档案(考试日期等未知,需要你在对话里问清楚)。'
   const lines = [
     '考生已填写问卷档案,以下信息不用再问:',
     `- 目标类型:${profile.targetType}`,
-    `- 每日可用学习时长:${profile.dailyMinutes} 分钟`,
     `- 固定学习时段:${profile.studyWindows.join('、')}`,
     `- 自评基础:${profile.foundation}`,
     `- 薄弱科目:${profile.weakSubjects.join('、')}`,
@@ -203,12 +209,12 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
     '',
     `这已经是第 ${turns} 轮考生回答。`,
     wantsWrapUp
-      ? '请把已确认的事实汇总进 brief;若还有必要事实没问到,用自然的问句继续补,done 保持 false(不要输出核对清单)。'
+      ? '请把已确认的事实汇总进 brief,没问到的逐科细节按经验估一版并把 estimated 标 true,done 直接给 true,不要再提问。'
       : turns < MIN_INTERVIEW_TURNS
         ? `请继续追问,至少聊满 ${MIN_INTERVIEW_TURNS} 轮再考虑收尾,并把已确认的事实持续写进 brief。`
         : hasKnownFacts
-          ? '科目、空闲时段和固定占用已在问卷里确认过,不要再问这些;只问题目上还缺的逐科细节(进度、范围、剩余任务量与里程碑),补齐后即可收尾。'
-          : '仅当正式科目、逐科进度、空闲时段和固定占用都聊清楚后才可收尾;差哪项就自然地接着问哪项。',
+          ? '科目、空闲时段和固定占用已在问卷里确认过,不要再问这些;最多再问 1 个最关键的逐科问题,其余按经验估进 brief 并标 estimated=true,然后即可收尾。'
+          : '问到目标院校与最薄弱的环节这两个关键点就够收尾了;其余信息按经验估进 brief 并标 estimated=true,不要为了凑齐逐科细节反复追问。',
   ].join('\n')
 
   let content: string
@@ -248,8 +254,7 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
   // 问卷/课表确认过的事实是底稿:模型每轮只补它认出来的部分,合并后不会丢上一轮确认过的内容
   const modelBrief = normalizeBrief(parsed?.brief)
   const brief = knownBrief ? mergeBrief(knownBrief, modelBrief) : modelBrief
-  const facts = assessPlanningFacts(brief, dayStart(new Date()), input.profile?.examDate ?? dayStart(new Date()),
-    input.profile?.dailyMinutes ?? Infinity)
+  const facts = assessPlanningFacts(brief, dayStart(new Date()), input.profile?.examDate ?? dayStart(new Date()))
   const modelSaysDone = parsed?.done === true || wantsWrapUp
   const done = modelSaysDone && facts.ready && (turns >= MIN_INTERVIEW_TURNS || forced)
   if (done) return { reply, options: [], done: true, brief }

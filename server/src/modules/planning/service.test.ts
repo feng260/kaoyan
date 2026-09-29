@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createPlanningService, overdueSuggestion, PlanningDb } from './service'
 import { dayStart, addDays, profileInputSchema } from './schemas'
-import { generateRulePlan } from './generator'
+import { generateRulePlan as generateRulePlanRaw } from './generator'
 import { normalizeBrief } from './document'
 import type { PlanBrief } from './document'
 import type { AiPlanningInput } from './aiGenerator'
@@ -33,6 +33,22 @@ const validProfile = (overrides: Row = {}) => ({
   weakSubjects: ['数学', '英语'],
   ...overrides,
 })
+
+/**
+ * 规则生成器现在按「课表净空闲」算容量,真实空闲在面谈 brief 里(顶层 availability 是问卷旧字段)。
+ * 这里桥接一份 AiPlanningInput:有 brief 就用 brief 的空闲,否则退回顶层(与生产链路一致),
+ * 免得每个用例都手写 PlanningInput。
+ */
+function generateRulePlan(input: AiPlanningInput) {
+  return generateRulePlanRaw({
+    availability: input.brief?.availability ?? input.availability,
+    fixedCommitments: input.brief?.fixedCommitments ?? input.fixedCommitments,
+    examDate: input.examDate,
+    startDate: input.startDate,
+    weakSubjects: input.weakSubjects,
+    studyWindows: input.studyWindows,
+  })
+}
 
 function createFakeDb(options: { failOnItemInsertOnce?: boolean; beforeItemUpdate?: () => Promise<void> } = {}) {
   const state = {
@@ -234,7 +250,7 @@ function confirmedBrief(subjects: string[]): PlanBrief {
   const brief = qualityBrief()
   brief.examSubjects = subjects.map(name => ({
     name, progress: '已完成基础复习', scope: '基础复习', remainingMinutes: 30,
-    milestone: '完成基础复习', milestoneDate: dayIso(59), milestoneMinutes: 15,
+    milestone: '完成基础复习', milestoneDate: dayIso(59), milestoneMinutes: 15, estimated: false,
   }))
   return brief
 }
@@ -569,9 +585,15 @@ test('generatePlanDraft covers every weak subject and never exceeds the daily bu
 test('generatePlanDraft keeps every weak subject on the same day when the budget is small', async () => {
   const fake = createFakeDb()
   const service = serviceWith(fake)
-  await service.upsertProfile(USER, validProfile({ dailyMinutes: 90, weakSubjects: ['数学', '英语', '政治'] }) as any)
+  await service.upsertProfile(USER, validProfile({ weakSubjects: ['数学', '英语', '政治'] }) as any)
 
-  const plan = await confirmGeneratedPlan(service, fake, USER, confirmedBrief(['数学', '英语', '政治']))
+  // 容量来自课表净空闲:每天 19:00-20:30 只有 90 分钟
+  const brief = confirmedBrief(['数学', '英语', '政治'])
+  brief.availability = [1, 2, 3, 4, 5, 6, 7].map(weekday => ({
+    weekday, windows: [{ start: '19:00', end: '20:30' }],
+  }))
+
+  const plan = await confirmGeneratedPlan(service, fake, USER, brief)
 
   const firstDay = plan.items.filter((i: any) => i.planDate === dayIso(0))
   // 90 分钟 < 120:不插复盘,三门课当天全排上
@@ -650,30 +672,6 @@ test('generatePlanDraft reports INVALID_EXAM_DATE when the stored exam date has 
   await assert.rejects(
     () => service.generatePlanDraft(USER),
     (error: any) => error.code === 'INVALID_EXAM_DATE',
-  )
-  assert.equal(fake.state.plans.length, 0)
-})
-
-test('generatePlanDraft reports INVALID_DAILY_MINUTES when the stored profile is too short', async () => {
-  const fake = createFakeDb()
-  const service = serviceWith(fake)
-  fake.state.profiles.push({
-    id: 1,
-    userGuid: USER,
-    targetType: '考研',
-    examDate: addDays(dayStart(new Date()), 120),
-    dailyMinutes: 5,
-    studyWindowsJson: JSON.stringify(['上午']),
-    foundation: '一般',
-    weakSubjectsJson: JSON.stringify(['数学']),
-    onboardingDoneAt: Date.now(),
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  })
-
-  await assert.rejects(
-    () => service.generatePlanDraft(USER),
-    (error: any) => error.code === 'INVALID_DAILY_MINUTES',
   )
   assert.equal(fake.state.plans.length, 0)
 })
@@ -1025,16 +1023,20 @@ test('insufficient capacity blocks drafts with a subject and milestone deficit',
   assert.equal(fake.state.plans.length, 0)
 })
 
-test('draft generation blocks work that fits free windows but exceeds the confirmed daily budget', async () => {
+test('draft generation ignores the legacy daily minutes and follows the timetable', async () => {
   const fake = createFakeDb()
   const service = serviceWithConfirmedSubject(fake)
+  // 旧问卷字段 dailyMinutes 只留 60,但课表每天有 180 分钟空闲:容量必须以课表为准
   await service.upsertProfile(USER, validProfile({ dailyMinutes: 60 }) as any)
-  const brief = qualityBrief()
-  brief.examSubjects[0].remainingMinutes = 10000
-  fake.state.profiles[0].briefJson = JSON.stringify(brief)
-  await assert.rejects(() => service.generatePlanDraft(USER), (error: any) => error.code === 'PLAN_CAPACITY_INSUFFICIENT'
-    && error.message.includes('英语一'))
-  assert.equal(fake.state.plans.length, 0)
+  fake.state.profiles[0].briefJson = JSON.stringify(qualityBrief())
+
+  const plan = await service.generatePlanDraft(USER)
+
+  const byDay = new Map<string, number>()
+  for (const item of plan.items) byDay.set(item.planDate, (byDay.get(item.planDate) ?? 0) + item.minutes)
+  assert.equal(plan.items.length > 0, true)
+  // 每天排满课表的 180 分钟,不再被 dailyMinutes=60 卡住
+  assert.equal([...byDay.values()].every(minutes => minutes === 180), true)
 })
 
 test('draft generation rejects a schedule that does not cover confirmed subject work', async () => {
@@ -1071,7 +1073,19 @@ test('draft generation rejects a milestone whose scheduled work lands after its 
 
 test('draft generation rejects tasks exceeding the net availability on their date', async () => {
   const fake = createFakeDb()
-  const service = serviceWithConfirmedSubject(fake)
+  // 模拟一个不守容量约束的模型:按每天 180 分钟排,但档案里的课表只留 60 分钟
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async input => {
+      const plan = generateRulePlanRaw({
+        ...input,
+        availability: [1, 2, 3, 4, 5, 6, 7].map(weekday => ({ weekday, windows: [{ start: '09:00', end: '12:00' }] })),
+        fixedCommitments: [],
+        weakSubjects: ['英语一'],
+      })
+      return { title: '英语计划', plan }
+    },
+  })
   await service.upsertProfile(USER, validProfile() as any)
   const brief = qualityBrief()
   brief.fixedCommitments = [1, 2, 3, 4, 5, 6, 7].map(weekday => ({ weekday, start: '20:00', end: '22:00', label: '工作' }))

@@ -197,3 +197,44 @@ test('confirmed structured facts with adequate capacity pass the quality gate', 
   assert.equal(result.ready, true)
   assert.equal(result.availableMinutes, 120)
 })
+
+test('AI-estimated subject details do not block wrap-up but must stay marked', () => {
+  const brief = normalizeBrief({
+    // 逐科细节全缺、只有科目名是确认过的:模型按经验估,estimated=true
+    examSubjects: [{ name: '英语一', estimated: true }],
+    availability: [{ weekday: 1, windows: [{ start: '19:00', end: '21:00' }] }],
+    fixedCommitments: [], availabilityConfirmed: true, commitmentsConfirmed: true,
+  })
+  assert.equal(brief.examSubjects[0].estimated, true)
+  const result = assessPlanningFacts(brief, new Date('2026-09-28T00:00:00.000Z'), new Date('2026-10-05T00:00:00.000Z'))
+  assert.equal(result.ready, true)
+  assert.deepEqual(result.missing, [])
+  assert.deepEqual(result.deficits, [])
+
+  // 同一份内容去掉估计标记后必须重新被门槛拦住
+  const confirmed = normalizeBrief({
+    examSubjects: [{ name: '英语一' }],
+    availability: [{ weekday: 1, windows: [{ start: '19:00', end: '21:00' }] }],
+    fixedCommitments: [], availabilityConfirmed: true, commitmentsConfirmed: true,
+  })
+  const blocked = assessPlanningFacts(confirmed, new Date('2026-09-28T00:00:00.000Z'), new Date('2026-10-05T00:00:00.000Z'))
+  assert.equal(blocked.ready, false)
+  assert.ok(blocked.missing.includes('英语一的进度与里程碑'))
+})
+
+test('an estimated milestone is kept but drops out of the capacity gate', () => {
+  const brief = normalizeBrief({
+    examSubjects: [{
+      name: '英语一', progress: '按经验估计已过一轮', scope: '阅读',
+      remainingMinutes: 600, milestone: '完成真题一轮',
+      milestoneDate: '2026-09-28', milestoneMinutes: 600, estimated: true,
+    }],
+    availability: [{ weekday: 1, windows: [{ start: '19:00', end: '20:00' }] }],
+    fixedCommitments: [], availabilityConfirmed: true, commitmentsConfirmed: true,
+  })
+  const result = assessPlanningFacts(brief, new Date('2026-09-28T00:00:00.000Z'), new Date('2026-10-06T00:00:00.000Z'))
+  // 区间内只有 09-28、10-05 两个周一各 60 分钟:容量远不够,但估计项不参与缺口计算,只要求考生之后在草稿里更正
+  assert.equal(result.availableMinutes, 120)
+  assert.equal(result.ready, true)
+  assert.deepEqual(result.deficits, [])
+})

@@ -91,7 +91,7 @@ export interface PlanBrief {
   focus: string[]
   materials: string[]
   notes: string[]
-  examSubjects: Array<{ name: string; progress: string; scope: string; remainingMinutes: number; milestone: string; milestoneDate: string; milestoneMinutes: number }>
+  examSubjects: Array<{ name: string; progress: string; scope: string; remainingMinutes: number; milestone: string; milestoneDate: string; milestoneMinutes: number; estimated: boolean }>
   availability: Array<{ weekday: number; windows: Array<{ start: string; end: string }> }>
   fixedCommitments: Array<{ weekday: number; start: string; end: string; label: string }>
   availabilityConfirmed: boolean
@@ -276,6 +276,7 @@ export function normalizeBrief(raw: any): PlanBrief {
         && new Date(`${item.milestoneDate}T00:00:00.000Z`).toISOString().slice(0, 10) === item.milestoneDate
         ? item.milestoneDate : '',
       milestoneMinutes: Number.isSafeInteger(item?.milestoneMinutes) && item.milestoneMinutes > 0 ? item.milestoneMinutes : 0,
+      estimated: item?.estimated === true,
     })).filter((item: PlanBrief['examSubjects'][number]) => item.name),
     availability: (Array.isArray(raw.availability) ? raw.availability : []).filter((item: any) => weekday(item?.weekday))
       .map((item: any) => ({ weekday: item.weekday, windows: (Array.isArray(item.windows) ? item.windows : []).map(window).filter((value: any) => value !== null) })),
@@ -308,6 +309,9 @@ export function mergeBrief(base: PlanBrief, patch: PlanBrief): PlanBrief {
     return [...map.values()]
   }
   // 逐科事实不做整条覆盖:模型某一轮可能只填了一半,空字段要保留上一轮的确认结果
+  const hasOwnValues = (subject: PlanBrief['examSubjects'][number]) => Boolean(
+    subject.progress || subject.scope || subject.milestone
+    || subject.remainingMinutes > 0 || subject.milestoneDate || subject.milestoneMinutes > 0)
   const subjects = new Map<string, PlanBrief['examSubjects'][number]>()
   for (const subject of base.examSubjects) subjects.set(subject.name, subject)
   for (const subject of patch.examSubjects) {
@@ -320,6 +324,8 @@ export function mergeBrief(base: PlanBrief, patch: PlanBrief): PlanBrief {
       milestone: mergeText(prev?.milestone ?? '', subject.milestone),
       milestoneDate: mergeText(prev?.milestoneDate ?? '', subject.milestoneDate),
       milestoneMinutes: subject.milestoneMinutes > 0 ? subject.milestoneMinutes : prev?.milestoneMinutes ?? 0,
+      // 本轮没给具体值就沿用上一轮的估计标记;给了具体值就以本轮模型明确写的为准
+      estimated: subject.estimated || (prev?.estimated === true && !hasOwnValues(subject)),
     })
   }
   return {
@@ -375,11 +381,13 @@ export function netAvailableMinutes(brief: Pick<PlanBrief, 'availability' | 'fix
   return minutes
 }
 
-export function assessPlanningFacts(brief: PlanBrief, startDate: Date, examDate: Date, dailyMinutes = Infinity, allowCompletedMilestones = false) {
+export function assessPlanningFacts(brief: PlanBrief, startDate: Date, examDate: Date, allowCompletedMilestones = false) {
   const missing: string[] = []
   if (brief.examSubjects.length === 0) missing.push('正式考试科目')
   if (new Set(brief.examSubjects.map(s => s.name)).size !== brief.examSubjects.length) missing.push('考试科目去重')
   for (const subject of brief.examSubjects) {
+    // AI 按经验估的逐科细节不拦收尾:名称仍是确认过的,具体数值允许标注后逐项改
+    if (subject.estimated) continue
     if (!subject.progress || !subject.milestone || !Number.isSafeInteger(subject.remainingMinutes) || subject.remainingMinutes < 0) missing.push(`${subject.name}的进度与里程碑`)
     if (!subject.scope && !subject.name.includes('自命题')) missing.push(`${subject.name}的考试范围`)
     if (!subject.milestoneDate || !Number.isSafeInteger(subject.milestoneMinutes) || subject.milestoneMinutes < 0
@@ -392,9 +400,9 @@ export function assessPlanningFacts(brief: PlanBrief, startDate: Date, examDate:
   if (!brief.commitmentsConfirmed) missing.push('固定占用确认')
   let availableMinutes = 0
   for (let date = startDate.getTime(); date < examDate.getTime(); date += 86_400_000) {
-    availableMinutes += Math.min(dailyMinutes, netAvailableMinutes(brief, new Date(date)))
+    availableMinutes += netAvailableMinutes(brief, new Date(date))
   }
-  const deadlines = brief.examSubjects.filter(subject => subject.milestoneDate && subject.milestoneMinutes > 0)
+  const deadlines = brief.examSubjects.filter(subject => !subject.estimated && subject.milestoneDate && subject.milestoneMinutes > 0)
     .sort((a, b) => a.milestoneDate.localeCompare(b.milestoneDate))
   let committed = 0
   const deficits = deadlines.flatMap(subject => {
@@ -402,13 +410,14 @@ export function assessPlanningFacts(brief: PlanBrief, startDate: Date, examDate:
     let capacity = 0
     const deadline = new Date(`${subject.milestoneDate}T00:00:00.000Z`).getTime()
     for (let date = startDate.getTime(); date <= deadline && date < examDate.getTime(); date += 86_400_000) {
-      capacity += Math.min(dailyMinutes, netAvailableMinutes(brief, new Date(date)))
+      capacity += netAvailableMinutes(brief, new Date(date))
     }
     const missingMinutes = committed - capacity
     return missingMinutes > 0 ? [{ subject: subject.name, milestone: subject.milestone, missingMinutes }] : []
   })
   let remaining = availableMinutes
   for (const subject of brief.examSubjects) {
+    if (subject.estimated) continue
     const allocated = Math.min(remaining, subject.remainingMinutes)
     remaining -= allocated
     const missingMinutes = subject.remainingMinutes - allocated

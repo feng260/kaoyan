@@ -204,8 +204,8 @@ async function progressSnapshot(db: PlanningDb, userGuid: string): Promise<strin
   return JSON.stringify({ planId: active.id, completed: items.filter(item => item.status === 'done').map(item => item.id) })
 }
 
-function requirePlanningFacts(brief: PlanBrief | null, start: Date, exam: Date, dailyMinutes: number, allowCompletedMilestones = false): void {
-  const result = assessPlanningFacts(brief ?? normalizeBrief(null), start, exam, dailyMinutes, allowCompletedMilestones)
+function requirePlanningFacts(brief: PlanBrief | null, start: Date, exam: Date, allowCompletedMilestones = false): void {
+  const result = assessPlanningFacts(brief ?? normalizeBrief(null), start, exam, allowCompletedMilestones)
   if (result.missing.length) throw new ApiError(400, 'PLANNING_FACTS_INCOMPLETE', `生成计划前请确认:${result.missing.join('、')}`)
   if (result.deficits.length) {
     const details = result.deficits.map(d => `${d.subject}「${d.milestone}」缺口 ${d.missingMinutes} 分钟`).join('；')
@@ -226,16 +226,6 @@ function serializeProfile(row: any): PublicProfile {
     onboardingDoneAt: ms(row.onboardingDoneAt),
     updatedAt: ms(row.updatedAt),
   }
-}
-
-/** 计划第一天的时间预算:用于判断档案里的每日时长是否已经和计划对不上 */
-function firstDayBudget(items: any[]): number {
-  if (items.length === 0) return 0
-  const first = items
-    .map(i => dateOnly(i.planDate))
-    .filter(Boolean)
-    .sort()[0]
-  return items.filter(i => dateOnly(i.planDate) === first).reduce((sum, i) => sum + Number(i.minutes ?? 0), 0)
 }
 
 function serializePlan(row: any, stages: any[], items: any[], stale: boolean): PublicPlan {
@@ -486,7 +476,7 @@ function profileInputFromRow(row: any): ProfileInput | null {
 function applyProfileFacts(brief: PlanBrief, input: ProfileInput): PlanBrief {
   const examSubjects = input.examSubjects.length
     ? input.examSubjects.map(name => brief.examSubjects.find(subject => subject.name === name) ?? {
-      name, progress: '', scope: '', remainingMinutes: 0, milestone: '', milestoneDate: '', milestoneMinutes: 0,
+      name, progress: '', scope: '', remainingMinutes: 0, milestone: '', milestoneDate: '', milestoneMinutes: 0, estimated: false,
     })
     : brief.examSubjects
   return {
@@ -509,7 +499,7 @@ function briefFromRow(row: any): PlanBrief {
  * 落库前的最后一道闸:宁可在这里抛错让事务不开始,也不要写进一份自相矛盾的计划。
  * 检查项对应生成器的核心承诺 —— 阶段连续、计划项落在所属阶段区间内、每天不超预算。
  */
-function assertGeneratedPlanValid(generated: GeneratedPlan, dailyMinutes: number, examDate: Date, brief?: PlanBrief | null): void {
+function assertGeneratedPlanValid(generated: GeneratedPlan, examDate: Date, brief: PlanBrief | null): void {
   const fail = (reason: string): never => {
     throw new ApiError(502, 'PLAN_GENERATION_FAILED', `计划生成结果不完整:${reason}`)
   }
@@ -540,7 +530,7 @@ function assertGeneratedPlanValid(generated: GeneratedPlan, dailyMinutes: number
     perDay.set(key, (perDay.get(key) ?? 0) + item.minutes)
   }
   for (const [day, minutes] of perDay) {
-    const available = brief ? Math.min(dailyMinutes, netAvailableMinutes(brief, new Date(`${day}T00:00:00.000Z`))) : dailyMinutes
+    const available = brief ? netAvailableMinutes(brief, new Date(`${day}T00:00:00.000Z`)) : 0
     if (minutes > available) fail(`${day} 安排 ${minutes} 分钟,超出当天净空闲 ${available} 分钟`)
   }
 }
@@ -583,13 +573,15 @@ export function createPlanningService(
       db.planItem.findMany({ where: { planId: planRow.id }, orderBy: [{ planDate: 'asc' }, { sortOrder: 'asc' }] }),
       db.userProfile.findUnique({ where: { userGuid } }),
     ])
-    // 只有当前的计划才谈得上「档案变了需要重新生成」;历史计划一律不标 stale
+    // 只有当前的计划才谈得上「档案变了需要重新生成」;历史计划一律不标 stale。
+    // 计划生成时会记下当时的档案快照,当前档案与快照不一致(考期、课表空闲、简报等发生变化)即视为 stale。
     const stale = planRow.status !== 'active'
       ? false
       : !profileRow
         ? true
-        : diffDays(toDay(planRow.examDate), toDay(profileRow.examDate)) !== 0
-          || firstDayBudget(items) !== Number(profileRow.dailyMinutes ?? 0)
+        : !planRow.profileSnapshotJson
+          ? diffDays(toDay(planRow.examDate), toDay(profileRow.examDate)) !== 0
+          : profileSnapshot(profileRow) !== planRow.profileSnapshotJson
     return serializePlan(planRow, stages, items, stale)
   }
 
@@ -609,16 +601,17 @@ export function createPlanningService(
       const data: Record<string, unknown> = {
         targetType: parsed.targetType,
         examDate: parsed.examDate,
-        dailyMinutes: parsed.dailyMinutes,
         studyWindowsJson: JSON.stringify(parsed.studyWindows),
         foundation: parsed.foundation,
         weakSubjectsJson: JSON.stringify(parsed.weakSubjects),
       }
+      // 每日时长已不再作为排计划依据,问卷也不再收;传了才写,避免把历史值清零
+      if (parsed.dailyMinutes !== undefined) data.dailyMinutes = parsed.dailyMinutes
       // 空简报既不写也不覆盖:老客户端不带新字段时不会凭空多出一份空简报
       if (!briefIsEmpty(mergedBrief)) data.briefJson = JSON.stringify(mergedBrief)
       const row = await db.userProfile.upsert({
         where: { userGuid },
-        create: { userGuid, ...data, onboardingDoneAt: new Date(), createdAt: new Date(), updatedAt: new Date() },
+        create: { userGuid, ...data, dailyMinutes: parsed.dailyMinutes ?? 0, onboardingDoneAt: new Date(), createdAt: new Date(), updatedAt: new Date() },
         // 改档案不影响现有计划:旧计划要留到新计划真的生成出来为止
         update: { ...data, onboardingDoneAt: new Date(), updatedAt: new Date() },
       })
@@ -681,7 +674,7 @@ export function createPlanningService(
           throw new ApiError(409, 'PLAN_PROFILE_CHANGED', '备考档案已变化,请重新生成草稿')
         }
         const raw = jsonObject(profile.briefJson)
-        requirePlanningFacts(raw ? normalizeBrief(raw) : null, dayStart(new Date()), toDay(profile.examDate), Number(profile.dailyMinutes))
+        requirePlanningFacts(raw ? normalizeBrief(raw) : null, dayStart(new Date()), toDay(profile.examDate))
         if (!draft.progressSnapshotJson || await progressSnapshot(tx, userGuid) !== draft.progressSnapshotJson) {
           throw new ApiError(409, 'PLAN_PROGRESS_CHANGED', '计划进度已变化,请重新生成草稿')
         }
@@ -720,9 +713,9 @@ export function createPlanningService(
       }
 
       const brief = normalizeBrief(result.brief)
-      const facts = assessPlanningFacts(brief, dayStart(new Date()), profile?.examDate ?? dayStart(new Date()), profile?.dailyMinutes ?? 0)
+      const facts = assessPlanningFacts(brief, dayStart(new Date()), profile?.examDate ?? dayStart(new Date()))
       if (!profile) {
-        return { reply: '得先在「备考档案」里填好考期和每天能投入的时间,我才好把计划排准。填完回来我们接着聊。', options: [], done: false, brief: null }
+        return { reply: '得先在「备考档案」里填好考期,并确认课表空闲时间,我才好把计划排准。填完回来我们接着聊。', options: [], done: false, brief: null }
       }
       if (!facts.ready) {
         // 保留模型自己的追问 —— 覆盖成模板句会让面谈每轮都在复读,这是最伤体验的地方。
@@ -827,7 +820,6 @@ export function createPlanningService(
 
       const profileRow = await db.userProfile.findUnique({ where: { userGuid } })
       const brief = profileRow ? briefFromRow(profileRow) : normalizeBrief(null)
-      const dailyMinutes = Number(profileRow?.dailyMinutes ?? 0)
       const stages = await db.planStage.findMany({ where: { planId: planRow.id }, orderBy: { sortOrder: 'asc' } })
       const today = dayStart(new Date()).toISOString().slice(0, 10)
       const { from, to } = stageWindow(stages, today)
@@ -869,9 +861,9 @@ export function createPlanningService(
         return day >= from && day <= to
       })
 
-      // 每日容量 = min(每日目标, 当天净空闲),再逐项扣掉窗口内已完成的分钟
+      // 每日容量 = 当天课表净空闲,再逐项扣掉窗口内已完成的分钟
       const capacity = new Map<string, number>()
-      for (const day of datesBetween(from, to)) capacity.set(day, dailyCapacity(brief, dailyMinutes, day))
+      for (const day of datesBetween(from, to)) capacity.set(day, dailyCapacity(brief, day))
       for (const row of inWindow) {
         if (row.status === 'done') {
           const day = dateOnly(row.planDate)
@@ -1051,11 +1043,11 @@ export function createPlanningService(
       const examDate = toDay(profileRow.examDate)
 
       // 库里读出来的是宽松字符串,这里再过一遍 schema 收成 ProfileInput 的字面量联合类型。
-      // 校验失败说明存进库的档案本身就不可用(日期过期、时长越界等),交给路由层转成业务错误码。
+      // 校验失败说明存进库的档案本身就不可用(日期过期等),交给路由层转成业务错误码。
+      // dailyMinutes 已不再参与排计划,不再回传校验,避免历史/默认值把校验带崩。
       const parsedProfile = profileInputSchema.safeParse({
         targetType: profile.targetType,
         examDate,
-        dailyMinutes: profile.dailyMinutes,
         studyWindows: profile.studyWindows,
         foundation: profile.foundation ?? '一般',
         weakSubjects: profile.weakSubjects,
@@ -1064,7 +1056,6 @@ export function createPlanningService(
         const issue = parsedProfile.error.issues[0]
         const field = String(issue?.path[0] ?? '')
         if (field === 'examDate') throw new ApiError(400, 'INVALID_EXAM_DATE', issue.message)
-        if (field === 'dailyMinutes') throw new ApiError(400, 'INVALID_DAILY_MINUTES', issue.message)
         throw new ApiError(400, 'INVALID_PARAMS', issue?.message ?? '备考档案不完整,请重新填写')
       }
 
@@ -1099,25 +1090,29 @@ export function createPlanningService(
       } : brief
       const backlog = activeItems.filter(item => item.status !== 'done')
         .map(item => ({ subject: String(item.subject), title: String(item.title), minutes: Number(item.minutes) }))
-      requirePlanningFacts(brief, dayStart(new Date()), examDate, profile.dailyMinutes)
-      if (active && brief) requirePlanningFacts(remainingBrief, dayStart(new Date()), examDate, profile.dailyMinutes, true)
+      requirePlanningFacts(brief, dayStart(new Date()), examDate)
+      if (active && brief) requirePlanningFacts(remainingBrief, dayStart(new Date()), examDate, true)
 
       let generated: GeneratedPlan
       let title: string
       let document: PlanDocument | null = null
       try {
         const result = await ai.generate({ ...parsedProfile.data, startDate: dayStart(new Date()), brief: remainingBrief, backlog })
-        assertGeneratedPlanValid(result.plan, profile.dailyMinutes, examDate, brief)
+        assertGeneratedPlanValid(result.plan, examDate, brief)
         if (brief) {
           const allowed = new Set(brief.examSubjects.map(subject => subject.name))
           const invalid = result.plan.items.find(item => !allowed.has(item.subject))
           if (invalid) throw new ApiError(502, 'PLAN_GENERATION_FAILED', `计划包含未确认的考试科目:${invalid.subject}`)
           for (const subject of brief.examSubjects) {
+            // AI 估计的科目允许范围留空(草稿里已标注可改),不按「编造」拦截
+            if (subject.estimated) continue
             if (!subject.scope && result.plan.items.some(item => item.subject === subject.name && item.title !== subject.milestone)) {
               throw new ApiError(502, 'PLAN_GENERATION_FAILED', `${subject.name}考试范围不明,不得编造具体任务`)
             }
           }
           const deficits = remainingBrief!.examSubjects.flatMap(subject => {
+            // AI 估计的剩余量不参与覆盖度校验,由考生在草稿里逐项更正
+            if (subject.estimated) return []
             const tasks = result.plan.items.filter(item => item.subject === subject.name)
             const scheduled = tasks.reduce((sum, item) => sum + item.minutes, 0)
             const beforeDeadline = tasks.filter(item => dateOnly(item.planDate) <= subject.milestoneDate)

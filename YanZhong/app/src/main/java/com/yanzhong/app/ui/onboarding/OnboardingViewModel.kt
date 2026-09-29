@@ -39,7 +39,6 @@ data class OnboardingUiState(
     val step: Int = 0,
     val targetType: String = TARGET_TYPES.first(),
     val examDate: String = "",
-    val dailyMinutes: Int = 180,
     val studyWindows: Set<String> = setOf("上午", "下午", "晚上"),
     val foundation: String = "一般",
     val weakSubjects: Set<String> = emptySet(),
@@ -75,9 +74,6 @@ data class OnboardingUiState(
 }
 
 private val DEFAULT_WEAK_SUBJECTS = listOf("政治", "英语", "数学", "专业课")
-
-/** 每日可投入时长的快捷档位(分钟):给手感,不给用户算数 */
-val DAILY_MINUTE_CHOICES = listOf(60, 120, 180, 240, 300, 360, 480)
 
 /** 问卷总步数:目标与考期 → 节奏与短板 → 正式科目与真实空闲 */
 const val ONBOARDING_STEPS = 3
@@ -189,7 +185,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                             profileSaved = p != null,
                             targetType = p?.targetType?.takeIf { it in TARGET_TYPES } ?: s.targetType,
                             examDate = p?.examDate?.takeIf { it.isNotBlank() } ?: s.examDate,
-                            dailyMinutes = p?.dailyMinutes?.takeIf { it > 0 } ?: s.dailyMinutes,
                             studyWindows = p?.studyWindows?.toSet()?.takeIf { it.isNotEmpty() } ?: s.studyWindows,
                             foundation = p?.foundation?.takeIf { it in FOUNDATION_LEVELS } ?: s.foundation,
                             weakSubjects = p?.weakSubjects?.toSet() ?: s.weakSubjects,
@@ -240,7 +235,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
      * 只把档案存到服务端,不排计划。
      *
      * 首次问卷和 AI 面谈前的"补档案"走这条路:一份几百天的计划得先和 AI 聊清楚才排得出来,
-     * 问卷这一屏只负责把可结构化的那部分(考什么、考期、每天多久)落库,真正的排计划交给面谈。
+     * 问卷这一屏只负责把可结构化的那部分(考什么、考期、真实空闲)落库,真正的排计划交给面谈。
      */
     fun saveProfileOnly() {
         val s = _ui.value
@@ -256,7 +251,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             val body = ProfileReq(
                 targetType = s.targetType,
                 examDate = s.examDate.trim(),
-                dailyMinutes = s.dailyMinutes,
                 studyWindows = STUDY_WINDOWS.filter { it in s.studyWindows },
                 foundation = s.foundation,
                 weakSubjects = s.weakSubjects.toList(),
@@ -329,10 +323,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         // 只留数字和连字符,顺手把用户从系统日历粘过来的 "2026/12/19" 归一化
         val cleaned = value.replace('/', '-').filter { it.isDigit() || it == '-' }.take(10)
         _ui.update { it.copy(examDate = cleaned, message = "", messageIsError = false) }
-    }
-
-    fun setDailyMinutes(minutes: Int) {
-        _ui.update { it.copy(dailyMinutes = minutes, message = "", messageIsError = false) }
     }
 
     fun toggleStudyWindow(window: String) {
@@ -523,7 +513,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     private fun validate(s: OnboardingUiState, step: Int): String? {
         if (s.targetType !in TARGET_TYPES) return "先选一个备考目标吧"
         if (step >= 1) {
-            if (s.dailyMinutes !in 15..720) return "每天能拿出的时间请填 15 到 720 分钟之间"
             if (s.studyWindows.isEmpty()) return "至少选一个你真能固定下来的时段,哪怕只有「晚上」"
             if (s.weakSubjects.isEmpty()) return "挑一门最想补的科目,后面对它的排课会多一些"
             if (s.weakSubjects.size > 6) return "薄弱科目最多 6 门,先抓最要紧的几门"

@@ -12,11 +12,26 @@ function dayStart(offsetDays: number): Date {
   return d
 }
 
+/** 默认课表:每天 09:00–12:00 共 180 分钟空闲,即规则版每天可排 180 分钟 */
+const DEFAULT_WINDOWS = [{ start: '09:00', end: '12:00' }]
+
+function weekAvailability(windows = DEFAULT_WINDOWS) {
+  return [1, 2, 3, 4, 5, 6, 7].map(weekday => ({ weekday, windows }))
+}
+
+/** 构造只给指定星期空闲窗口的简报,窗口长度即当天净空闲 */
+function briefWith(weekdays: number[], start: string, end: string) {
+  return { availability: weekdays.map(weekday => ({ weekday, windows: [{ start, end }] })), fixedCommitments: [] }
+}
+
+const FULL_BRIEF = briefWith([1, 2, 3, 4, 5, 6, 7], '09:00', '12:00')
+
 function input(over: Partial<PlanningInput> = {}): PlanningInput {
   return {
     startDate: dayStart(0),
     examDate: dayStart(30),
-    dailyMinutes: 180,
+    availability: weekAvailability(),
+    fixedCommitments: [],
     weakSubjects: ['数学', '英语'],
     studyWindows: ['上午', '晚上'],
     ...over,
@@ -62,17 +77,10 @@ test('rejects an empty weak subject list', () => {
   )
 })
 
-test('rejects daily minutes below the supported minimum', () => {
-  assert.throws(
-    () => generateRulePlan(input({ dailyMinutes: 10 })),
-    (e: unknown) => e instanceof PlanGenerationError && e.code === 'INVALID_DAILY_MINUTES',
-  )
-})
-
 test('produces three contiguous stages on the 14-day minimum range', () => {
   const startDate = dayStart(0)
   const examDate = dayStart(14)
-  const plan = generateRulePlan(input({ startDate, examDate, dailyMinutes: 90 }))
+  const plan = generateRulePlan(input({ startDate, examDate }))
 
   assert.equal(plan.stages.length, 3)
   assert.deepEqual(plan.stages.map(s => s.sortOrder), [0, 1, 2])
@@ -113,7 +121,7 @@ test('splits a long range roughly into 45/35/20 percent', () => {
 })
 
 test('never schedules more than three items per day and always fills the daily budget', () => {
-  const plan = generateRulePlan(input({ examDate: dayStart(60), dailyMinutes: 180 }))
+  const plan = generateRulePlan(input({ examDate: dayStart(60) }))
 
   const perDay = new Map<string, { count: number; minutes: number }>()
   for (const item of plan.items) {
@@ -126,16 +134,16 @@ test('never schedules more than three items per day and always fills the daily b
   assert.ok(perDay.size >= 14, '应覆盖全部备考日')
   for (const [day, v] of perDay) {
     assert.ok(v.count <= 3, `${day} 安排了 ${v.count} 项,超过每日上限`)
-    assert.equal(v.minutes, 180, `${day} 分配的时长不等于每日可用时长`)
+    assert.equal(v.minutes, 180, `${day} 分配的时长不等于当天课表净空闲`)
   }
 })
 
 test('adds a review item only when at least two hours are available', () => {
-  const plenty = generateRulePlan(input({ dailyMinutes: 240 }))
-  const tight = generateRulePlan(input({ dailyMinutes: 60 }))
+  const plenty = generateRulePlan(input({ availability: weekAvailability([{ start: '09:00', end: '13:00' }]) }))
+  const tight = generateRulePlan(input({ availability: weekAvailability([{ start: '09:00', end: '10:00' }]) }))
 
-  assert.ok(plenty.items.some(i => i.subject === '复盘'), '每日 240 分钟应包含复盘项')
-  assert.ok(!tight.items.some(i => i.subject === '复盘'), '每日 60 分钟不应包含复盘项')
+  assert.ok(plenty.items.some(i => i.subject === '复盘'), '每天净空闲 240 分钟应包含复盘项')
+  assert.ok(!tight.items.some(i => i.subject === '复盘'), '每天净空闲 60 分钟不应包含复盘项')
 })
 
 test('covers every weak subject across the plan', () => {
@@ -146,7 +154,7 @@ test('covers every weak subject across the plan', () => {
 })
 
 test('handles a single weak subject without exceeding the daily item cap', () => {
-  const plan = generateRulePlan(input({ dailyMinutes: 240, weakSubjects: ['数学'] }))
+  const plan = generateRulePlan(input({ availability: weekAvailability([{ start: '09:00', end: '13:00' }]), weakSubjects: ['数学'] }))
   assert.ok(plan.items.every(i => i.subject === '数学' || i.subject === '复盘'))
   const perDay = new Set(plan.items.map(i => i.planDate.toISOString()))
   for (const day of perDay) {
@@ -157,7 +165,7 @@ test('handles a single weak subject without exceeding the daily item cap', () =>
 
 test('keeps every item inside its stage and before the exam date', () => {
   const examDate = dayStart(120)
-  const plan = generateRulePlan(input({ examDate, dailyMinutes: 300 }))
+  const plan = generateRulePlan(input({ examDate, availability: weekAvailability([{ start: '09:00', end: '14:00' }]) }))
   assertItemsInsideStages(plan, examDate)
 })
 
@@ -176,7 +184,7 @@ test('AI stage uses net availability and keeps queued work for a later free day'
   const items = expandStage({ name: '基础', weeklySlots: [
     { weekdays: [1, 2, 3], subject: '英语一', title: '2015 阅读', minutes: 90 },
     { weekdays: [1, 2, 3], subject: '英语一', title: '2016 阅读', minutes: 90 },
-  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-09-30T00:00:00.000Z'), sortOrder: 0 }, 120, brief as any)
+  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-09-30T00:00:00.000Z'), sortOrder: 0 }, brief)
   assert.deepEqual(items.map(item => [item.planDate.getUTCDay(), item.title, item.minutes]),
     [[2, '2015 阅读', 60], [3, '2016 阅读', 90]])
 })
@@ -186,7 +194,7 @@ test('AI stage waits for the next queued task weekday rather than skipping it', 
   const items = expandStage({ name: '基础', weeklySlots: [
     { weekdays: [1], subject: '英语一', title: '先读 2015', minutes: 60 },
     { weekdays: [2], subject: '英语一', title: '再读 2016', minutes: 60 },
-  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-06T00:00:00.000Z'), sortOrder: 0 }, 120)
+  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-06T00:00:00.000Z'), sortOrder: 0 }, FULL_BRIEF)
   assert.deepEqual(items.map(item => [item.planDate.toISOString().slice(0, 10), item.title]), [
     ['2026-09-28', '先读 2015'], ['2026-09-29', '再读 2016'],
   ])
@@ -197,7 +205,7 @@ test('AI stage advances a subject task queue across consecutive weeks', () => {
   const items = expandStage({ name: '基础', weeklySlots: [
     { weekdays: [1], subject: '英语一', title: '2015 阅读', minutes: 60 },
     { weekdays: [1], subject: '英语一', title: '2016 阅读', minutes: 60 },
-  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-12T00:00:00.000Z'), sortOrder: 0 }, 120)
+  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-12T00:00:00.000Z'), sortOrder: 0 }, FULL_BRIEF)
   assert.deepEqual(items.filter(item => item.planDate.getUTCDay() === 1).map(item => item.title),
     ['2015 阅读', '2016 阅读'])
 })
@@ -208,7 +216,7 @@ test('AI stage alternates odd and even week queues without replaying finished wo
     { weekdays: [1], subject: '英语一', title: '偶周阅读', minutes: 60, weekParity: 'even' },
     { weekdays: [1], subject: '英语一', title: '奇周阅读', minutes: 60, weekParity: 'odd' },
     { weekdays: [1], subject: '英语一', title: '下一奇周阅读', minutes: 60, weekParity: 'odd' },
-  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-26T00:00:00.000Z'), sortOrder: 0 }, 60)
+  ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-26T00:00:00.000Z'), sortOrder: 0 }, FULL_BRIEF)
   assert.deepEqual(items.map(item => [item.planDate.toISOString().slice(0, 10), item.title]), [
     ['2026-09-28', '奇周阅读'], ['2026-10-05', '偶周阅读'], ['2026-10-12', '下一奇周阅读'],
   ])
@@ -218,16 +226,16 @@ test('pending backlog is not duplicated when AI repeats the same subject and tit
   const monday = new Date('2026-09-28T00:00:00.000Z')
   const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
   const generated = [{ stageOrder: 0, subject: '英语一', title: '旧阅读', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 }]
-  const items = scheduleBacklog(stages, generated, [{ subject: '英语一', title: '旧阅读', minutes: 60 }], 60,
-    undefined, ['英语一'])
+  const items = scheduleBacklog(stages, generated, [{ subject: '英语一', title: '旧阅读', minutes: 60 }], FULL_BRIEF,
+    ['英语一'])
   assert.deepEqual(items.map(item => [item.title, item.minutes]), [['旧阅读', 60]])
 })
 
 test('pending backlog for a confirmed subject is not dropped when the model omits that subject', () => {
   const monday = new Date('2026-09-28T00:00:00.000Z')
   const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
-  const items = scheduleBacklog(stages, [], [{ subject: '自命题 912', title: '旧大纲', minutes: 60 }], 60,
-    undefined, ['自命题 912'])
+  const items = scheduleBacklog(stages, [], [{ subject: '自命题 912', title: '旧大纲', minutes: 60 }], FULL_BRIEF,
+    ['自命题 912'])
   assert.deepEqual(items.map(item => [item.subject, item.title, item.minutes]), [['自命题 912', '旧大纲', 60]])
 })
 
@@ -236,7 +244,7 @@ test('pending backlog and new work cannot silently exceed available capacity', (
   const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
   const generated = [{ stageOrder: 0, subject: '英语一', title: '新阅读', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 }]
   assert.throws(() => scheduleBacklog(stages, generated,
-    [{ subject: '英语一', title: '旧阅读', minutes: 60 }], 60, undefined, ['英语一']), AiUnavailable)
+    [{ subject: '英语一', title: '旧阅读', minutes: 60 }], briefWith([1], '09:00', '10:00'), ['英语一']), AiUnavailable)
 })
 
 test('pending backlog does not pull an even-week task into an odd week', () => {
@@ -244,7 +252,7 @@ test('pending backlog does not pull an even-week task into an odd week', () => {
   const nextMonday = new Date('2026-10-05T00:00:00.000Z')
   const stages = [{ name: '基础', startDate: monday, endDate: nextMonday, sortOrder: 0 }]
   const generated = [{ stageOrder: 0, subject: '英语一', title: '偶周阅读', planDate: nextMonday, minutes: 60, priority: 0, sortOrder: 0 }]
-  const items = scheduleBacklog(stages, generated, [{ subject: '英语一', title: '旧阅读', minutes: 60 }], 60, undefined, ['英语一'])
+  const items = scheduleBacklog(stages, generated, [{ subject: '英语一', title: '旧阅读', minutes: 60 }], FULL_BRIEF, ['英语一'])
   assert.deepEqual(items.map(item => [item.planDate.toISOString().slice(0, 10), item.title]), [
     ['2026-09-28', '旧阅读'], ['2026-10-05', '偶周阅读'],
   ])
@@ -258,7 +266,7 @@ test('pending backlog is scheduled before new work and carries across a stage bo
   ]
   const backlog = [{ subject: '英语一', title: '旧阅读', minutes: 90 }]
   const newItems = [{ stageOrder: 0, subject: '英语一', title: '新阅读', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 }]
-  const items = scheduleBacklog(stages, newItems, backlog, 60)
+  const items = scheduleBacklog(stages, newItems, backlog, briefWith([1, 2, 3], '09:00', '10:00'))
   assert.deepEqual(items.map(item => [item.stageOrder, item.title, item.minutes]), [
     [0, '旧阅读', 60], [1, '旧阅读', 30], [1, '新阅读', 30], [1, '新阅读', 30],
   ])

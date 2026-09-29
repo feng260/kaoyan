@@ -1,4 +1,5 @@
 import { addDays, dayStart, diffDays } from './schemas'
+import { netAvailableMinutes, type PlanBrief } from './document'
 
 /**
  * 规则版计划生成器(Phase 0,纯函数,不依赖数据库与时间随机源)。
@@ -14,7 +15,8 @@ const MAX_ITEMS_PER_DAY = 3
 const REVIEW_THRESHOLD_MINUTES = 120
 /** 复盘项时长 */
 const REVIEW_MINUTES = 30
-const MIN_DAILY_MINUTES = 15
+/** 单日净空闲低于该值就不排计划项:排不出有意义的内容 */
+const MIN_SCHEDULABLE_MINUTES = 15
 const REVIEW_SUBJECT = '复盘'
 const REVIEW_TITLE = '错题回顾与复盘'
 
@@ -26,10 +28,9 @@ const STAGE_DEFS: StageDef[] = [
   { name: '冲刺阶段', ratio: 0.2, priority: 2, titleSuffix: '冲刺训练' },
 ]
 
-export type PlanningInput = {
+export type PlanningInput = Pick<PlanBrief, 'availability' | 'fixedCommitments'> & {
   examDate: Date
   startDate: Date
-  dailyMinutes: number
   weakSubjects: string[]
   studyWindows: string[]
 }
@@ -60,7 +61,6 @@ export type PlanErrorCode =
   | 'INVALID_EXAM_DATE'
   | 'RANGE_TOO_SHORT'
   | 'INVALID_WEAK_SUBJECTS'
-  | 'INVALID_DAILY_MINUTES'
 
 export class PlanGenerationError extends Error {
   constructor(public code: PlanErrorCode, message: string) {
@@ -125,11 +125,6 @@ export function generateRulePlan(input: PlanningInput): GeneratedPlan {
     throw new PlanGenerationError('INVALID_WEAK_SUBJECTS', '至少需要一门薄弱科目才能排计划')
   }
 
-  const dailyMinutes = Math.floor(input.dailyMinutes)
-  if (!Number.isFinite(dailyMinutes) || dailyMinutes < MIN_DAILY_MINUTES) {
-    throw new PlanGenerationError('INVALID_DAILY_MINUTES', `每日可用时长至少 ${MIN_DAILY_MINUTES} 分钟`)
-  }
-
   // ---- 阶段:连续、无空隙、最后一天截止到考前一天 ----
   const stageDays = splitStageDays(totalDays)
   const stages: GeneratedStage[] = []
@@ -141,24 +136,25 @@ export function generateRulePlan(input: PlanningInput): GeneratedPlan {
     cursor = addDays(endDate, 1)
   }
 
-  // ---- 每日计划项 ----
-  const reviewMinutes = dailyMinutes >= REVIEW_THRESHOLD_MINUTES ? REVIEW_MINUTES : 0
-  const studyBudget = dailyMinutes - reviewMinutes
-  const maxStudyItems = reviewMinutes > 0 ? MAX_ITEMS_PER_DAY - 1 : MAX_ITEMS_PER_DAY
-  const studyCount = Math.min(weakSubjects.length, maxStudyItems)
-  const minutesPerItem = allocateMinutes(studyBudget, studyCount)
-
+  // ---- 每日计划项:容量按当天「课表净空闲」算,与具体星期几无关的日期跳过 ----
   const items: GeneratedItem[] = []
+  // 轮转游标:保证多门薄弱科目在所有阶段之间也均匀覆盖
+  let rotation = 0
   for (const [stageOrder, stage] of stages.entries()) {
     const def = STAGE_DEFS[stageOrder]
     const stageLength = diffDays(stage.endDate, stage.startDate) + 1
     for (let offset = 0; offset < stageLength; offset++) {
       const planDate = addDays(stage.startDate, offset)
-      // 全局天序号:保证多门薄弱科目在所有阶段之间也是轮转覆盖的
-      const dayIndex = diffDays(planDate, start)
+      const capacity = netAvailableMinutes(input, planDate)
+      if (capacity < MIN_SCHEDULABLE_MINUTES) continue
+      const reviewMinutes = capacity >= REVIEW_THRESHOLD_MINUTES ? REVIEW_MINUTES : 0
+      const studyBudget = capacity - reviewMinutes
+      const maxStudyItems = reviewMinutes > 0 ? MAX_ITEMS_PER_DAY - 1 : MAX_ITEMS_PER_DAY
+      const studyCount = Math.min(weakSubjects.length, maxStudyItems)
+      const minutesPerItem = allocateMinutes(studyBudget, studyCount)
       let sortOrder = 0
       for (let slot = 0; slot < studyCount; slot++) {
-        const subject = weakSubjects[(dayIndex * studyCount + slot) % weakSubjects.length]
+        const subject = weakSubjects[rotation++ % weakSubjects.length]
         items.push({
           stageOrder,
           subject,

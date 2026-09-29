@@ -135,7 +135,8 @@ val FOUNDATION_LEVELS = listOf("零基础", "一般", "较好")
 data class ProfileDto(
     val targetType: String,
     val examDate: String,
-    val dailyMinutes: Int,
+    /** 服务端旧字段,已不再参与排计划(容量由课表空闲决定),保留仅为兼容响应 */
+    val dailyMinutes: Int = 0,
     val studyWindows: List<String> = emptyList(),
     val foundation: String? = null,
     val weakSubjects: List<String> = emptyList(),
@@ -159,7 +160,6 @@ data class ProfileDto(
 data class ProfileReq(
     val targetType: String,
     val examDate: String,
-    val dailyMinutes: Int,
     val studyWindows: List<String>,
     val foundation: String,
     val weakSubjects: List<String>,
@@ -359,7 +359,9 @@ data class PlanBriefDto(
 data class BriefSubjectDto(
     val name: String, val progress: String = "", val scope: String = "",
     val remainingMinutes: Int = 0, val milestone: String = "",
-    val milestoneDate: String = "", val milestoneMinutes: Int = 0
+    val milestoneDate: String = "", val milestoneMinutes: Int = 0,
+    /** true 表示这些逐科细节是 AI 按经验估的，考生可在对话里逐项更正 */
+    val estimated: Boolean = false
 )
 
 @Serializable
