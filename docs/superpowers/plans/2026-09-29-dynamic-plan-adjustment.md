@@ -76,7 +76,7 @@
 
 **设计说明（对 spec 的实现细化）:** 按 spec §3.3 全字段建表；`status` 含 `expired` 为预留值（本阶段无端点写入它，draft 被下一次 adjust 原地覆盖）。项目无 migrations 目录，只做 `prisma validate`，建表交给部署时的 `prisma db push`（`npm run verify` 内的 `prisma generate` 会更新客户端类型）。
 
-- [ ] **Step 1: 在 `PlanItem` 模型之后新增模型**
+- [x] **Step 1: 在 `PlanItem` 模型之后新增模型**
 
 在 `schema.prisma` 的 `model PlanItem { ... }` 结束后插入：
 
@@ -109,7 +109,7 @@ model PlanAdjustment {
 }
 ```
 
-- [ ] **Step 2: 在 `Plan` 模型的关系区补反向关系**
+- [x] **Step 2: 在 `Plan` 模型的关系区补反向关系**
 
 在 `model Plan` 内 `items PlanItem[]` 之后加一行：
 
@@ -117,7 +117,7 @@ model PlanAdjustment {
   adjustments PlanAdjustment[]
 ```
 
-- [ ] **Step 3: 校验 schema**
+- [x] **Step 3: 校验 schema**
 
 在 `F:\kaoyan-app-prd\server` 下执行：
 
@@ -135,7 +135,7 @@ npx prisma validate
 
 **设计说明（对 spec 的实现细化）:** 容量口径与 `assertGeneratedPlanValid` 完全一致（`min(dailyMinutes, netAvailableMinutes)`），`document.ts` 的 `clockMinutes` 未导出，故一律经 `netAvailableMinutes` 取净空闲。L1「只顺延不提前」：每项最早落回原日期（`floor`）。指纹只覆盖非 done 项——打卡随时发生，不能让正常打卡废掉一张调整单。
 
-- [ ] **Step 1: 写入 adjust.ts 全文**
+- [x] **Step 1: 写入 adjust.ts 全文**
 
 ```ts
 import { createHash } from 'node:crypto'
@@ -316,7 +316,7 @@ export function windowFingerprint(items: WindowSnapshotItem[]): string {
 }
 ```
 
-- [ ] **Step 2: 写入 adjust.test.ts 全文**
+- [x] **Step 2: 写入 adjust.test.ts 全文**
 
 ```ts
 import test from 'node:test'
@@ -430,7 +430,7 @@ test('windowFingerprint:done 项不参与,内容变了指纹必变,顺序无关'
 })
 ```
 
-- [ ] **Step 3: 运行单测**
+- [x] **Step 3: 运行单测**
 
 在 `F:\kaoyan-app-prd\server` 下执行：
 
@@ -448,7 +448,7 @@ node --import tsx --test src/modules/planning/adjust.test.ts
 
 **设计说明（对 spec 的实现细化）:** 模型输出的日期越界一律丢弃（窗口 `[today, windowTo]`）；数据撑不起 kind 就降级为 `chat`；`needClarify` 优先于降级（先问清再动手）。清洗是纯函数可独立单测，模型调用失败统一翻成 `AiUnavailable`（service 再转 502 `PLAN_INTERVIEW_FAILED`，spec §6「沿用既有 LlmError 分类」）。
 
-- [ ] **Step 1: 写入 adjustIntent.ts 全文**
+- [x] **Step 1: 写入 adjustIntent.ts 全文**
 
 ```ts
 import { chatComplete, extractJson, LlmError } from '../../shared/llm/client'
@@ -648,7 +648,7 @@ function defaultSummary(
 }
 ```
 
-- [ ] **Step 2: 写入 adjustIntent.test.ts 全文**
+- [x] **Step 2: 写入 adjustIntent.test.ts 全文**
 
 ```ts
 import test from 'node:test'
@@ -727,7 +727,7 @@ test('summary 缺省时按 kind 生成兜底文案', () => {
 })
 ```
 
-- [ ] **Step 3: 运行单测**
+- [x] **Step 3: 运行单测**
 
 ```powershell
 node --import tsx --test src/modules/planning/adjustIntent.test.ts
@@ -747,7 +747,7 @@ node --import tsx --test src/modules/planning/adjustIntent.test.ts
 - 新代码**不得给 planItem 写 `updatedAt`**（PlanItem 表无此列；`plan.updateMany` 可以写）。
 - 已有 draft 时 `updateMany` 原地覆盖（spec §6：不产生第二个 draft），覆盖后重取行返回。
 
-- [ ] **Step 1: 扩展 imports**
+- [x] **Step 1: 扩展 imports**
 
 在 `service.ts` 头部（L9 document 导入之后）加：
 
@@ -761,7 +761,7 @@ import { runAdjustIntent, type AdjustIntent, type AdjustIntentInput } from './ad
 
 （`affectedDays`、`L1_MAX_AFFECTED_DAYS`、`AdjustmentTier` 与 adjustL2 的导入在 Task 13 再加。）
 
-- [ ] **Step 2: 扩展 PlanningDb 接口**
+- [x] **Step 2: 扩展 PlanningDb 接口**
 
 `planItem` 分支补 `deleteMany`，其后新增 `planAdjustment` 分支：
 
@@ -781,7 +781,7 @@ import { runAdjustIntent, type AdjustIntent, type AdjustIntentInput } from './ad
   }
 ```
 
-- [ ] **Step 3: 扩展 PlanningAi 并更新默认实现**
+- [x] **Step 3: 扩展 PlanningAi 并更新默认实现**
 
 `PlanningAi` 接口（`parseTimetable` 之后）加可选项：
 
@@ -791,7 +791,7 @@ import { runAdjustIntent, type AdjustIntent, type AdjustIntentInput } from './ad
 
 `createPlanningService` 的默认参数对象补 `adjustIntent: runAdjustIntent`。
 
-- [ ] **Step 4: 新增 PublicAdjustment 类型**
+- [x] **Step 4: 新增 PublicAdjustment 类型**
 
 在 `PublicPlan` 接口定义之后加：
 
@@ -812,7 +812,7 @@ export interface PublicAdjustment {
 }
 ```
 
-- [ ] **Step 5: 新增窗口/快照助手函数**
+- [x] **Step 5: 新增窗口/快照助手函数**
 
 在 `profileInputFromRow`（L276 附近）之前插入：
 
@@ -935,7 +935,7 @@ function serializeAdjustment(row: any): PublicAdjustment {
 }
 ```
 
-- [ ] **Step 6: 在返回对象里追加四个方法**
+- [x] **Step 6: 在返回对象里追加四个方法**
 
 插在 `setItemStatus` 方法结束（L617 附近的 `},`）之后、返回对象右花括号之前：
 
@@ -1128,8 +1128,9 @@ function serializeAdjustment(row: any): PublicAdjustment {
         }
         const appliedAt = ms(latestApplied.appliedAt)
         const items = await tx.planItem.findMany({ where: { planId: planRow.id } })
+        // >= 而非 >:Windows 时钟粒度可能让「确认」与「打卡」同毫秒,严格比较才能保证不把新打卡搞乱
         const touched = items.some(item => item.status === 'done' && appliedAt != null
-          && ms(item.completedAt) != null && ms(item.completedAt)! > appliedAt)
+          && ms(item.completedAt) != null && ms(item.completedAt)! >= appliedAt)
         if (touched) {
           throw new ApiError(409, 'ADJUSTMENT_STALE', '调整生效后你已经打了新的卡,撤销会把记录搞乱;再用一句话描述新的调整即可')
         }
@@ -1149,7 +1150,7 @@ function serializeAdjustment(row: any): PublicAdjustment {
     },
 ```
 
-- [ ] **Step 7: 类型检查**
+- [x] **Step 7: 类型检查**
 
 ```powershell
 npx tsc --noEmit
@@ -1164,7 +1165,7 @@ npx tsc --noEmit
 
 **设计说明（对 spec 的实现细化）:** 全部注册在 `GET /plans/active`（L131）之前、`POST /plans/timetable` 之后——`/plans/checkup`、`/plans/adjust` 是单段静态路径，**必须早于 `GET /plans/:id`（L151）注册**，否则会被参数路由吞掉。confirm/undo 成功后广播 `planChanged`（与 confirmPlan 同款），多端自动更新。
 
-- [ ] **Step 1: 新增请求体 schema 与导入**
+- [x] **Step 1: 新增请求体 schema 与导入**
 
 `timetableSchema` 之后加：
 
@@ -1175,7 +1176,7 @@ const adjustSchema = z.object({
 })
 ```
 
-- [ ] **Step 2: 注册路由**
+- [x] **Step 2: 注册路由**
 
 在 `POST /plans/timetable` 路由之后、`GET /plans/active` 之前插入：
 
@@ -1224,7 +1225,7 @@ router.post('/plans/adjustments/:id/undo', requireAuth, apiLimit(), async ctx =>
 
 **设计说明（对 spec 的实现细化）:** `seedActivePlan` 使用**固定 id**（plan=900 / stage=901 / item=1000+i），避免与 `++seq.*` 冲突；stage `startDate/endDate` 可控以造窄窗口；profile 带 `briefJson`（每天 19:00-22:00 = 180 分钟、无固定占用）保证容量可预期。`serviceWithAdjust` 注入固定的 `adjustIntent` 返回值。
 
-- [ ] **Step 1: 扩展 fake db（state/seq/snapshot/restore + planAdjustment 访问器）**
+- [x] **Step 1: 扩展 fake db（state/seq/snapshot/restore + planAdjustment 访问器）**
 
 `createFakeDb` 内四处修改：
 
@@ -1270,7 +1271,7 @@ router.post('/plans/adjustments/:id/undo', requireAuth, apiLimit(), async ctx =>
     },
 ```
 
-- [ ] **Step 2: 新增播种与注入助手**
+- [x] **Step 2: 新增播种与注入助手**
 
 加在 `confirmGeneratedPlan` 函数之后：
 
@@ -1336,7 +1337,7 @@ function serviceWithAdjust(fake: ReturnType<typeof createFakeDb>, intent: Row) {
 }
 ```
 
-- [ ] **Step 3: 追加集成用例 A-G**
+- [x] **Step 3: 追加集成用例 A-G**
 
 文件末尾追加：
 
@@ -1458,7 +1459,7 @@ test('adjust G:调整生效后打了新卡 → 拒绝撤销', async () => {
 })
 ```
 
-- [ ] **Step 4: 跑全量验证（阶段一完成标志）**
+- [x] **Step 4: 跑全量验证（阶段一完成标志）**
 
 在 `F:\kaoyan-app-prd\server` 下执行：
 
@@ -1482,7 +1483,7 @@ npm run verify
 
 **设计说明（对 spec 的实现细化）:** confirm/undo 服务端返回 `{plan, serverTime}`，与 `confirmPlan` 同形，直接复用既有 `PlanResp`。DTO 全部 `@Serializable` + 默认值，保持 `ignoreUnknownKeys` 兼容。
 
-- [ ] **Step 1: 在 `TimetableResp`（L413 附近）之后插入 DTO**
+- [x] **Step 1: 在 `TimetableResp`（L413 附近）之后插入 DTO**
 
 ```kotlin
 // ---------- 行程调整(D2) ----------
@@ -1545,7 +1546,7 @@ data class CheckupResp(
 )
 ```
 
-- [ ] **Step 2: 在 `patchPlanItem` 之后、`exportAccount` 之前加接口方法**
+- [x] **Step 2: 在 `patchPlanItem` 之后、`exportAccount` 之前加接口方法**
 
 ```kotlin
     /** 行程调整:一句话描述突发情况,服务端产出待确认调整单(adjustment 为 null 时 reply 是追问/闲聊) */
@@ -1565,7 +1566,7 @@ data class CheckupResp(
 
 （`GET /plans/checkup` 的 `planCheckup()` 在 Task 17 一并加，避免本任务出现未使用 DTO。）
 
-- [ ] **Step 3: `ServerError.friendly()` 补两个错误码**
+- [x] **Step 3: `ServerError.friendly()` 补两个错误码**
 
 在 `PlanInterviewViewModel.kt` 的 `friendly()` 里 `"PLAN_NOT_FOUND", "PLAN_ITEM_NOT_FOUND"` 行之前插入：
 
@@ -1583,7 +1584,7 @@ data class CheckupResp(
 
 **设计说明（对 spec 的实现细化）:** 「重说一次」只收起卡片——服务端的 draft 会被下一次 adjust 原地覆盖，不需要 reject 端点。L2 时额外提供「查看整页预览」入口（Task 14 接线）。图标按项目规约走 `AppIcons`（Lucide 单一入口）。
 
-- [ ] **Step 1: 写入 AdjustmentCard.kt 全文**
+- [x] **Step 1: 写入 AdjustmentCard.kt 全文**
 
 ```kotlin
 package com.yanzhong.app.ui.plan
@@ -1688,7 +1689,7 @@ internal fun AdjustmentCard(
 - 冷启动用 `GET /plans/adjustments/latest` 恢复 draft 卡片；applied 的撤销入口在计划页（Task 11），不在对话里。
 - 会话存档新增 `mode` 字段，续聊时模式不漂移。
 
-- [ ] **Step 1: 新增模式枚举与 UiState 字段**
+- [x] **Step 1: 新增模式枚举与 UiState 字段**
 
 `InterviewPhase` 枚举之后加：
 
@@ -1704,7 +1705,7 @@ enum class InterviewMode { BUILD, ADJUST }
     val adjustment: AdjustmentDto? = null,
 ```
 
-- [ ] **Step 2: 会话存档加 mode**
+- [x] **Step 2: 会话存档加 mode**
 
 `InterviewSessionSnapshot` 加字段：
 
@@ -1714,7 +1715,7 @@ enum class InterviewMode { BUILD, ADJUST }
 
 `persist()` 的 `session.save(...)` 补 `mode = s.mode`。
 
-- [ ] **Step 3: 重写 beginSession 的模式分流**
+- [x] **Step 3: 重写 beginSession 的模式分流**
 
 `beginSession` 内从 `val saved = ...` 起到方法结束，替换为：
 
@@ -1759,7 +1760,7 @@ enum class InterviewMode { BUILD, ADJUST }
             advance()
 ```
 
-- [ ] **Step 4: send 按模式分流 + 新增 adjust/confirmAdjustment/dismissAdjustmentCard**
+- [x] **Step 4: send 按模式分流 + 新增 adjust/confirmAdjustment/dismissAdjustmentCard**
 
 `send` 的 `viewModelScope.launch { advance() }` 替换为：
 
@@ -1810,7 +1811,7 @@ enum class InterviewMode { BUILD, ADJUST }
     fun dismissAdjustmentCard() { _ui.update { it.copy(adjustment = null) } }
 ```
 
-- [ ] **Step 5: retry 兼容 ADJUST 模式**
+- [x] **Step 5: retry 兼容 ADJUST 模式**
 
 `retry()` 里 `_ui.value.phase == InterviewPhase.CHATTING -> viewModelScope.launch { advance() }` 替换为：
 
@@ -1825,7 +1826,7 @@ enum class InterviewMode { BUILD, ADJUST }
             }
 ```
 
-- [ ] **Step 6: 补 import**
+- [x] **Step 6: 补 import**
 
 ```kotlin
 import com.yanzhong.app.data.remote.AdjustmentDto
@@ -1841,7 +1842,7 @@ import com.yanzhong.app.data.remote.AdjustReq
 
 **设计说明（对 spec 的实现细化）:** ADJUST 隐藏三枚事实 chip（spec §3.9）；卡片挂在聊天列表与输入框之间；L2 额外给「查看整页预览」，用本地合成的预览计划（Task 14 的 `buildAdjustmentPreview`）复用 `renderDraftHtml` + `DraftWebView` 渲染整页浮层。预览计划需要在 `beginSession` 时存进 `state.activePlan`（Task 9 已做）。
 
-- [ ] **Step 1: 标题与副标题按模式切换**
+- [x] **Step 1: 标题与副标题按模式切换**
 
 标题行（L106）：
 
@@ -1857,7 +1858,7 @@ import com.yanzhong.app.data.remote.AdjustReq
     if (state.mode == InterviewMode.ADJUST) return "说说发生了什么,我帮你重排近期计划"
 ```
 
-- [ ] **Step 2: ADJUST 隐藏三枚事实 chip**
+- [x] **Step 2: ADJUST 隐藏三枚事实 chip**
 
 L122 的 `if (state.phase == InterviewPhase.CHATTING)` 改为：
 
@@ -1865,7 +1866,7 @@ L122 的 `if (state.phase == InterviewPhase.CHATTING)` 改为：
         if (state.phase == InterviewPhase.CHATTING && state.mode == InterviewMode.BUILD) {
 ```
 
-- [ ] **Step 3: CHATTING 分支插入 AdjustmentCard 与 L2 预览浮层**
+- [x] **Step 3: CHATTING 分支插入 AdjustmentCard 与 L2 预览浮层**
 
 屏幕顶部状态区加局部状态（`fullscreen` 声明附近）：
 
@@ -1917,7 +1918,7 @@ L122 的 `if (state.phase == InterviewPhase.CHATTING)` 改为：
                 }
 ```
 
-- [ ] **Step 4: 新增 AdjustmentPreviewColumn composable**
+- [x] **Step 4: 新增 AdjustmentPreviewColumn composable**
 
 文件末尾（`ErrorRow` 之前）加：
 
@@ -1977,7 +1978,7 @@ private fun AdjustmentPreviewColumn(
 
 **设计说明（对 spec 的实现细化）:** 入口只在「最近一张调整单为 applied」时显示；撤销走既有 `requestLock` 互斥与 `applyPlanProjection` 投影链路；完成后重拉 latest 刷新入口可见性。图标复用已在 PlanScreen 使用的 `AppIcons.RotateCcw`。
 
-- [ ] **Step 1: PlanViewModel 加状态与方法**
+- [x] **Step 1: PlanViewModel 加状态与方法**
 
 字段区（`_updatingItemId` 之后）加：
 
@@ -2031,7 +2032,7 @@ import 区补：
 import com.yanzhong.app.data.remote.AdjustmentDto
 ```
 
-- [ ] **Step 2: PlanScreen 传参与入口**
+- [x] **Step 2: PlanScreen 传参与入口**
 
 `PlanScreen` 里加状态收集：
 
@@ -2076,7 +2077,7 @@ import 区补：
 import com.yanzhong.app.data.remote.AdjustmentDto
 ```
 
-- [ ] **Step 3: 编译验证（阶段二完成标志）**
+- [x] **Step 3: 编译验证（阶段二完成标志）**
 
 在 `F:\kaoyan-app-prd\YanZhong` 下执行：
 
@@ -2100,7 +2101,7 @@ import com.yanzhong.app.data.remote.AdjustmentDto
 
 **设计说明（对 spec 的实现细化）:** spec §3.6 说「复用 expandStage/scheduleBacklog」，但那是整份计划从零展开的函数，不带「复用既有项 id」能力；L2 需要保留非 done 项的连续性，故自建 `expandL2`：按 `subject` 池复用 pending 项 id（同科同题优先，其次同科），未被消费的项即被删除——语义等价于 spec 要求的「服务端权威展开」，且支持逐项 id 级 diff 与撤销。模型输出 `dayOffset` 相对序号，**不输出绝对日期**。
 
-- [ ] **Step 1: 写入 adjustL2.ts 全文**
+- [x] **Step 1: 写入 adjustL2.ts 全文**
 
 ```ts
 import { chatComplete, extractJson, LlmError } from '../../shared/llm/client'
@@ -2291,7 +2292,7 @@ export function validateL2(target: WindowSnapshotItem[], ledger: L2Ledger): { ok
 
 （`expandL2` 不做容量判断——分钟是否合规统一归 `validateL2`。）
 
-- [ ] **Step 2: 写入 adjustL2.test.ts 全文**
+- [x] **Step 2: 写入 adjustL2.test.ts 全文**
 
 ```ts
 import test from 'node:test'
@@ -2376,7 +2377,7 @@ test('validateL2:里程碑不推迟;当日或之前允许', () => {
 })
 ```
 
-- [ ] **Step 3: 运行单测**
+- [x] **Step 3: 运行单测**
 
 ```powershell
 node --import tsx --test src/modules/planning/adjustL2.test.ts
@@ -2392,7 +2393,7 @@ node --import tsx --test src/modules/planning/adjustL2.test.ts
 
 **设计说明（对 spec 的实现细化）:** L2 的模型调用经 `PlanningAi.adjustL2` 注入（与 adjustIntent 同款），否则服务层测试无法覆盖 L2。L2 的 `after` 必须包含窗口内 done 项（否则 diff 会把它们误判为 removed）。预检 `totalPending > totalCapacity` 直接 400，不浪费模型调用；校验失败回喂重试一次，仍失败 502 `PLAN_GENERATION_FAILED` 且不落库（事务外计算，天然不落）。
 
-- [ ] **Step 1: imports 与 PlanningAi 扩展**
+- [x] **Step 1: imports 与 PlanningAi 扩展**
 
 Task 4 Step 1 的 adjust 导入改为：
 
@@ -2413,7 +2414,7 @@ import { buildLedger, expandL2, normalizeL2Tasks, runAdjustL2, validateL2, type 
 
 默认参数补 `adjustL2: runAdjustL2`。
 
-- [ ] **Step 2: 新增 runAdjustL2Plan 私有函数**
+- [x] **Step 2: 新增 runAdjustL2Plan 私有函数**
 
 放在 `syncWindowItems`/`serializeAdjustment` 附近（模块级）：
 
@@ -2464,7 +2465,7 @@ async function runAdjustL2Plan(ai: PlanningAi, args: {
 }
 ```
 
-- [ ] **Step 3: 替换 adjust() 的 L1 定档段**
+- [x] **Step 3: 替换 adjust() 的 L1 定档段**
 
 把 Task 4 Step 6 中从 `const l1 = planL1Shuffle(...)` 到 `const changes = diffSnapshots(before, after)` 的整段替换为：
 
@@ -2499,7 +2500,7 @@ async function runAdjustL2Plan(ai: PlanningAi, args: {
 
 并把 payload 里的 `tier: 'L1',` 改为 `tier,`。
 
-- [ ] **Step 4: 追加 L2 服务层用例**
+- [x] **Step 4: 追加 L2 服务层用例**
 
 `service.test.ts` 文件末尾追加：
 
@@ -2560,7 +2561,7 @@ test('adjust L2-2:校验两次不过 → PLAN_GENERATION_FAILED 且窗口内任�
 })
 ```
 
-- [ ] **Step 5: 跑全量验证（阶段三服务端部分完成标志）**
+- [x] **Step 5: 跑全量验证（阶段三服务端部分完成标志）**
 
 ```powershell
 npm run verify
@@ -2575,7 +2576,7 @@ npm run verify
 
 **设计说明（对 spec 的实现细化）:** `renderDraftHtml` 加可空 `adjustment` 参数（默认 null，既有调用零改动）；章节插在「今日任务变化」与「阶段安排」之间；复用既有 `.change`/`.note` 样式。`buildAdjustmentPreview` 在本地把 changes 应用到 active plan，供 L2 浮层渲染「确认后会长什么样」。
 
-- [ ] **Step 1: renderDraftHtml 签名与章节**
+- [x] **Step 1: renderDraftHtml 签名与章节**
 
 签名改为：
 
@@ -2615,7 +2616,7 @@ import com.yanzhong.app.data.remote.AdjustmentDto
 
 （`adjustmentChangeLine` 与本文件同包，无需 import。）
 
-- [ ] **Step 2: 新增 buildAdjustmentPreview**
+- [x] **Step 2: 新增 buildAdjustmentPreview**
 
 文件末尾追加：
 
@@ -2651,7 +2652,7 @@ internal fun buildAdjustmentPreview(active: PlanDto?, adjustment: AdjustmentDto?
 }
 ```
 
-- [ ] **Step 3: 编译验证（阶段三完成标志）**
+- [x] **Step 3: 编译验证（阶段三完成标志）**
 
 在 `F:\kaoyan-app-prd\YanZhong` 下执行：
 
@@ -2674,7 +2675,7 @@ internal fun buildAdjustmentPreview(active: PlanDto?, adjustment: AdjustmentDto?
 
 **设计说明（对 spec 的实现细化）:** `checkup` 是纯计算：统计 `planDate < today` 且未完成的项；无 active plan 返回全零 + 空建议（App 端以此判断「不用提醒」）。文案函数 `overdueSuggestion` 独立导出便于断言。
 
-- [ ] **Step 1: service 加 checkup 与文案函数**
+- [x] **Step 1: service 加 checkup 与文案函数**
 
 返回对象里（`undoAdjustment` 之后）加：
 
@@ -2702,7 +2703,7 @@ export function overdueSuggestion(count: number, minutes: number): string {
 }
 ```
 
-- [ ] **Step 2: routes 加 GET /plans/checkup**
+- [x] **Step 2: routes 加 GET /plans/checkup**
 
 `GET /plans/adjustments/latest` 之后加（`routes.ts` 顶部 import 区补 `import { maybeNotifyPlanReminder } from './planReminder'`——本步骤先写调用与导入，`planReminder.ts` 由 Task 16 落地；若想中途保持 typecheck 通过，也可把该行与导入留到 Task 16 一起加）：
 
@@ -2717,7 +2718,7 @@ router.get('/plans/checkup', requireAuth, async ctx => {
 
 （`maybeNotifyPlanReminder` 在 Task 16 落地；本步骤先写调用，Task 16 完成后一起编译。也可先注释掉该行，Task 16 再放开——二选一，保持 typecheck 通过即可。）
 
-- [ ] **Step 3: 测试**
+- [x] **Step 3: 测试**
 
 `service.test.ts` 末尾追加：
 
@@ -2758,7 +2759,7 @@ node --import tsx --test src/modules/planning/service.test.ts
 
 **设计说明（对 spec 的实现细化）:** 在线通道 = `hub.sendToUser`（`{ type: 'planReminder', text }`）；厂商推送只留 `PlanNotifier` 接口。去重复用 `user_settings` 表（key=`plan_reminder_day`，值=日期字符串；与 sync 模块同款 upsert，`updatedAt` 为 BigInt 列传 `Date.now()` 数值，与 `sync/service.ts` 的 `now()` 惯例一致）。该 key 不在客户端 12 个设置同步键内，对设置同步无影响。任何失败只打日志，不影响主请求。
 
-- [ ] **Step 1: 写入 planReminder.ts 全文**
+- [x] **Step 1: 写入 planReminder.ts 全文**
 
 ```ts
 import { prisma } from '../../shared/prisma'
@@ -2806,7 +2807,7 @@ export async function maybeNotifyPlanReminder(userGuid: string, notifier: PlanNo
 }
 ```
 
-- [ ] **Step 2: 确认 Task 15 路由里的调用放开并编译**
+- [x] **Step 2: 确认 Task 15 路由里的调用放开并编译**
 
 ```powershell
 npm run verify
@@ -2824,7 +2825,7 @@ npm run verify
 
 **设计说明（对 spec 的实现细化）:** 两条通道共用 `DataSyncer` 里「每天最多一条」的本地去重（`claimDailyReminder`），避免 WS + 轮询双重弹通知：WS 收到 `planReminder` → 抢当天名额 → 发本地通知；15 分钟周期循环里 `syncOnce()` 后调 `pullCheckupOnce()`（服务端 checkup 也会 WS 推，谁先到谁发）。**对 spec §3.10 字面的实现取舍：项目无 WorkManager 依赖，轮询复用既有 15 分钟周期循环**（等价效果、零新依赖）。本地通知复用 `CHANNEL_EVENT` 但不抢屏（无全屏 intent、`PRIORITY_DEFAULT`、不发声），通知 id 用 `EVENT_ID + 1` 避免顶掉番茄钟事件通知。
 
-- [ ] **Step 1: StatusSyncClient 加 PlanReminder**
+- [x] **Step 1: StatusSyncClient 加 PlanReminder**
 
 `SyncNotice` sealed interface 里（`PlanChanged` 之后）加：
 
@@ -2842,7 +2843,7 @@ npm run verify
             }
 ```
 
-- [ ] **Step 2: Api.kt 加 checkup 接口**
+- [x] **Step 2: Api.kt 加 checkup 接口**
 
 `undoAdjustment` 之后加：
 
@@ -2852,7 +2853,7 @@ npm run verify
     suspend fun planCheckup(): CheckupResp
 ```
 
-- [ ] **Step 3: FocusService 加 postPlanReminder**
+- [x] **Step 3: FocusService 加 postPlanReminder**
 
 companion object 内（`postEvent` 之后、`cancelOngoing` 之前）加：
 
@@ -2879,7 +2880,7 @@ companion object 内（`postEvent` 之后、`cancelOngoing` 之前）加：
         }
 ```
 
-- [ ] **Step 4: DataSyncer 接入两条通道**
+- [x] **Step 4: DataSyncer 接入两条通道**
 
 字段/companion：`WATERMARK_ACCOUNT_KEY` 之后加：
 
@@ -2941,7 +2942,7 @@ import java.time.LocalDate
     }
 ```
 
-- [ ] **Step 5: 全量验证（阶段四 & 整个计划完成标志）**
+- [x] **Step 5: 全量验证（阶段四 & 整个计划完成标志）**
 
 服务端（在 `F:\kaoyan-app-prd\server` 下）：
 
