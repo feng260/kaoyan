@@ -1,7 +1,7 @@
 import { chatComplete, extractJson, LlmError, type ChatMessage } from '../../shared/llm/client'
 import { AiUnavailable } from './aiGenerator'
 import { mergeBrief, normalizeBrief, assessPlanningFacts, type PlanBrief } from './document'
-import { dayStart, type ProfileInput } from './schemas'
+import { dayStart, diffDays, type ProfileInput } from './schemas'
 
 /**
  * 「备考面谈」生成器:把「填问卷 → 直接出计划」换成「和 AI 规划师聊几轮 → 出一份真正贴身的计划」。
@@ -27,8 +27,13 @@ const MAX_OPTIONS = 4
 const MAX_OPTION_LENGTH = 14
 const MAX_INPUT_MESSAGES = 24
 const MAX_MESSAGE_LENGTH = 1000
-/** 面谈输出很短(一个 JSON 对象),显式压小 max_tokens 可以规避部分厂商的上限校验(400) */
-const INTERVIEW_MAX_TOKENS = 1600
+/**
+ * 面谈每轮都要求模型把「累积的完整 brief」重写一遍,科目、真实空闲、固定占用会越聊越长。
+ * 1600 在前几轮够用,但聊到后面几轮会把 JSON 截断 —— 这时接口仍返回 200,只是内容被砍掉,
+ * 于是解析失败 → 502「AI 面谈失败」,而且重试发的是同一份历史必然复现,用户就会觉得「点重试没用」。
+ * 这里按文档生成器(DOC_MAX_TOKENS)同样的口径给足;厂商上限更低时由 LLM 客户端的降级重试收紧。
+ */
+const INTERVIEW_MAX_TOKENS = 4096
 
 export type InterviewInput = {
   /** 从早到晚的完整对话(不含系统提示);为空表示「刚开始,请提第一个问题」 */
@@ -68,6 +73,8 @@ const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,正在�
    当前进度、已知考试范围(自命题范围不明就留空)、剩余任务分钟数、里程碑及其截止日期与目标分钟数。
 5. 需要逐步确认的事实:正式考试科目名称;每门的当前进度/已知范围/剩余任务分钟数/里程碑及其明确截止日期(YYYY-MM-DD)和目标分钟数;按星期与起止时间记录的真实空闲时段和固定占用(没有固定占用也须明确确认)。已经聊清楚的不要重复问,直接进入下一项。
 6. 缺少上述事实时不要声称信息足够;但要用自然对话的方式补齐,不要输出核对清单。自命题范围不明时标为空,不得补写章节。
+7. 时间一律以提示里给出的「今天」为基准:考生说「明天/后天/下周/下个月/还剩多久」时,先按今天换算出 YYYY-MM-DD 再确认。
+   不要凭训练记忆里的日期作答,也不要用「下个月」「年底」这类模糊说法代替具体日期。
 
 严格只输出一个 JSON 对象,不要任何解释文字、不要 Markdown 代码块:
 {
@@ -129,13 +136,16 @@ function sanitizeMessages(raw: unknown): ChatMessage[] {
   return out
 }
 
+function iso(d: Date): string {
+  return dayStart(d).toISOString().slice(0, 10)
+}
+
 /** 档案里已有的信息不能让 AI 再问一遍 —— 直接写进系统侧上下文 */
 function profileContext(profile: ProfileInput | null, brief: PlanBrief | null): string {
   if (!profile) return '考生尚未填写问卷档案(考试日期、每日时长等未知,需要你在对话里问清楚)。'
   const lines = [
     '考生已填写问卷档案,以下信息不用再问:',
     `- 目标类型:${profile.targetType}`,
-    `- 考试日期:${profile.examDate.toISOString().slice(0, 10)}`,
     `- 每日可用学习时长:${profile.dailyMinutes} 分钟`,
     `- 固定学习时段:${profile.studyWindows.join('、')}`,
     `- 自评基础:${profile.foundation}`,
@@ -179,7 +189,13 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
     || (knownBrief.availabilityConfirmed && knownBrief.availability.length > 0)
     || knownBrief.commitmentsConfirmed)
 
+  const today = dayStart(new Date())
+  const examDate = input.profile?.examDate ?? null
   const userPrompt = [
+    // 必须给「今天」这个锚点:模型不认识当下时间,考生说「明天/下周」它就换算不出绝对日期
+    `今天:${iso(today)}`,
+    ...(examDate ? [`考试日期:${iso(examDate)}(距今 ${diffDays(examDate, today)} 天)`] : []),
+    '',
     profileContext(input.profile, knownBrief),
     '',
     '对话记录:',
