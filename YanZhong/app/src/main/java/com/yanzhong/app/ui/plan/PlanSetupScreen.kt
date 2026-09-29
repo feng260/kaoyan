@@ -26,9 +26,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.yanzhong.app.ui.nav.Routes
+import com.yanzhong.app.ui.onboarding.ONBOARDING_STEPS
 import com.yanzhong.app.ui.onboarding.OnboardingPhase
 import com.yanzhong.app.ui.onboarding.OnboardingViewModel
 import com.yanzhong.app.ui.onboarding.StepDots
+import com.yanzhong.app.ui.onboarding.StepFacts
 import com.yanzhong.app.ui.onboarding.StepRhythm
 import com.yanzhong.app.ui.onboarding.StepTarget
 import com.yanzhong.app.ui.theme.AppIcons
@@ -70,12 +72,17 @@ fun PlanSetupScreen(padding: PaddingValues, navController: NavHostController, pr
             else -> {
                 StepDots(state.step)
                 Spacer(Modifier.height(20.dp))
-                if (state.step == 0) StepTarget(state, vm) else StepRhythm(state, vm)
+                when (state.step) {
+                    0 -> StepTarget(state, vm)
+                    1 -> StepRhythm(state, vm)
+                    else -> StepFacts(state, vm)
+                }
                 if (state.message.isNotBlank()) Text(state.message, color = MaterialTheme.colorScheme.error)
                 Spacer(Modifier.height(20.dp))
-                Button(onClick = { if (state.step == 0) vm.next() else vm.saveProfileOnly() },
+                val lastStep = state.step >= ONBOARDING_STEPS - 1
+                Button(onClick = { if (lastStep) vm.saveProfileOnly() else vm.next() },
                     enabled = !state.busy, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                    Text(if (state.step == 0) "下一步" else "保存档案并继续面谈")
+                    Text(if (lastStep) "保存档案并继续面谈" else "下一步")
                 }
                 if (state.step > 0) TextButton(onClick = vm::back) { Text("返回上一步") }
             }

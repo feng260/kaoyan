@@ -148,7 +148,13 @@ data class ProfileDto(
     val isComplete: Boolean get() = onboardingDoneAt != null && examDate.isNotBlank()
 }
 
-/** PUT /profile 的请求体，字段与服务端 profileInputSchema 一一对应 */
+/**
+ * PUT /profile 的请求体，字段与服务端 profileInputSchema 一一对应。
+ *
+ * 问卷把「关键事实」一次问全（正式科目名、按星期的真实空闲窗口、固定占用），
+ * 面谈才不用一遍遍复问同一批问题；两个 confirmed 位是「用户明确确认」的凭证，
+ * 缺了它们服务端不会放行计划生成。
+ */
 @Serializable
 data class ProfileReq(
     val targetType: String,
@@ -156,7 +162,15 @@ data class ProfileReq(
     val dailyMinutes: Int,
     val studyWindows: List<String>,
     val foundation: String,
-    val weakSubjects: List<String>
+    val weakSubjects: List<String>,
+    /** 正式考试科目名；逐科进度与里程碑由面谈补齐 */
+    val examSubjects: List<String> = emptyList(),
+    /** 按星期记录的真实空闲窗口 */
+    val availability: List<BriefAvailabilityDto> = emptyList(),
+    /** 固定占用（上课、上班、通勤等），可由课表图片识别得到 */
+    val fixedCommitments: List<BriefCommitmentDto> = emptyList(),
+    val availabilityConfirmed: Boolean = false,
+    val commitmentsConfirmed: Boolean = false
 )
 
 @Serializable
@@ -343,8 +357,9 @@ data class PlanBriefDto(
 
 @Serializable
 data class BriefSubjectDto(
-    val name: String, val progress: String, val scope: String,
-    val remainingMinutes: Int, val milestone: String
+    val name: String, val progress: String = "", val scope: String = "",
+    val remainingMinutes: Int = 0, val milestone: String = "",
+    val milestoneDate: String = "", val milestoneMinutes: Int = 0
 )
 
 @Serializable
@@ -374,6 +389,26 @@ data class InterviewResp(
     val options: List<String> = emptyList(),
     val done: Boolean = false,
     val brief: PlanBriefDto? = null,
+    val serverTime: Long = 0
+)
+
+/**
+ * POST /plans/timetable 请求体。图片走 base64 + JSON（服务端 bodyparser 上限 8mb），
+ * 客户端必须先把课表截图压缩到几百 KB 再上传，否则会被直接拒掉。
+ */
+@Serializable
+data class TimetableReq(
+    /** data:image/...;base64,xxx 或裸 base64（服务端会自动补前缀） */
+    val image: String,
+    val mimeType: String? = null
+)
+
+/** 课表识别结果。[warnings] 是看不清/存疑的地方，界面要提示用户手工核对 */
+@Serializable
+data class TimetableResp(
+    val summary: String = "",
+    val warnings: List<String> = emptyList(),
+    val fixedCommitments: List<BriefCommitmentDto> = emptyList(),
     val serverTime: Long = 0
 )
 
@@ -458,6 +493,13 @@ interface YanzhongApi {
      */
     @POST("api/v1/plans/interview")
     suspend fun interview(@Body body: InterviewReq): InterviewResp
+
+    /**
+     * 课表图片识别：把单双周课表转成每周固定占用，返回结果供用户在问卷里核对。
+     * 视觉模型耗时较久，调用方请走 [ApiClient.aiApi]。
+     */
+    @POST("api/v1/plans/timetable")
+    suspend fun parseTimetable(@Body body: TimetableReq): TimetableResp
 
     /** 取当前有效计划；没有计划时 plan 为 null */
     @GET("api/v1/plans/active")

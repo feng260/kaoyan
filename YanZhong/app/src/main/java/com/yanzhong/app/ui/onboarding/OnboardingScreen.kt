@@ -1,5 +1,7 @@
 package com.yanzhong.app.ui.onboarding
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -57,10 +59,11 @@ import com.yanzhong.app.ui.theme.SuccessGreen
 /**
  * 首次问卷。
  *
- * 分两步不是为了"看起来很专业",是因为这一步问的东西性质不同:
+ * 分三步不是为了"看起来很专业",是因为这三步问的东西性质不同:
  * 第一步是目标和日子——不用想,谁都答得上来;
- * 第二步要用户回忆自己的作息和短板——这需要停下来想一想。
- * 拆开之后,第一屏轻,用户愿意往下点;第二屏才谈得上认真回答。
+ * 第二步要用户回忆自己的作息和短板——这需要停下来想一想;
+ * 第三步是正式科目与真实空闲,还得顺手把课表传上来——信息最重,放最后,
+ * 前面两屏轻,用户愿意走到这里,也才愿意认真对准时间。
  *
  * 全篇避免"请填写""提交表单"这类词。我们是在给一个真实的人排他的备考节奏,
  * 不是在收集数据。
@@ -90,18 +93,14 @@ fun OnboardingScreen(vm: OnboardingViewModel, modifier: Modifier = Modifier) {
             Column(Modifier.fillMaxWidth().widthIn(max = 520.dp)) {
                 StepDots(step = state.step)
                 Spacer(Modifier.height(18.dp))
-                Text(
-                    if (state.step == 0) "先定个目标" else "说说你的节奏",
-                    style = MaterialTheme.typography.headlineLarge,
-                    fontWeight = FontWeight.Bold
-                )
+                val (title, subtitle) = when (state.step) {
+                    0 -> "先定个目标" to "知道你要考什么、哪天考,我才能把日子排开"
+                    1 -> "说说你的节奏" to "这几个答案决定每天给你排多少、先补哪一科"
+                    else -> "把科目和时间说准" to "科目写全、空闲和固定占用标准,排出来的计划才不用返工"
+                }
+                Text(title, style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
-                Text(
-                    if (state.step == 0) "知道你要考什么、哪天考,我才能把日子排开"
-                    else "这几个答案决定每天给你排多少、先补哪一科",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = colors.onSurfaceVariant
-                )
+                Text(subtitle, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
                 Spacer(Modifier.height(20.dp))
 
                 Surface(
@@ -112,10 +111,10 @@ fun OnboardingScreen(vm: OnboardingViewModel, modifier: Modifier = Modifier) {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(18.dp)) {
-                        if (state.step == 0) {
-                            StepTarget(state, vm)
-                        } else {
-                            StepRhythm(state, vm)
+                        when (state.step) {
+                            0 -> StepTarget(state, vm)
+                            1 -> StepRhythm(state, vm)
+                            else -> StepFacts(state, vm)
                         }
                     }
                 }
@@ -134,12 +133,12 @@ fun OnboardingScreen(vm: OnboardingViewModel, modifier: Modifier = Modifier) {
     }
 }
 
-/** 顶部两步指示:用两段横条,比"1/2"更像进度而不像页码 */
+/** 顶部步进指示:用等宽横条,比"1/3"更像进度而不像页码 */
 @Composable
-internal fun StepDots(step: Int) {
+internal fun StepDots(step: Int, total: Int = ONBOARDING_STEPS) {
     val colors = MaterialTheme.colorScheme
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        repeat(2) { index ->
+        repeat(total) { index ->
             Box(
                 Modifier
                     .weight(1f)
@@ -265,17 +264,196 @@ internal fun StepRhythm(state: OnboardingUiState, vm: OnboardingViewModel) {
         }
     }
     Spacer(Modifier.height(10.dp))
+    CustomAddRow(label = "写不下就自己加一门", placeholder = "比如 数据结构") { vm.addWeakSubject(it) }
+}
+
+/**
+ * 第三步:正式科目 + 真实空闲 + 课表。
+ *
+ * 这一屏把面谈最爱反复追问的三件事一次问全,后面 AI 才有余力聊"你这科到哪了、还剩多少"。
+ * 课表上传是可选路径:传得上去就是白捡,传不上也挡不住人往前走。
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
+    val colors = MaterialTheme.colorScheme
+
+    FieldLabel("你要考的科目", "只填科目名就行。每科现在到哪了、还剩多少,面谈里再细聊")
+    Spacer(Modifier.height(10.dp))
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        state.subjectOptions.forEach { name ->
+            FilterChip(
+                selected = name in state.examSubjects,
+                onClick = { vm.toggleExamSubject(name) },
+                label = { Text(name) }
+            )
+        }
+    }
+    Spacer(Modifier.height(10.dp))
+    CustomAddRow(label = "没有你的科目就自己加", placeholder = "比如 数据结构") { vm.addExamSubject(it) }
+
+    Spacer(Modifier.height(20.dp))
+    FieldLabel("每周哪几天、哪些时段真坐得下来", "点格子就行。这天没空就不点,排课不会往空格子里塞任务")
+    Spacer(Modifier.height(10.dp))
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        (1..7).forEach { day ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "周${WEEKDAY_LABELS[day - 1]}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.width(36.dp)
+                )
+                FlowRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    STUDY_WINDOWS.forEach { window ->
+                        FilterChip(
+                            selected = window in state.availability[day].orEmpty(),
+                            onClick = { vm.toggleAvailability(day, window) },
+                            label = { Text(window, style = MaterialTheme.typography.bodySmall) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Text(
+        "上一屏选的是「平时固定学得进去」的时段,这里标的是这一周具体哪天有空——不完全一样是正常的。",
+        style = MaterialTheme.typography.bodySmall,
+        color = colors.onSurfaceVariant
+    )
+
+    Spacer(Modifier.height(20.dp))
+    FieldLabel("有课表就传一张,我替你认", "单双周课表都行。认出来的占用会列在下面,和实际不符的直接删掉")
+    Spacer(Modifier.height(10.dp))
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) vm.parseTimetable(uri)
+    }
+    OutlinedButton(
+        onClick = { picker.launch("image/*") },
+        enabled = !state.timetableBusy,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        if (state.timetableBusy) {
+            CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("正在认这张课表…")
+        } else {
+            Text("从相册选一张课表截图")
+        }
+    }
+    if (state.timetableNotice.isNotEmpty()) {
+        Spacer(Modifier.height(10.dp))
+        OnboardingMessage(state.timetableNotice, state.timetableNoticeIsError)
+    }
+
+    if (state.commitments.isNotEmpty()) {
+        Spacer(Modifier.height(16.dp))
+        FieldLabel("已经记下的固定占用", "每周固定被占掉的时间,排课时不会往里塞任务")
+        Spacer(Modifier.height(8.dp))
+        state.commitments.forEachIndexed { index, item ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "周${WEEKDAY_LABELS[item.weekday - 1]} ${item.start}-${item.end}  ${item.label}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { vm.removeCommitment(index) }) { Text("删掉") }
+            }
+        }
+    }
+
+    Spacer(Modifier.height(16.dp))
+    FieldLabel("没有课表?手动补一条", "上课、上班、通勤这类每周固定占掉的时间,补几条就够")
+    Spacer(Modifier.height(8.dp))
+    ManualCommitmentRow { weekday, start, end, label -> vm.addCommitment(weekday, start, end, label) }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ManualCommitmentRow(onAdd: (Int, String, String, String) -> Unit) {
+    var weekday by remember { mutableStateOf(1) }
+    var label by remember { mutableStateOf("") }
+    var start by remember { mutableStateOf("") }
+    var end by remember { mutableStateOf("") }
+
+    Column {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            (1..7).forEach { day ->
+                FilterChip(
+                    selected = weekday == day,
+                    onClick = { weekday = day },
+                    label = { Text("周${WEEKDAY_LABELS[day - 1]}") }
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = label,
+            onValueChange = { label = it.take(16) },
+            label = { Text("是什么事") },
+            placeholder = { Text("比如 上课") },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = start,
+                onValueChange = { start = it.take(5) },
+                label = { Text("开始") },
+                placeholder = { Text("08:00") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            OutlinedTextField(
+                value = end,
+                onValueChange = { end = it.take(5) },
+                label = { Text("结束") },
+                placeholder = { Text("11:30") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.weight(1f)
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = {
+                onAdd(weekday, start, end, label)
+                label = ""
+                start = ""
+                end = ""
+            },
+            shape = RoundedCornerShape(12.dp)
+        ) { Text("记下这条") }
+    }
+}
+
+/** 「清单里没有就自己加」那一行:输入框 + 加上按钮,两处都用得上 */
+@Composable
+private fun CustomAddRow(label: String, placeholder: String, onAdd: (String) -> Unit) {
+    val colors = MaterialTheme.colorScheme
     var custom by remember { mutableStateOf("") }
     Row(verticalAlignment = Alignment.CenterVertically) {
         OutlinedTextField(
             value = custom,
             onValueChange = { custom = it.take(16) },
-            label = { Text("写不下就自己加一门") },
-            placeholder = { Text("比如 数据结构") },
+            label = { Text(label) },
+            placeholder = { Text(placeholder) },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = {
-                vm.addWeakSubject(custom)
+                onAdd(custom)
                 custom = ""
             }),
             shape = RoundedCornerShape(12.dp),
@@ -288,7 +466,7 @@ internal fun StepRhythm(state: OnboardingUiState, vm: OnboardingViewModel) {
         Spacer(Modifier.width(8.dp))
         OutlinedButton(
             onClick = {
-                vm.addWeakSubject(custom)
+                onAdd(custom)
                 custom = ""
             },
             shape = RoundedCornerShape(12.dp)
@@ -309,7 +487,7 @@ private fun FieldLabel(title: String, hint: String? = null) {
 @Composable
 private fun PrimaryAction(state: OnboardingUiState, vm: OnboardingViewModel) {
     val colors = MaterialTheme.colorScheme
-    val lastStep = state.step >= 1
+    val lastStep = state.step >= ONBOARDING_STEPS - 1
     Button(
         // 末步只存档案:一份几百天的计划要先和 AI 聊清楚才排得出来,问卷这一屏不越权替 AI 落笔
         onClick = { if (lastStep) vm.saveProfileOnly() else vm.next() },

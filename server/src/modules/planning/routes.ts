@@ -29,6 +29,15 @@ const interviewSchema = z.object({
 })
 
 /**
+ * 课表图片识别:把「单双周课表」这类每周固定占用交给视觉模型识别,免去手工填格子。
+ * 图片走 base64 + JSON(bodyparser 上限 8mb),客户端需先压缩;必须注册在 `/plans/:id` 之前。
+ */
+const timetableSchema = z.object({
+  image: z.string().min(64).max(7_000_000),
+  mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']).optional(),
+})
+
+/**
  * 档案/计划接口(Phase 0)。计划是服务端权威资源:
  * 客户端只负责把问卷答案提交上来、把生成好的计划读回去。
  *
@@ -101,6 +110,19 @@ router.post('/plans/interview', requireAuth, apiLimit(), async ctx => {
     messages: parsed.data.messages ?? [],
     force: parsed.data.force === true,
   })
+  ctx.body = { ...result, serverTime: Date.now() }
+})
+
+/**
+ * 课表图片识别:返回识别到的固定占用与存疑提示,由用户校正后再随问卷一起提交。
+ * 必须注册在 `/plans/:id` 之前。
+ */
+router.post('/plans/timetable', requireAuth, apiLimit(), async ctx => {
+  const parsed = timetableSchema.safeParse(ctx.request.body ?? {})
+  if (!parsed.success) {
+    throw new ApiError(400, 'INVALID_PARAMS', '课表图片不合法(需要 base64 或链接,且不超过 8mb)')
+  }
+  const result = await planningService.parseTimetable(ctx.state.auth!.userGuid, parsed.data)
   ctx.body = { ...result, serverTime: Date.now() }
 })
 

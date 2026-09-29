@@ -96,6 +96,64 @@ const studyWindowsSchema = z.preprocess(
   z.array(z.enum(STUDY_WINDOWS)).min(1, '至少选择一个固定学习时段').max(STUDY_WINDOWS.length),
 )
 
+/** 24 小时制时刻,统一 `HH:mm` —— 与 brief 里的时间格式保持一致,netAvailableMinutes 直接可用 */
+const timeSchema = z.string().trim().regex(/^([01]\d|2[0-3]):[0-5]\d$/, '时间格式应为 HH:mm')
+const clockMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3))
+
+const weekdaySchema = z.number().int('星期应为 1–7 的整数').min(1).max(7)
+
+const windowSchema = z
+  .object({ start: timeSchema, end: timeSchema })
+  .refine(w => clockMinutes(w.start) < clockMinutes(w.end), '结束时间需要晚于开始时间')
+
+/**
+ * 问卷阶段的「按星期空闲窗口」。
+ * 为什么要问这个:光有「每日可用 180 分钟」排不出计划 —— 周三只有 1 小时、周末有 8 小时,
+ * 容量是按天算净空闲的,必须知道每天真实的窗口才能判断「考前盖不盖得住已确认的任务量」。
+ * 客户端没有新增这些字段时(老版本 App)默认空数组,不会把已有档案打脏。
+ */
+const availabilitySchema = z.preprocess(
+  normalizeJsonArray,
+  z
+    .array(
+      z.object({
+        weekday: weekdaySchema,
+        windows: z
+          .preprocess(normalizeJsonArray, z.array(windowSchema).min(1, '至少填一个空闲时段').max(6))
+          .default([]),
+      }),
+    )
+    .max(7)
+    .default([]),
+)
+
+/** 固定占用:上课、上班、通勤等每周固定被占掉的时间段 */
+const fixedCommitmentsSchema = z.preprocess(
+  normalizeJsonArray,
+  z
+    .array(
+      z
+        .object({
+          weekday: weekdaySchema,
+          start: timeSchema,
+          end: timeSchema,
+          label: z.string().trim().min(1, '固定占用需要说明是什么事').max(16),
+        })
+        .refine(c => clockMinutes(c.start) < clockMinutes(c.end), '结束时间需要晚于开始时间'),
+    )
+    .max(20, '固定占用最多 20 条')
+    .default([]),
+)
+
+/** 正式考试科目名(问卷只收「有哪些科」,逐科的进度/范围/里程碑由面谈补齐) */
+const examSubjectsSchema = z.preprocess(
+  normalizeJsonArray,
+  z
+    .array(z.string().trim().min(1, '科目名称不能为空').max(16, '科目名称最多 16 个字'))
+    .max(12, '考试科目最多 12 门')
+    .default([]),
+)
+
 export const profileInputSchema = z.object({
   targetType: z.enum(SUPPORTED_TARGET_TYPES).default('考研'),
   examDate: examDateSchema,
@@ -107,6 +165,11 @@ export const profileInputSchema = z.object({
   studyWindows: studyWindowsSchema,
   foundation: z.enum(FOUNDATION_LEVELS).default('一般'),
   weakSubjects: weakSubjectsSchema,
+  examSubjects: examSubjectsSchema,
+  availability: availabilitySchema,
+  fixedCommitments: fixedCommitmentsSchema,
+  availabilityConfirmed: z.boolean().default(false),
+  commitmentsConfirmed: z.boolean().default(false),
 })
 
 export type ProfileInput = z.infer<typeof profileInputSchema>

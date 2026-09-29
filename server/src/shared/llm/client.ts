@@ -10,7 +10,13 @@ import { env } from '../../config/env'
  * - 硅基流动   https://api.siliconflow.cn/v1      deepseek-ai/DeepSeek-V3
  */
 
-export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+/** 多模态消息里的文本片段 */
+export type ChatTextPart = { type: 'text'; text: string }
+/** 多模态消息里的图片片段:url 支持 https 链接或 data:image/...;base64,xxx */
+export type ChatImagePart = { type: 'image_url'; image_url: { url: string } }
+export type ChatContentPart = ChatTextPart | ChatImagePart
+
+export type ChatMessage = { role: 'system' | 'user' | 'assistant'; content: string | ChatContentPart[] }
 
 export class LlmError extends Error {
   constructor(public code: 'NOT_CONFIGURED' | 'TIMEOUT' | 'HTTP_ERROR' | 'BAD_RESPONSE', message: string) {
@@ -26,28 +32,38 @@ export type ChatOptions = {
   temperature?: number
   maxTokens?: number
   timeoutMs?: number
+  /**
+   * 走视觉模型(env.llm.vision)。默认就是对话模型本身;只有显式配了
+   * LLM_VISION_MODEL 时才会切到另一个模型,所以调用方只管照开。
+   */
+  vision?: boolean
 }
 
 /** 调一次对话补全,返回首条候选的文本内容。失败一律抛 LlmError,由调用方决定降级策略。 */
 export async function chatComplete(options: ChatOptions): Promise<string> {
-  if (!env.llm.apiKey) {
+  const config = options.vision ? env.llm.vision : env.llm
+  if (options.vision && (!config.apiKey || !config.model)) {
+    throw new LlmError('NOT_CONFIGURED', '未配置视觉模型(需要 LLM_VISION_API_KEY 与 LLM_VISION_MODEL)')
+  }
+  if (!config.apiKey) {
     throw new LlmError('NOT_CONFIGURED', '未配置 LLM_API_KEY')
   }
 
+  const timeoutMs = options.timeoutMs ?? config.timeoutMs
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs ?? env.llm.timeoutMs)
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
   try {
-    const res = await fetch(`${env.llm.baseUrl}/chat/completions`, {
+    const res = await fetch(`${config.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.llm.apiKey}`,
+        Authorization: `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify({
-        model: env.llm.model,
+        model: config.model,
         messages: options.messages,
         temperature: options.temperature ?? 0.4,
-        max_tokens: options.maxTokens ?? env.llm.maxTokens,
+        max_tokens: options.maxTokens ?? config.maxTokens,
         ...(options.json ? { response_format: { type: 'json_object' } } : {}),
       }),
       signal: controller.signal,
@@ -67,7 +83,7 @@ export async function chatComplete(options: ChatOptions): Promise<string> {
   } catch (error) {
     if (error instanceof LlmError) throw error
     if ((error as Error)?.name === 'AbortError') {
-      throw new LlmError('TIMEOUT', `大模型接口超时(${options.timeoutMs ?? env.llm.timeoutMs}ms)`)
+      throw new LlmError('TIMEOUT', `大模型接口超时(${timeoutMs}ms)`)
     }
     throw new LlmError('HTTP_ERROR', `调用大模型失败:${(error as Error)?.message ?? '未知错误'}`)
   } finally {

@@ -288,6 +288,57 @@ export function normalizeBrief(raw: any): PlanBrief {
   }
 }
 
+/**
+ * 合并两份面试简报(已有画像 + 本轮补充)。
+ * 规则:标量以补丁为准(补丁为空则保留旧值);列表类去重合并;
+ * 逐科事实与真实空闲时段分别按科目名 / 星期覆盖;确认位取或,避免已确认的信息被清掉。
+ */
+export function mergeBrief(base: PlanBrief, patch: PlanBrief): PlanBrief {
+  const mergeText = (a: string, b: string) => b || a
+  const mergeList = (a: string[], b: string[]) => {
+    const seen = new Set(a)
+    const out = [...a]
+    for (const item of b) if (item && !seen.has(item)) { seen.add(item); out.push(item) }
+    return out
+  }
+  const mergeByKey = <T,>(a: T[], b: T[], key: (item: T) => string): T[] => {
+    const map = new Map<string, T>()
+    for (const item of a) map.set(key(item), item)
+    for (const item of b) map.set(key(item), item)
+    return [...map.values()]
+  }
+  // 逐科事实不做整条覆盖:模型某一轮可能只填了一半,空字段要保留上一轮的确认结果
+  const subjects = new Map<string, PlanBrief['examSubjects'][number]>()
+  for (const subject of base.examSubjects) subjects.set(subject.name, subject)
+  for (const subject of patch.examSubjects) {
+    const prev = subjects.get(subject.name)
+    subjects.set(subject.name, {
+      name: subject.name,
+      progress: mergeText(prev?.progress ?? '', subject.progress),
+      scope: mergeText(prev?.scope ?? '', subject.scope),
+      remainingMinutes: subject.remainingMinutes > 0 ? subject.remainingMinutes : prev?.remainingMinutes ?? 0,
+      milestone: mergeText(prev?.milestone ?? '', subject.milestone),
+      milestoneDate: mergeText(prev?.milestoneDate ?? '', subject.milestoneDate),
+      milestoneMinutes: subject.milestoneMinutes > 0 ? subject.milestoneMinutes : prev?.milestoneMinutes ?? 0,
+    })
+  }
+  return {
+    summary: mergeText(base.summary, patch.summary),
+    goals: mergeList(base.goals, patch.goals),
+    constraints: mergeList(base.constraints, patch.constraints),
+    focus: mergeList(base.focus, patch.focus),
+    materials: mergeList(base.materials, patch.materials),
+    notes: mergeList(base.notes, patch.notes),
+    examSubjects: [...subjects.values()],
+    availability: mergeByKey(base.availability, patch.availability, item => String(item.weekday)),
+    fixedCommitments: [...base.fixedCommitments, ...patch.fixedCommitments.filter(item =>
+      !base.fixedCommitments.some(existing => existing.weekday === item.weekday
+        && existing.start === item.start && existing.end === item.end && existing.label === item.label))],
+    availabilityConfirmed: base.availabilityConfirmed || patch.availabilityConfirmed,
+    commitmentsConfirmed: base.commitmentsConfirmed || patch.commitmentsConfirmed,
+  }
+}
+
 export function documentMatchesSubjects(document: PlanDocument, subjects: string[]): boolean {
   const allowed = new Set(subjects)
   if (document.hero.subjects.some(subject => !allowed.has(subject))) return false

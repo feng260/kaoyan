@@ -1,6 +1,10 @@
 package com.yanzhong.app.ui.onboarding
 
 import android.app.Application
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yanzhong.app.YanZhongApp
@@ -10,6 +14,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
 
@@ -30,7 +35,7 @@ enum class OnboardingPhase { LOADING, EDITING, SUBMITTING, SUCCESS, FALLBACK }
 
 data class OnboardingUiState(
     val phase: OnboardingPhase = OnboardingPhase.LOADING,
-    /** 0 = 目标与考期,1 = 时间与科目 */
+    /** 0 = 目标与考期,1 = 节奏与短板,2 = 正式科目与真实空闲(含课表上传) */
     val step: Int = 0,
     val targetType: String = TARGET_TYPES.first(),
     val examDate: String = "",
@@ -40,6 +45,16 @@ data class OnboardingUiState(
     val weakSubjects: Set<String> = emptySet(),
     /** 薄弱科目可选清单:优先用本地已有科目,没有则给一组常用科目 */
     val subjectOptions: List<String> = emptyList(),
+    /** 正式考试科目名;逐科的进度与里程碑留给面谈 */
+    val examSubjects: Set<String> = emptySet(),
+    /** 按星期记的真实空闲:weekday(1=周一) → 时段名(STUDY_WINDOWS 之一) */
+    val availability: Map<Int, Set<String>> = emptyMap(),
+    /** 固定占用(上课/上班/通勤),可由课表图片识别得到,也可手动补 */
+    val commitments: List<BriefCommitmentDto> = emptyList(),
+    /** 课表识别的进行中/结果提示,和表单校验提示分开,免得互相覆盖 */
+    val timetableBusy: Boolean = false,
+    val timetableNotice: String = "",
+    val timetableNoticeIsError: Boolean = false,
     val message: String = "",
     val messageIsError: Boolean = false,
     /** 服务端已落库的档案(回填问卷用) */
@@ -63,6 +78,34 @@ private val DEFAULT_WEAK_SUBJECTS = listOf("政治", "英语", "数学", "专业
 
 /** 每日可投入时长的快捷档位(分钟):给手感,不给用户算数 */
 val DAILY_MINUTE_CHOICES = listOf(60, 120, 180, 240, 300, 360, 480)
+
+/** 问卷总步数:目标与考期 → 节奏与短板 → 正式科目与真实空闲 */
+const val ONBOARDING_STEPS = 3
+
+/** 周一~周日,给格子当行头 */
+internal val WEEKDAY_LABELS = listOf("一", "二", "三", "四", "五", "六", "日")
+
+/**
+ * 时段名 → 钟点。
+ * 问卷里让人点「晚上」比让人填 19:00-22:00 省事得多,但排容量必须落到钟点上,
+ * 所以这里做一次翻译:点选可以是粗的,落库必须是 HH:mm。
+ */
+internal val WINDOW_CLOCK: Map<String, Pair<String, String>> = linkedMapOf(
+    "早晨" to ("06:30" to "08:00"),
+    "上午" to ("08:30" to "11:30"),
+    "下午" to ("14:00" to "17:30"),
+    "晚上" to ("19:00" to "22:00"),
+    "深夜" to ("22:30" to "23:59")
+)
+
+/** 课表截图最长边压到 1600 像素:再大也只是让上传变慢,小字照样认得出 */
+private const val TIMETABLE_MAX_SIDE = 1600
+
+/** 固定占用上限,和服务端 fixedCommitmentsSchema 保持一致 */
+private const val MAX_COMMITMENTS = 20
+
+/** 正式科目上限,和服务端 examSubjectsSchema 保持一致 */
+private const val MAX_EXAM_SUBJECTS = 12
 
 class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     private val repo = (app as YanZhongApp).repository
@@ -99,6 +142,12 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 profileSaved = false,
                 plan = null,
                 awaitingChoice = false,
+                examSubjects = emptySet(),
+                availability = emptyMap(),
+                commitments = emptyList(),
+                timetableBusy = false,
+                timetableNotice = "",
+                timetableNoticeIsError = false,
                 message = "",
                 messageIsError = false
             )
@@ -140,7 +189,13 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                             dailyMinutes = p?.dailyMinutes?.takeIf { it > 0 } ?: s.dailyMinutes,
                             studyWindows = p?.studyWindows?.toSet()?.takeIf { it.isNotEmpty() } ?: s.studyWindows,
                             foundation = p?.foundation?.takeIf { it in FOUNDATION_LEVELS } ?: s.foundation,
-                            weakSubjects = p?.weakSubjects?.toSet() ?: s.weakSubjects
+                            weakSubjects = p?.weakSubjects?.toSet() ?: s.weakSubjects,
+                            // 之前答过的正式科目与真实空闲一并回填:重填问卷不该把上次确认过的事实抹掉
+                            examSubjects = p?.brief?.examSubjects?.map { it.name }?.toSet()?.takeIf { it.isNotEmpty() }
+                                ?: s.examSubjects,
+                            availability = p?.brief?.let { briefToGrid(it.availability) }?.takeIf { it.isNotEmpty() }
+                                ?: s.availability,
+                            commitments = p?.brief?.fixedCommitments?.takeIf { it.isNotEmpty() } ?: s.commitments
                         )
                     }
                 }
@@ -168,7 +223,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(message = err, messageIsError = true) }
             return
         }
-        _ui.update { it.copy(step = (s.step + 1).coerceAtMost(1), message = "", messageIsError = false) }
+        _ui.update { it.copy(step = (s.step + 1).coerceAtMost(ONBOARDING_STEPS - 1), message = "", messageIsError = false) }
     }
 
     fun back() {
@@ -187,7 +242,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     fun saveProfileOnly() {
         val s = _ui.value
         if (s.phase == OnboardingPhase.SUBMITTING) return
-        val err = validate(s, 1)
+        val err = validate(s, ONBOARDING_STEPS - 1)
         if (err != null) {
             _ui.update { it.copy(message = err, messageIsError = true) }
             return
@@ -201,7 +256,13 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 dailyMinutes = s.dailyMinutes,
                 studyWindows = STUDY_WINDOWS.filter { it in s.studyWindows },
                 foundation = s.foundation,
-                weakSubjects = s.weakSubjects.toList()
+                weakSubjects = s.weakSubjects.toList(),
+                examSubjects = s.examSubjects.toList(),
+                availability = availabilityPayload(s.availability),
+                fixedCommitments = s.commitments,
+                // 走到这一步就已经把科目、空闲和占用逐条看过并确认了,面谈不用再复问同一批问题
+                availabilityConfirmed = true,
+                commitmentsConfirmed = true
             )
             runCatching { ApiClient.api().putProfile(body) }.fold({ saved ->
                 // 档案落库即完成:计划由「AI 面谈 → 生成」这条独立的路去产生
@@ -218,7 +279,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { st ->
                     st.copy(
                         phase = OnboardingPhase.EDITING,
-                        step = 1,
+                        step = ONBOARDING_STEPS - 1,
                         message = "档案没存上:${e.userMessage()}。你填的内容都还在,网络好了再点一次就好",
                         messageIsError = true
                     )
@@ -303,6 +364,152 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ---------------- 正式科目与真实空闲 ----------------
+
+    fun toggleExamSubject(name: String) {
+        _ui.update { s ->
+            val next = if (name in s.examSubjects) s.examSubjects - name else s.examSubjects + name
+            if (next.size > MAX_EXAM_SUBJECTS) {
+                s.copy(message = "科目最多 $MAX_EXAM_SUBJECTS 门,先填最要紧的", messageIsError = true)
+            } else {
+                s.copy(examSubjects = next, message = "", messageIsError = false)
+            }
+        }
+    }
+
+    /** 清单里没有的科目(自命题专业课的名字我们猜不到)让用户自己加 */
+    fun addExamSubject(name: String) {
+        val trimmed = name.trim().take(16)
+        if (trimmed.isEmpty()) return
+        _ui.update { s ->
+            if (trimmed in s.examSubjects) {
+                s.copy(message = "", messageIsError = false)
+            } else if (s.examSubjects.size >= MAX_EXAM_SUBJECTS) {
+                s.copy(message = "科目最多 $MAX_EXAM_SUBJECTS 门,先填最要紧的", messageIsError = true)
+            } else {
+                s.copy(
+                    subjectOptions = (s.subjectOptions + trimmed).distinct(),
+                    examSubjects = s.examSubjects + trimmed,
+                    message = "",
+                    messageIsError = false
+                )
+            }
+        }
+    }
+
+    /** 点一下格子里的时段:来回切换「这天这个时段我空着」 */
+    fun toggleAvailability(weekday: Int, window: String) {
+        _ui.update { s ->
+            val day = s.availability[weekday].orEmpty()
+            val next = if (window in day) day - window else day + window
+            val grid = if (next.isEmpty()) s.availability - weekday else s.availability + (weekday to next)
+            s.copy(availability = grid, message = "", messageIsError = false)
+        }
+    }
+
+    fun removeCommitment(index: Int) {
+        _ui.update { s ->
+            if (index !in s.commitments.indices) s
+            else s.copy(commitments = s.commitments.filterIndexed { i, _ -> i != index })
+        }
+    }
+
+    /**
+     * 手动补一条固定占用(没传课表或课表上没印全的时候用)。
+     * [start]/[end] 是用户敲的钟点,这里只做格式与先后校验,不猜。
+     */
+    fun addCommitment(weekday: Int, start: String, end: String, label: String) {
+        val s = _ui.value
+        val from = normalizeClock(start)
+        val to = normalizeClock(end)
+        val name = label.trim().take(16)
+        val error = when {
+            name.isEmpty() -> "这条占用是什么事,写两个字就行(比如 上课)"
+            from == null || to == null -> "时间按 8:00 或 08:00 这样填"
+            from >= to -> "结束时间要晚于开始时间"
+            s.commitments.size >= MAX_COMMITMENTS -> "固定占用最多 $MAX_COMMITMENTS 条"
+            s.commitments.any { it.weekday == weekday && it.start == from && it.end == to && it.label == name } ->
+                "这条已经记下了"
+            else -> null
+        }
+        if (error != null) {
+            _ui.update { it.copy(message = error, messageIsError = true) }
+            return
+        }
+        _ui.update {
+            it.copy(
+                commitments = it.commitments + BriefCommitmentDto(
+                    weekday = weekday,
+                    start = from!!,
+                    end = to!!,
+                    label = name
+                ),
+                message = "",
+                messageIsError = false
+            )
+        }
+    }
+
+    /**
+     * 课表截图 → 每周固定占用。
+     *
+     * 识图是可选路径:用户没课表、或者图太糊,都能跳过手动补。
+     * 识别结果只往 [OnboardingUiState.commitments] 里加,不直接落库——
+     * 落库要等用户看到列表、把认错的那几条删掉之后,随问卷一起提交。
+     */
+    fun parseTimetable(uri: Uri) {
+        if (_ui.value.timetableBusy) return
+        _ui.update {
+            it.copy(timetableBusy = true, timetableNotice = "正在认这张课表,可能要十几秒…", timetableNoticeIsError = false)
+        }
+        viewModelScope.launch {
+            val payload = runCatching { compressToBase64(uri) }.getOrNull()
+            if (payload == null) {
+                _ui.update {
+                    it.copy(
+                        timetableBusy = false,
+                        timetableNotice = "这张图读不出来。换一张相册里的课表截图,或者干脆手动补几条",
+                        timetableNoticeIsError = true
+                    )
+                }
+                return@launch
+            }
+            runCatching { ApiClient.aiApi().parseTimetable(TimetableReq(image = payload, mimeType = "image/jpeg")) }
+                .fold({ resp ->
+                    _ui.update { s ->
+                        val merged = (s.commitments + resp.fixedCommitments)
+                            .distinctBy { "${it.weekday}-${it.start}-${it.end}-${it.label}" }
+                            .take(MAX_COMMITMENTS)
+                        s.copy(
+                            commitments = merged,
+                            timetableBusy = false,
+                            timetableNotice = buildString {
+                                append(resp.summary.ifBlank { "认到 ${resp.fixedCommitments.size} 段固定占用" })
+                                if (resp.warnings.isNotEmpty()) {
+                                    append("\n有几处没看清,自己核对一下:")
+                                    append(resp.warnings.joinToString("；"))
+                                }
+                            },
+                            timetableNoticeIsError = false
+                        )
+                    }
+                }, { e ->
+                    val http = e as? retrofit2.HttpException
+                    val notice = when {
+                        http?.code() == 503 -> "服务端还没配认课表的模型,先手动把占用补上就行"
+                        else -> "课表没认出来(${e.userMessage()})。手动补几条,或者先跳过"
+                    }
+                    _ui.update { it.copy(timetableBusy = false, timetableNotice = notice, timetableNoticeIsError = true) }
+                })
+        }
+    }
+
+    fun clearTimetableNotice() {
+        if (_ui.value.timetableNotice.isNotEmpty()) {
+            _ui.update { it.copy(timetableNotice = "", timetableNoticeIsError = false) }
+        }
+    }
+
     // ---------------- 校验 ----------------
 
     /**
@@ -318,6 +525,10 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             if (s.weakSubjects.isEmpty()) return "挑一门最想补的科目,后面对它的排课会多一些"
             if (s.weakSubjects.size > 6) return "薄弱科目最多 6 门,先抓最要紧的几门"
             if (s.foundation !in FOUNDATION_LEVELS) return "选一下你现在的基础情况"
+        }
+        if (step >= 2) {
+            if (s.examSubjects.isEmpty()) return "把要考的科目写全,一门也算"
+            if (s.availability.isEmpty()) return "七天里至少标出一天真能坐下学的时段,点一下那一格就行"
         }
         return validateExamDate(s.examDate)
     }
@@ -346,6 +557,65 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             else -> message ?: "未知错误"
         }
     }
+
+    // ---------------- 载荷与图片 ----------------
+
+    /** 格子 → 服务端要的按星期窗口表;一天都没选中的星期不出现在载荷里 */
+    private fun availabilityPayload(grid: Map<Int, Set<String>>): List<BriefAvailabilityDto> =
+        (1..7).mapNotNull { weekday ->
+            val windows = WINDOW_CLOCK.filterKeys { it in grid[weekday].orEmpty() }
+                .values
+                .map { BriefWindowDto(start = it.first, end = it.second) }
+            if (windows.isEmpty()) null else BriefAvailabilityDto(weekday = weekday, windows = windows)
+        }
+
+    /**
+     * 把相册里的图压成能上传的 base64。
+     *
+     * 为什么要自己压:课表截图动辄好几 MB,服务端 JSON 上限 8mb,原图直传十有八九被拒;
+     * 缩到最长边 1600、按 JPEG 82 编码后通常只剩几百 KB,课表上的字照样认得出。
+     */
+    private fun compressToBase64(uri: Uri): String? {
+        val resolver = getApplication<Application>().contentResolver
+        val raw = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
+        val decoded = BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: return null
+        val scaled = scaleDown(decoded, TIMETABLE_MAX_SIDE)
+        val out = ByteArrayOutputStream()
+        val ok = scaled.compress(Bitmap.CompressFormat.JPEG, 82, out)
+        if (scaled !== decoded) scaled.recycle()
+        decoded.recycle()
+        if (!ok) return null
+        return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+    }
+
+    private fun scaleDown(src: Bitmap, maxSide: Int): Bitmap {
+        val longest = maxOf(src.width, src.height)
+        if (longest <= maxSide) return src
+        val ratio = maxSide.toFloat() / longest
+        return Bitmap.createScaledBitmap(
+            src,
+            (src.width * ratio).toInt().coerceAtLeast(1),
+            (src.height * ratio).toInt().coerceAtLeast(1),
+            true
+        )
+    }
+}
+
+/** 把落库的钟点窗口翻回问卷里的粗时段;对不上的自定义窗口不还原(问卷才是空闲的唯一入口) */
+internal fun briefToGrid(availability: List<BriefAvailabilityDto>): Map<Int, Set<String>> =
+    availability.associate { slot ->
+        slot.weekday to slot.windows.mapNotNull { w ->
+            WINDOW_CLOCK.entries.firstOrNull { it.value.first == w.start && it.value.second == w.end }?.key
+        }.toSet()
+    }.filterValues { it.isNotEmpty() }
+
+/** "8:00" / "08:00" / "8：00" → "08:00";认不出来给 null */
+internal fun normalizeClock(raw: String): String? {
+    val match = Regex("^(\\d{1,2})[:：](\\d{2})$").find(raw.trim()) ?: return null
+    val hour = match.groupValues[1].toIntOrNull() ?: return null
+    val minute = match.groupValues[2].toIntOrNull() ?: return null
+    if (hour !in 0..23 || minute !in 0..59) return null
+    return "%02d:%02d".format(hour, minute)
 }
 
 /**

@@ -1,10 +1,11 @@
 import { prisma } from '../../shared/prisma'
 import { ApiError } from '../../middlewares/error'
-import { llmConfigured } from '../../config/env'
+import { llmConfigured, visionConfigured } from '../../config/env'
 import { dayStart, diffDays, profileInputSchema, type ProfileInput } from './schemas'
 import type { GeneratedPlan } from './generator'
 import { generateAiPlan, type AiPlanningInput } from './aiGenerator'
 import { runPlanInterview, type InterviewInput, type InterviewResult } from './aiCoach'
+import { parseTimetableImage, type TimetableImage, type TimetableResult } from './timetable'
 import { briefIsEmpty, normalizeBrief, assessPlanningFacts, netAvailableMinutes, type PlanBrief, type PlanDocument } from './document'
 
 /**
@@ -285,6 +286,35 @@ function profileInputFromRow(row: any): ProfileInput | null {
 }
 
 /**
+ * 问卷里的结构化事实并入已有简报。
+ *
+ * 问卷只收「有哪些科」,逐科进度/范围/里程碑由面谈补,所以科目名按问卷名单重建、
+ * 同名保留旧进度 —— 用户重填问卷时不会把已经聊出来的进度清空。
+ * 空闲时段非空才覆盖;固定占用只有用户明确确认过才覆盖(这样才能表达「确认没有固定占用」)。
+ */
+function applyProfileFacts(brief: PlanBrief, input: ProfileInput): PlanBrief {
+  const examSubjects = input.examSubjects.length
+    ? input.examSubjects.map(name => brief.examSubjects.find(subject => subject.name === name) ?? {
+      name, progress: '', scope: '', remainingMinutes: 0, milestone: '', milestoneDate: '', milestoneMinutes: 0,
+    })
+    : brief.examSubjects
+  return {
+    ...brief,
+    examSubjects,
+    availability: input.availability.length ? input.availability : brief.availability,
+    availabilityConfirmed: brief.availabilityConfirmed || input.availabilityConfirmed,
+    fixedCommitments: input.commitmentsConfirmed ? input.fixedCommitments : brief.fixedCommitments,
+    commitmentsConfirmed: brief.commitmentsConfirmed || input.commitmentsConfirmed,
+  }
+}
+
+/** 从档案行读出简报(坏数据当空简报),供问卷合并 / 面谈上下文 / 课表识别复用 */
+function briefFromRow(row: any): PlanBrief {
+  const raw = jsonObject(row?.briefJson)
+  return raw ? normalizeBrief(raw) : normalizeBrief(null)
+}
+
+/**
  * 落库前的最后一道闸:宁可在这里抛错让事务不开始,也不要写进一份自相矛盾的计划。
  * 检查项对应生成器的核心承诺 —— 阶段连续、计划项落在所属阶段区间内、每天不超预算。
  */
@@ -325,13 +355,14 @@ function assertGeneratedPlanValid(generated: GeneratedPlan, dailyMinutes: number
 }
 
 /**
- * 服务端依赖的 AI 能力。`interview` 刻意是可选的:
- * 单测注入的假 AI 只需要 generate,不必为了跑通测试去 mock 一整套面谈。
+ * 服务端依赖的 AI 能力。`interview` / `parseTimetable` 刻意是可选的:
+ * 单测注入的假 AI 只需要 generate,不必为了跑通测试去 mock 一整套面谈与视觉识别。
  */
 export interface PlanningAi {
   configured: () => boolean
   generate: (input: AiPlanningInput) => Promise<{ title: string; plan: GeneratedPlan; document?: PlanDocument | null }>
   interview?: (input: InterviewInput) => Promise<InterviewResult>
+  parseTimetable?: (input: TimetableImage) => Promise<TimetableResult>
 }
 
 export function createPlanningService(
@@ -340,6 +371,7 @@ export function createPlanningService(
     configured: llmConfigured,
     generate: generateAiPlan,
     interview: runPlanInterview,
+    parseTimetable: parseTimetableImage,
   },
 ) {
   async function requireProfileRow(userGuid: string) {
@@ -375,7 +407,11 @@ export function createPlanningService(
     async upsertProfile(userGuid: string, input: ProfileInput): Promise<PublicProfile> {
       // 路由层已经 parse 过一次;这里再走一遍 schema,保证任何调用方都进不了脏数据
       const parsed = profileInputSchema.parse(input)
-      const data = {
+      // 问卷里的正式科目/空闲时段/固定占用是「已确认事实」,直接并进简报,
+      // 面谈就不必再一项项复问,只补逐科的进度与里程碑。
+      const existing = await db.userProfile.findUnique({ where: { userGuid } })
+      const mergedBrief = applyProfileFacts(briefFromRow(existing), parsed)
+      const data: Record<string, unknown> = {
         targetType: parsed.targetType,
         examDate: parsed.examDate,
         dailyMinutes: parsed.dailyMinutes,
@@ -383,6 +419,8 @@ export function createPlanningService(
         foundation: parsed.foundation,
         weakSubjectsJson: JSON.stringify(parsed.weakSubjects),
       }
+      // 空简报既不写也不覆盖:老客户端不带新字段时不会凭空多出一份空简报
+      if (!briefIsEmpty(mergedBrief)) data.briefJson = JSON.stringify(mergedBrief)
       const row = await db.userProfile.upsert({
         where: { userGuid },
         create: { userGuid, ...data, onboardingDoneAt: new Date(), createdAt: new Date(), updatedAt: new Date() },
@@ -473,11 +511,13 @@ export function createPlanningService(
 
       const profileRow = await db.userProfile.findUnique({ where: { userGuid } })
       const profile = profileRow ? profileInputFromRow(profileRow) : null
+      // 问卷/课表确认过的事实作为面谈底稿传下去:AI 不会再问一遍已经确认的科目与作息
+      const knownBrief = profileRow ? briefFromRow(profileRow) : null
       const messages = Array.isArray(input.messages) ? (input.messages as InterviewInput['messages']) : []
 
       let result: InterviewResult
       try {
-        result = await ai.interview({ messages, profile, force: input.force === true })
+        result = await ai.interview({ messages, profile, force: input.force === true, brief: knownBrief })
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
         console.warn(`[planning] 备考面谈失败:${reason}`)
@@ -486,11 +526,17 @@ export function createPlanningService(
 
       const brief = normalizeBrief(result.brief)
       const facts = assessPlanningFacts(brief, dayStart(new Date()), profile?.examDate ?? dayStart(new Date()), profile?.dailyMinutes ?? 0)
-      if (!facts.ready || !profile) {
-        const followUp = facts.missing.length ? `还需确认:${facts.missing.join('、')}`
-          : facts.deficits.length ? `考前时间不足:${facts.deficits.map(d => `${d.subject}「${d.milestone}」缺${d.missingMinutes}分钟`).join('、')}`
-            : '请先完成备考档案'
-        return { reply: result.done ? followUp : result.reply, options: result.done ? [] : result.options, done: false, brief: null }
+      if (!profile) {
+        return { reply: '得先在「备考档案」里填好考期和每天能投入的时间,我才好把计划排准。填完回来我们接着聊。', options: [], done: false, brief: null }
+      }
+      if (!facts.ready) {
+        // 保留模型自己的追问 —— 覆盖成模板句会让面谈每轮都在复读,这是最伤体验的地方。
+        // 只有模型自认为可以收尾、实际上事实还没齐时,才附一句差项提示。
+        const hint = facts.missing.length ? `还差这几项:${facts.missing.join('、')}`
+          : facts.deficits.length ? `按现在确认的空闲时间还盖不住:${facts.deficits.map(d => `${d.subject}「${d.milestone}」缺${d.missingMinutes}分钟`).join('、')}`
+            : ''
+        const reply = result.done && hint ? `${result.reply}\n(${hint})` : result.reply
+        return { reply, options: result.done ? [] : result.options, done: false, brief: null }
       }
       if (result.done && !briefIsEmpty(brief) && profileRow) {
         await db.userProfile.update({
@@ -500,6 +546,46 @@ export function createPlanningService(
       }
 
       return { ...result, brief: result.done ? brief : null }
+    },
+
+    /**
+     * 课表图片识别:交给视觉模型转成「每周固定占用」,并入简报后回给客户端确认。
+     *
+     * 为什么允许没有档案行:上传课表发生在问卷流程里,那时用户可能还没保存过档案。
+     * 识别结果无论如何都返回给客户端,客户端把它带进 PUT /profile 即可落库;
+     * 已存在档案时顺手并进 briefJson,这样在面谈阶段补传课表也能立刻生效。
+     */
+    async parseTimetable(userGuid: string, input: TimetableImage): Promise<TimetableResult> {
+      if (!ai.parseTimetable || !visionConfigured()) {
+        throw new ApiError(503, 'AI_VISION_NOT_CONFIGURED', '尚未配置视觉模型,暂时无法识别课表图片,请手动填写固定占用')
+      }
+
+      let result: TimetableResult
+      try {
+        result = await ai.parseTimetable(input)
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error)
+        console.warn(`[planning] 课表识别失败:${reason}`)
+        throw new ApiError(502, 'TIMETABLE_PARSE_FAILED', `课表识别失败:${reason}`)
+      }
+
+      const profileRow = await db.userProfile.findUnique({ where: { userGuid } })
+      if (profileRow) {
+        const base = briefFromRow(profileRow)
+        // 识别出的课程是「用户上传并确认过的事实」,因此把确认位置 true;
+        // 与已有占用合并去重,重复上传同一张课表不会翻倍。
+        const known = base.fixedCommitments
+        const added = result.fixedCommitments.filter(item => !known.some(existing => existing.weekday === item.weekday
+          && existing.start === item.start && existing.end === item.end && existing.label === item.label))
+        await db.userProfile.update({
+          where: { userGuid },
+          data: {
+            briefJson: JSON.stringify({ ...base, fixedCommitments: [...known, ...added], commitmentsConfirmed: true }),
+            updatedAt: new Date(),
+          },
+        })
+      }
+      return result
     },
 
     async setItemStatus(userGuid: string, itemId: number, status: PlanItemStatus): Promise<PublicPlan> {

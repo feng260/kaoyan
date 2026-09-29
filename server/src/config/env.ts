@@ -9,6 +9,11 @@ function requireEnv(name: string, fallback?: string): string {
   return v
 }
 
+/** 取第一个非空值:用于「视觉配置缺省时回退到主配置」 */
+function pick(...values: Array<string | undefined>): string {
+  return values.find(v => v !== undefined && v !== '') ?? ''
+}
+
 export const env = {
   port: Number(process.env.PORT ?? 3000),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -42,6 +47,18 @@ export const env = {
     model: process.env.LLM_MODEL ?? 'deepseek-flash',
     timeoutMs: Number(process.env.LLM_TIMEOUT_MS ?? 120_000),
     maxTokens: Number(process.env.LLM_MAX_TOKENS ?? 8192),
+    /**
+     * 视觉模型:识别课表图片用。默认整套沿用上面的对话模型 —— 现在主模型多半本身
+     * 就是多模态(能收图片),再加一套配置纯属给部署添麻烦。只有当你想让识图单独
+     * 走另一个模型时,才显式填 LLM_VISION_MODEL(地址/密钥也可各自覆盖)。
+     */
+    vision: {
+      baseUrl: (pick(process.env.LLM_VISION_BASE_URL, process.env.LLM_BASE_URL) || 'https://api.deepseek.com').replace(/\/+$/, ''),
+      apiKey: pick(process.env.LLM_VISION_API_KEY, process.env.LLM_API_KEY),
+      model: pick(process.env.LLM_VISION_MODEL, process.env.LLM_MODEL) || 'deepseek-flash',
+      timeoutMs: Number(pick(process.env.LLM_VISION_TIMEOUT_MS, process.env.LLM_TIMEOUT_MS) || 120_000),
+      maxTokens: Number(pick(process.env.LLM_VISION_MAX_TOKENS, process.env.LLM_MAX_TOKENS) || 4096),
+    },
   },
 }
 
@@ -49,3 +66,5 @@ export const smtpConfigured = (): boolean => env.smtp.host !== '' && env.smtp.us
 export const adminConfigured = (): boolean => env.adminToken !== ''
 /** 计划生成所需的模型密钥是否已配置 */
 export const llmConfigured = (): boolean => env.llm.apiKey !== ''
+/** 课表图片识别所需的视觉模型是否已配置 */
+export const visionConfigured = (): boolean => env.llm.vision.apiKey !== '' && env.llm.vision.model !== ''

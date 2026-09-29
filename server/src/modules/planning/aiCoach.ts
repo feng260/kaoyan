@@ -1,6 +1,6 @@
 import { chatComplete, extractJson, LlmError, type ChatMessage } from '../../shared/llm/client'
 import { AiUnavailable } from './aiGenerator'
-import { normalizeBrief, assessPlanningFacts, type PlanBrief } from './document'
+import { mergeBrief, normalizeBrief, assessPlanningFacts, type PlanBrief } from './document'
 import { dayStart, type ProfileInput } from './schemas'
 
 /**
@@ -28,6 +28,8 @@ export type InterviewInput = {
   messages: ChatMessage[]
   /** 已填的问卷档案;没填也要能聊,所以可空 */
   profile: ProfileInput | null
+  /** 问卷/课表已经确认的事实(正式科目、真实空闲、固定占用);这些绝不能再问一遍 */
+  brief?: PlanBrief | null
   /** 用户主动点了「直接开始生成」 */
   force?: boolean
 }
@@ -48,23 +50,27 @@ const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,正在�
 1. 每轮只问 1–2 个最关键的问题,绝不要一次抛出一串问题清单。
 2. 提问时,针对每个问题给 2–4 个「快捷选项」放进 options,每个选项不超过 16 字,让考生能一键作答。
    不提问(收尾)时 options 给空数组。
-3. 提问顺序建议:目标院校与专业方向 → 一战/二战/三战、是否跨考、全职还是在职 → 每天可支配时长与作息 →
+3. 提问顺序建议:目标院校与专业方向 → 一战/二战/三战、是否跨考、全职还是在职 →
    各科当前水平与最薄弱的环节 → 已有哪些资料/课程 → 最近一次自测或模考分数 → 复习环境与干扰因素。
-   考生已经答过的不要重复问;档案里已有的信息(考试日期、每日时长、薄弱科目等)也不要再问。
-4. 先对考生上一句做一句简短的回应或点评(像真人一样接话,可以是提醒、确认或一句专业判断),再提问。
-5. 必须确认正式考试科目名称、每门的当前进度/已知范围/剩余任务分钟数/里程碑及其明确截止日期(YYYY-MM-DD)和目标分钟数,以及按星期与起止时间记录的真实空闲时段和固定占用(没有固定占用也须明确确认)。
-6. 即使考生要求直接开始或已达轮数上限,缺少上述事实也继续定向追问,绝不能声称信息足够;自命题范围不明时标为空,不得补写章节。
+   考生已经答过的不要重复问;档案里已有的信息(考试日期、每日时长、薄弱科目、正式科目、空闲时段、固定占用)也不要再问。
+   若上面「考生已填写问卷档案」里已经确认了正式科目/空闲时段/固定占用,你只需要补齐每一科的:
+   当前进度、已知考试范围(自命题范围不明就留空)、剩余任务分钟数、里程碑及其截止日期与目标分钟数。
+4. 先对考生上一句做一句简短的回应或点评(像真人一样接话,可以是提醒、确认或一句专业判断),再提问。不要复述待办清单,不要每轮说「还需确认某某」这类模板句。
+5. 需要逐步确认的事实:正式考试科目名称;每门的当前进度/已知范围/剩余任务分钟数/里程碑及其明确截止日期(YYYY-MM-DD)和目标分钟数;按星期与起止时间记录的真实空闲时段和固定占用(没有固定占用也须明确确认)。已经聊清楚的不要重复问,直接进入下一项。
+6. 缺少上述事实时不要声称信息足够;但要用自然对话的方式补齐,不要输出核对清单。自命题范围不明时标为空,不得补写章节。
 
 严格只输出一个 JSON 对象,不要任何解释文字、不要 Markdown 代码块:
 {
-  "reply": "给考生的回应 + 提问(或收尾语)",
+  "reply": "给考生的回应 + 提问(还没聊完就是提问,聊完了就是收尾语)",
   "options": ["快捷选项1", "快捷选项2"],
   "done": false,
-  "brief": null
+  "brief": { 把「到目前为止已经确认的事实」全部写进来 }
 }
 
-当 done 为 true 时,brief 必须给出,形如:
-{
+关键:无论 done 是 true 还是 false,brief 都必须给出,并且要累积 —— 每轮把考生已经确认的事实合并进去,
+不要因为还没聊完就写 null,也不要丢掉前面几轮已经确认的内容。
+
+brief 形如:{
   "summary": "一句话考生画像,如「在职二战,目标浙大 408,数学基础薄弱」",
   "goals": ["目标院校与专业", "目标总分或单科分"],
   "constraints": ["在职每周只有晚上 3 小时", "二战,已过一遍数学基础"],
@@ -98,7 +104,7 @@ function sanitizeMessages(raw: unknown): ChatMessage[] {
 }
 
 /** 档案里已有的信息不能让 AI 再问一遍 —— 直接写进系统侧上下文 */
-function profileContext(profile: ProfileInput | null): string {
+function profileContext(profile: ProfileInput | null, brief: PlanBrief | null): string {
   if (!profile) return '考生尚未填写问卷档案(考试日期、每日时长等未知,需要你在对话里问清楚)。'
   const lines = [
     '考生已填写问卷档案,以下信息不用再问:',
@@ -109,6 +115,16 @@ function profileContext(profile: ProfileInput | null): string {
     `- 自评基础:${profile.foundation}`,
     `- 薄弱科目:${profile.weakSubjects.join('、')}`,
   ]
+  // 问卷和课表已经确认过的事实写清楚,面谈就不必再逐项追问,只补「逐科的具体量」
+  if (brief && brief.examSubjects.length) {
+    lines.push(`- 正式考试科目(已确认,不要再问有哪些科):${brief.examSubjects.map(s => s.name).join('、')}`)
+  }
+  if (brief && brief.availabilityConfirmed && brief.availability.length) {
+    lines.push(`- 真实空闲时段(已确认,不要再问作息):${JSON.stringify(brief.availability)}`)
+  }
+  if (brief && brief.commitmentsConfirmed) {
+    lines.push(`- 固定占用(已确认,空数组表示考生确认没有):${JSON.stringify(brief.fixedCommitments)}`)
+  }
   return lines.join('\n')
 }
 
@@ -130,18 +146,27 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
   const forced = input.force === true
   const wantsWrapUp = forced || turns >= MAX_INTERVIEW_TURNS
 
+  // 问卷/课表已经确认的事实是「底稿」:模型每轮只补它认出来的部分,由这里负责合并,
+  // 避免某一轮模型少写一个字段就把上一轮确认过的科目或空闲时间弄丢。
+  const knownBrief = input.brief ?? null
+  const hasKnownFacts = knownBrief !== null && (knownBrief.examSubjects.length > 0
+    || (knownBrief.availabilityConfirmed && knownBrief.availability.length > 0)
+    || knownBrief.commitmentsConfirmed)
+
   const userPrompt = [
-    profileContext(input.profile),
+    profileContext(input.profile, knownBrief),
     '',
     '对话记录:',
     transcript(messages),
     '',
     `这已经是第 ${turns} 轮考生回答。`,
     wantsWrapUp
-      ? '请先汇总已确认的结构化事实为 brief;如有任一必要事实未确认,继续定向追问,done 必须为 false。'
+      ? '请把已确认的事实汇总进 brief;若还有必要事实没问到,用自然的问句继续补,done 保持 false(不要输出核对清单)。'
       : turns < MIN_INTERVIEW_TURNS
-        ? `请继续追问,至少聊满 ${MIN_INTERVIEW_TURNS} 轮再考虑收尾,但可在 brief 中持续整理已确认的事实。`
-        : '仅当正式科目、逐科进度、空闲时段和固定占用全部确认后才可收尾;否则继续追问。',
+        ? `请继续追问,至少聊满 ${MIN_INTERVIEW_TURNS} 轮再考虑收尾,并把已确认的事实持续写进 brief。`
+        : hasKnownFacts
+          ? '科目、空闲时段和固定占用已在问卷里确认过,不要再问这些;只问题目上还缺的逐科细节(进度、范围、剩余任务量与里程碑),补齐后即可收尾。'
+          : '仅当正式科目、逐科进度、空闲时段和固定占用都聊清楚后才可收尾;差哪项就自然地接着问哪项。',
   ].join('\n')
 
   let content: string
@@ -177,13 +202,26 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
     if (options.length >= MAX_OPTIONS) break
   }
 
-  const brief = normalizeBrief(parsed?.brief)
-  const facts = assessPlanningFacts(brief, dayStart(new Date()), input.profile?.examDate ?? dayStart(new Date()))
-  const done = (parsed?.done === true || wantsWrapUp) && facts.ready && (turns >= MIN_INTERVIEW_TURNS || forced)
-  if (!done) {
-    const question = facts.missing.length ? `还需确认:${facts.missing.join('、')}`
-      : facts.deficits.length ? `现有空闲时间不足以完成:${facts.deficits.map(d => `${d.subject} ${d.milestone}缺${d.missingMinutes}分钟`).join('、')};请确认增加时段或调整里程碑。` : ''
-    return { reply: question || reply, options, done: false, brief: null }
+  // 问卷/课表确认过的事实是底稿:模型每轮只补它认出来的部分,合并后不会丢上一轮确认过的内容
+  const modelBrief = normalizeBrief(parsed?.brief)
+  const brief = knownBrief ? mergeBrief(knownBrief, modelBrief) : modelBrief
+  const facts = assessPlanningFacts(brief, dayStart(new Date()), input.profile?.examDate ?? dayStart(new Date()),
+    input.profile?.dailyMinutes ?? Infinity)
+  const modelSaysDone = parsed?.done === true || wantsWrapUp
+  const done = modelSaysDone && facts.ready && (turns >= MIN_INTERVIEW_TURNS || forced)
+  if (done) return { reply, options: [], done: true, brief }
+
+  // 保留模型自己的话 —— 这是「像真人」的关键,绝不能用模板句把它顶掉。
+  // 只有当模型自认为可以收尾、但必要事实其实还没齐时,才在末尾附一句「还差什么」的提示,
+  // 让考生知道卡在哪,同时模型的自然表达仍然完整保留。
+  let finalReply = reply
+  if (modelSaysDone && !facts.ready) {
+    const hint = facts.missing.length
+      ? `还差这几项:${facts.missing.join('、')}`
+      : facts.deficits.length
+        ? `现在的空闲时间还盖不住:${facts.deficits.map(d => `${d.subject} ${d.milestone}缺${d.missingMinutes}分钟`).join('、')}`
+        : ''
+    if (hint) finalReply = clip(`${reply}\n(${hint})`, MAX_REPLY_LENGTH)
   }
-  return { reply, options: [], done: true, brief }
+  return { reply: finalReply, options, done: false, brief }
 }
