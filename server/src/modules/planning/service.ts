@@ -320,7 +320,7 @@ function briefFromRow(row: any): PlanBrief {
  */
 function assertGeneratedPlanValid(generated: GeneratedPlan, dailyMinutes: number, examDate: Date, brief?: PlanBrief | null): void {
   const fail = (reason: string): never => {
-    throw new ApiError(500, 'PLAN_GENERATION_FAILED', `计划生成结果不完整:${reason}`)
+    throw new ApiError(502, 'PLAN_GENERATION_FAILED', `计划生成结果不完整:${reason}`)
   }
   if (generated.stages.length === 0) fail('没有生成任何阶段')
   if (generated.items.length === 0) fail('没有生成任何计划项')

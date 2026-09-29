@@ -60,6 +60,12 @@ const MAX_STAGES = 6
 const MIN_STAGES = 2
 const MIN_SLOT_MINUTES = 5
 const DEFAULT_MINUTES = 45
+/**
+ * 骨架输出的 max_tokens。显式指定而不是吃环境默认值,是为了让「阶段 + 每周作息模板」
+ * 这类固定体量的输出在不同部署下表现一致;也给 LLM 客户端的降级重试留出收紧空间
+ * (超过 2048 时才会触发「收紧 max_tokens 再试一次」这条兜底)。
+ */
+const SKELETON_MAX_TOKENS = 4096
 
 const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,只根据考生已确认的事实制定计划。
 你的任务:根据考生的备考档案,输出一份分阶段、可执行的备考计划骨架。
@@ -355,6 +361,7 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
       ],
       json: true,
       temperature: 0.5,
+      maxTokens: SKELETON_MAX_TOKENS,
     })
   } catch (error) {
     if (error instanceof LlmError) throw new AiUnavailable(error.message)

@@ -33,6 +33,12 @@ export type AiDocumentInput = {
 /** 少于这个章数就不值得展示:半份计划书比没有更让人困惑 */
 const MIN_CHAPTERS = 4
 const DOC_TIMEOUT_MS = 180_000
+/**
+ * 单段文档的 max_tokens。分段本身就是为了不撞上限,这里再显式给一个足够宽的值,
+ * 让「概述段(6 张卡片 + 目标分表)」和「各科段(每科一张表)」都能完整吐完;
+ * 厂商上限更低时由 LLM 客户端的降级重试收紧到 2048。
+ */
+const DOC_MAX_TOKENS = 4096
 
 const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,正在为考生撰写一份与《468 天考研全程作战计划》同等水准的全程计划书。
 
@@ -196,6 +202,7 @@ async function runSection(section: Section, context: string): Promise<any[]> {
     ],
     json: true,
     temperature: 0.65,
+    maxTokens: DOC_MAX_TOKENS,
     timeoutMs: DOC_TIMEOUT_MS,
   })
   const parsed = extractJson<any>(content)
