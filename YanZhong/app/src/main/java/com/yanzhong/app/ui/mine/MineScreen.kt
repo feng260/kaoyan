@@ -408,7 +408,9 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
 
             item(key = "about") {
                 MineCard(title = "研钟 YanZhong", icon = AppIcons.Info, accent = Subject408Color, palette = palette) {
-                    Text("版本 1.0.0-m1", style = MaterialTheme.typography.bodyLarge, color = palette.ink)
+                    // 版本号跟 BuildConfig 走(F5):写死会随发版漂移,关于页和实际包对不上
+                    Text("版本 ${com.yanzhong.app.BuildConfig.VERSION_NAME}",
+                        style = MaterialTheme.typography.bodyLarge, color = palette.ink)
                     Spacer(Modifier.height(4.dp))
                     Text(
                         "学什么用扇贝,怎么学、学得怎么样用研钟。\n本地数据 · 零广告 · 零社区",
@@ -807,6 +809,17 @@ private fun MineHero(state: MineUiState, palette: MinePalette) {
                     profile.peakHour?.let { "${it}:00" } ?: "暂无",
                     palette,
                     Modifier.weight(1f)
+                )
+            }
+            // 全 0 空态引导(A6):四张卡都是 0 时看起来像"什么都没发生"
+            if (profile.totalFocusMin == 0) {
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    "完成第一个番茄后，这里会亮起来",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.muted,
+                    modifier = Modifier.fillMaxWidth(),
+                    textAlign = TextAlign.Center
                 )
             }
         }

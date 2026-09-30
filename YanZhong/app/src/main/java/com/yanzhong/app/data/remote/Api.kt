@@ -391,6 +391,8 @@ data class InterviewResp(
     val options: List<String> = emptyList(),
     val done: Boolean = false,
     val brief: PlanBriefDto? = null,
+    /** 服务端判定档案未就绪:客户端据此切回「填写备考档案」阶段，给用户可点击的出口 */
+    val needProfile: Boolean = false,
     val serverTime: Long = 0
 )
 

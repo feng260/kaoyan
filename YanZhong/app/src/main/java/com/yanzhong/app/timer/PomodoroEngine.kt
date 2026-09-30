@@ -71,6 +71,11 @@ data class TimerState(
 ) {
     val isRunning: Boolean get() = phase != Phase.IDLE
     val isFocusing: Boolean get() = phase == Phase.FOCUSING || phase == Phase.PAUSED
+
+    /** 已流逝的净专注毫秒(不含暂停):正计时为累计值,其余为「总时长 - 剩余」 */
+    val elapsedFocusMs: Long
+        get() = if (mode == TimerMode.STOPWATCH) remainingMs
+        else (durationMs - remainingMs).coerceAtLeast(0)
 }
 
 class PomodoroEngine(

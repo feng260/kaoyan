@@ -73,7 +73,24 @@ data class OnboardingUiState(
     val onlyPlanMissing: Boolean get() = profileSaved && plan == null
 }
 
+/** 考研兜底模板:本地没有任何科目时才用 */
 private val DEFAULT_WEAK_SUBJECTS = listOf("政治", "英语", "数学", "专业课")
+
+/**
+ * 按 [TARGET_TYPES] 分型的科目预设(F3):选法考不该看到"数学"。
+ * 本地已有科目永远优先;这里的清单只在本地为空时兜底,且用户仍可自由增删。
+ */
+private val SUBJECT_PRESETS: Map<String, List<String>> = mapOf(
+    "考研" to DEFAULT_WEAK_SUBJECTS,
+    "法考" to listOf("民法", "刑法", "行政法", "理论法", "商经法", "三国法", "刑诉", "民诉"),
+    "考公" to listOf("行测", "申论"),
+    "专升本" to listOf("英语", "政治", "大学语文", "高等数学"),
+    "其他" to DEFAULT_WEAK_SUBJECTS,
+)
+
+/** 科目候选清单:本地已有科目优先,没有则按备考类型给预设,最后才落通用模板 */
+private fun subjectOptionsFor(targetType: String, localSubjects: List<String>): List<String> =
+    localSubjects.ifEmpty { SUBJECT_PRESETS[targetType] ?: DEFAULT_WEAK_SUBJECTS }
 
 /** 问卷总步数:目标与考期 → 节奏与短板 → 正式科目与真实空闲 */
 const val ONBOARDING_STEPS = 3
@@ -108,6 +125,9 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     private val _ui = MutableStateFlow(OnboardingUiState(examDate = suggestedExamDate(TARGET_TYPES.first())))
     val state: StateFlow<OnboardingUiState> = _ui
 
+    /** 本地已有科目名:科目候选的第一优先级,切换备考类型时也要以它为准 */
+    private var localSubjectNames: List<String> = emptyList()
+
     init {
         viewModelScope.launch {
             // 科目清单跟着本地已有科目走,用户看到的就是自己那几门课,
@@ -115,7 +135,10 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             val names = runCatching {
                 repo.observeSubjects().first().map { it.name.trim() }.filter { it.isNotEmpty() }
             }.getOrDefault(emptyList())
-            _ui.update { it.copy(subjectOptions = names.ifEmpty { DEFAULT_WEAK_SUBJECTS }) }
+            localSubjectNames = names
+            _ui.update {
+                it.copy(subjectOptions = subjectOptionsFor(it.targetType, names))
+            }
         }
     }
 
@@ -171,6 +194,9 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { ApiClient.api().getProfile() }.fold({ resp ->
                 val p = resp.profile
                 if (p != null && p.isComplete && !manage) {
+                    // 档案里带着用户真实的考期:顺手把本地倒计时节点的日子对齐一次,
+                    // 免得首页一直显示首启预置的那个占位日期
+                    runCatching { repo.syncExamCountdown(p.targetType, p.examDate) }
                     _ui.update { s -> s.copy(phase = OnboardingPhase.SUCCESS, profile = p) }
                 } else {
                     // 老账号可能只有半份档案:能回填的全部回填,别让人重填一遍
@@ -221,7 +247,14 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update { it.copy(message = err, messageIsError = true) }
             return
         }
-        _ui.update { it.copy(step = (s.step + 1).coerceAtMost(ONBOARDING_STEPS - 1), message = "", messageIsError = false) }
+        val to = (s.step + 1).coerceAtMost(ONBOARDING_STEPS - 1)
+        // 上一屏已经勾过「最没底的几门」,这一屏的科目别再让用户重勾一遍;
+        // 只在用户还没动过这一屏的科目时补齐,免得把他在这一屏的删改覆盖掉
+        val subjects = if (to == ONBOARDING_STEPS - 1 && s.examSubjects.isEmpty())
+            s.weakSubjects.take(MAX_EXAM_SUBJECTS).toSet() else s.examSubjects
+        _ui.update {
+            it.copy(step = to, examSubjects = subjects, message = "", messageIsError = false)
+        }
     }
 
     fun back() {
@@ -263,6 +296,8 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             )
             runCatching { ApiClient.api().putProfile(body) }.fold({ saved ->
                 // 档案落库即完成:计划由「AI 面谈 → 生成」这条独立的路去产生
+                // 考期同时落到本地倒计时节点,首页显示的是用户自己填的日子
+                runCatching { repo.syncExamCountdown(s.targetType, s.examDate) }
                 _ui.update {
                     it.copy(
                         phase = OnboardingPhase.SUCCESS,
@@ -313,6 +348,9 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 targetType = value,
                 // 只在日期还是"上一步的自动建议"或空着时才跟着换,已经手填过的日期不动
                 examDate = if (s.examDate.isBlank() || s.examDate == oldSuggestion) suggestedExamDate(value) else s.examDate,
+                // 换备考类型,科目候选跟着换(F3):选法考后不该还挂着"数学/政治"。
+                // 用户自己加过的科目保留在候选里,不丢他敲过的字。
+                subjectOptions = (subjectOptionsFor(value, localSubjectNames) + s.subjectOptions).distinct(),
                 message = "",
                 messageIsError = false
             )
@@ -410,8 +448,9 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * 手动补一条固定占用(没传课表或课表上没印全的时候用)。
      * [start]/[end] 是用户敲的钟点,这里只做格式与先后校验,不猜。
+     * 返回是否真的记下,好让输入框只在成功时清空 —— 校验没过就留着让用户改。
      */
-    fun addCommitment(weekday: Int, start: String, end: String, label: String) {
+    fun addCommitment(weekday: Int, start: String, end: String, label: String): Boolean {
         val s = _ui.value
         val from = normalizeClock(start)
         val to = normalizeClock(end)
@@ -427,7 +466,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (error != null) {
             _ui.update { it.copy(message = error, messageIsError = true) }
-            return
+            return false
         }
         _ui.update {
             it.copy(
@@ -441,6 +480,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 messageIsError = false
             )
         }
+        return true
     }
 
     /**

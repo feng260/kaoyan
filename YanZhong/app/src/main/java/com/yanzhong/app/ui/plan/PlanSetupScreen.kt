@@ -9,18 +9,21 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -74,6 +77,29 @@ fun PlanSetupScreen(padding: PaddingValues, navController: NavHostController, pr
             else -> {
                 StepDots(state.step)
                 Spacer(Modifier.height(20.dp))
+                // 档案完整时直接落在最后一题,可考期在第一步 —— 这里常驻一行考期,
+                // 想改日期的人不必先点两次「返回上一步」才找得到。
+                if (state.step > 0) {
+                    Text("考试是哪天", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(2.dp))
+                    Text("倒计时和阶段划分都以它为终点", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(
+                        value = state.examDate,
+                        onValueChange = vm::setExamDate,
+                        label = { Text("考试日期") },
+                        placeholder = { Text("2026-12-19") },
+                        leadingIcon = {
+                            Icon(AppIcons.Calendar, contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(20.dp))
+                }
                 when (state.step) {
                     0 -> StepTarget(state, vm)
                     1 -> StepRhythm(state, vm)

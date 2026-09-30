@@ -328,12 +328,13 @@ private fun MessageBubble(
         return
     }
     // AI 侧只留两块:一句灰色接话 + 一张醒目的「本轮要回答的问题」卡片,
-    // 考生扫一眼就知道该答什么,不必在整段文字里找问号
+    // 考生扫一眼就知道该答什么,不必在整段文字里找问号。
+    // 气泡限宽 + 左侧头像(A1):全宽气泡让对话区像文档而不是聊天,重心松散。
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-        Column(Modifier.fillMaxWidth(0.92f)) {
+        PlannerAvatar()
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.fillMaxWidth(0.8f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(6.dp).background(Color(0xFF2E7D5B), CircleShape))
-                Spacer(Modifier.width(6.dp))
                 Text("规划师", style = MaterialTheme.typography.labelSmall, color = Color(0xFF2E7D5B))
             }
             Spacer(Modifier.height(6.dp))
@@ -348,6 +349,18 @@ private fun MessageBubble(
                 }
             }
         }
+    }
+}
+
+/** 规划师头像:对话身份一目了然,打字提示也复用它保持连续 */
+@Composable
+private fun PlannerAvatar() {
+    Box(
+        Modifier.size(28.dp).background(Color(0xFF2E7D5B).copy(alpha = 0.12f), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(AppIcons.Sparkles, contentDescription = null,
+            modifier = Modifier.size(16.dp), tint = Color(0xFF2E7D5B))
     }
 }
 
@@ -369,7 +382,9 @@ private fun QuestionCard(text: String) {
 @Composable
 private fun TypingRow() {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+        PlannerAvatar()
+        Spacer(Modifier.width(8.dp))
+        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
         Spacer(Modifier.width(8.dp))
         Text("规划师正在整理…", style = MaterialTheme.typography.labelMedium, color = Color(0xFF7A8A80))
     }

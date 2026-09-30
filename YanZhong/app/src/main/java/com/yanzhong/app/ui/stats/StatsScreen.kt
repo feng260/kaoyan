@@ -206,6 +206,15 @@ private fun KpiNotes(state: StatsUiState) {
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // 全 0 时先解释规则(F6):不说明会被当成"数据丢了"
+            if (state.focusMin == 0 && state.pomodoroCount == 0) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "这个范围里还没有满 1 分钟的专注记录——少于 1 分钟的番茄不计入统计。去专注页开始一个番茄，数据就会出现在这里。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             // 中断分析:放弃原因 Top3(参考番茄ToDo 专注力分析)
             if (state.abandoned > 0) {
                 Spacer(Modifier.height(6.dp))

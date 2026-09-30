@@ -20,7 +20,7 @@ import java.time.ZonedDateTime
         MonthlyReviewEntity::class,
         SyncTombstoneEntity::class
     ],
-    version = 7,
+    version = 8,
     exportSchema = false
 )
 abstract class YanZhongDatabase : RoomDatabase() {
@@ -53,6 +53,7 @@ abstract class YanZhongDatabase : RoomDatabase() {
                 MIGRATION_4_5,
                 MIGRATION_5_6,
                 MIGRATION_6_7,
+                MIGRATION_7_8,
             )
             .addCallback(object : Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
@@ -163,6 +164,13 @@ abstract class YanZhongDatabase : RoomDatabase() {
                     "CREATE UNIQUE INDEX IF NOT EXISTS index_task_accountGuid_planId_planItemId " +
                         "ON task (accountGuid, planId, planItemId)"
                 )
+            }
+        }
+
+        /** v8:内置参考计划包标记;存量行默认非内置,升级后由计划包补导(PLAN_PACK_VERSION)回填。 */
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE task ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0")
             }
         }
 

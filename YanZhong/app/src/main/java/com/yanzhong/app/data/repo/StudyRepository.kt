@@ -109,6 +109,13 @@ private fun parseNodeDate(token: String, zone: ZoneId): Long? = try {
     null
 }
 
+/** 倒计时节点名:考研叫「初试」更准,其余按目标类型叫「XX 考试」 */
+private fun examNodeName(targetType: String): String = when (targetType) {
+    "考研" -> "考研初试"
+    "", "其他" -> "目标考试"
+    else -> "${targetType}考试"
+}
+
 /** 同步 JSON:推送序列化用(编码默认值,墓碑行 isDeleted 显式可见) */
 private val syncJson = Json { encodeDefaults = true }
 
@@ -300,6 +307,43 @@ class StudyRepository(private val db: YanZhongDatabase) {
         return added
     }
 
+    /**
+     * 把问卷里填的考期落到本地倒计时节点上。
+     *
+     * 首启 seed 会预置一条硬编码的「2028 考研初试」占位节点,但用户真实的备考目标
+     * 与考期未必是它。档案存好后调用这里,把那条 EXAM 节点改成用户自己的日子,
+     * 首页倒计时才不会显示一个我们替他编的日期。解析不出日期时静默跳过,不动本地数据。
+     */
+    suspend fun syncExamCountdown(targetType: String, examDateRaw: String) {
+        val date = runCatching { LocalDate.parse(examDateRaw.trim()) }.getOrNull() ?: return
+        val targetAt = date.atTime(8, 30).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        val name = examNodeName(targetType)
+        val now = TimeUtils.now()
+        var changed = false
+        db.withTransaction {
+            val all = db.countdownNodeDao().getAll()
+            val existing = all.firstOrNull { it.type == NodeType.EXAM && it.pinned }
+                ?: all.firstOrNull { it.type == NodeType.EXAM }
+            if (existing != null) {
+                if (existing.name != name || existing.targetAt != targetAt) {
+                    db.countdownNodeDao().update(existing.copy(name = name, targetAt = targetAt).stamped(now))
+                    changed = true
+                }
+            } else {
+                db.countdownNodeDao().insert(
+                    CountdownNodeEntity(
+                        name = name,
+                        type = NodeType.EXAM,
+                        targetAt = targetAt,
+                        pinned = all.none { it.pinned }
+                    ).stamped(now)
+                )
+                changed = true
+            }
+        }
+        if (changed) signalDirty()
+    }
+
     // ---------- 今日视图 ----------
 
     fun observeTodayView(): Flow<TodayView> {
@@ -313,20 +357,25 @@ class StudyRepository(private val db: YanZhongDatabase) {
             val dayEnd = TimeUtils.dayEndOf(now)
             val todayDow = Instant.ofEpochMilli(now).atZone(zone).dayOfWeek
             val expanded = templates.filter { template ->
-                when (template.repeatRule) {
+                // 内置参考计划包只作参考,生成 AI 计划前不展开进今日待办
+                !template.builtin && when (template.repeatRule) {
                     RepeatRule.DAILY -> true
                     RepeatRule.WEEKLY -> (template.repeatDays shr (todayDow.value - 1)) and 1 == 1
                     else -> false
                 }
             }
             TodayView(
-                open = (allOpen.filter { it.repeatRule == RepeatRule.NONE && it.dueAt != null && it.dueAt <= dayEnd } +
+                open = (allOpen.filter {
+                    !it.builtin && it.repeatRule == RepeatRule.NONE && it.dueAt != null && it.dueAt <= dayEnd
+                } +
                     // 当日已完成的重复模板不再出现在待办(repeatParentId 标记今日 DONE 实例)
                     expanded.filter { template ->
                         allDone.none { it.repeatParentId == template.id && it.completedAt != null && it.completedAt in dayStart..dayEnd }
                     })
                     .sortedWith(compareBy({ it.priority }, { it.dueAt ?: Long.MAX_VALUE })),
-                done = allDone.filter { it.completedAt?.let { completedAt -> completedAt in dayStart..dayEnd } == true }
+                done = allDone.filter {
+                    !it.builtin && it.completedAt?.let { completedAt -> completedAt in dayStart..dayEnd } == true
+                }
             )
         }
     }
@@ -477,6 +526,12 @@ class StudyRepository(private val db: YanZhongDatabase) {
         db.taskDao().deleteByPlanAccount(accountGuid)
     }
 
+    /**
+     * 是否存在生效的服务端计划投影(applyPlanProjection 写入 / clearPlanProjections 清除)。
+     * 首页据此判断「计划是否已生成」:未生成时不展示阶段进度与今日计划内容,只给引导空态。
+     */
+    fun observeHasPlanProjection(): Flow<Boolean> = db.taskDao().observeHasPlanProjection()
+
     /** 本周(周一始)任务视图 */
     fun observeWeekView(): Flow<List<TaskEntity>> {
         return combine(db.taskDao().observeOpenTasks(), tickingNow()) { tasks, now ->
@@ -601,8 +656,10 @@ class StudyRepository(private val db: YanZhongDatabase) {
      *
      * 合并策略:科目按名称匹配(不存在则新建),任务的 subjectId 重映射到本地科目;
      * 节点与任务按「同名已存在即跳过」保证重复导入同一文件幂等,不产生脏数据。
+     *
+     * [builtin] = true 表示导入的是内置参考计划包:任务打上只读标记,生成 AI 计划前不进今日待办。
      */
-    suspend fun importJson(json: String): ImportResult {
+    suspend fun importJson(json: String, builtin: Boolean = false): ImportResult {
         val payload = Json { ignoreUnknownKeys = true }
             .decodeFromString<ExportPayload>(json)
         var subjectsAdded = 0
@@ -638,11 +695,13 @@ class StudyRepository(private val db: YanZhongDatabase) {
             }
 
             val existingTasks = db.taskDao().getAllTasks()
-            val existingTaskTitles = existingTasks.map { it.title }.toSet()
             val taskIdMap = mutableMapOf<Long, Long>()
             payload.tasks.forEach { task ->
-                if (task.title in existingTaskTitles) {
-                    taskIdMap[task.id] = existingTasks.first { it.title == task.title }.id
+                val existing = existingTasks.firstOrNull { it.title == task.title }
+                if (existing != null) {
+                    taskIdMap[task.id] = existing.id
+                    // 计划包升级补导:把已存在的同名任务补打内置参考标记(仅导入内置包时)
+                    if (builtin && !existing.builtin) db.taskDao().markBuiltin(existing.id)
                     skipped++
                 } else {
                     // 换机/备份恢复时保留原始完成状态与顺延次数,仅重映射科目引用
@@ -650,6 +709,7 @@ class StudyRepository(private val db: YanZhongDatabase) {
                         task.copy(
                             id = 0,
                             subjectId = subjectIdMap[task.subjectId] ?: task.subjectId,
+                            builtin = builtin,
                             clientGuid = ""
                         ).stamped(now)
                     )

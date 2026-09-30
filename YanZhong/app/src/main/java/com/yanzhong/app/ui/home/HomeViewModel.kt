@@ -48,6 +48,8 @@ data class HomeUiState(
     val timerRunning: Boolean = false,
     val onboardingDone: Boolean = true,
     val phase: PhaseInfo? = null,
+    /** 是否已有生效的服务端计划:false 时首页不展示阶段进度/今日节奏/进度卡,改给引导空态 */
+    val hasActivePlan: Boolean = false,
     val weekMinutes: Int = 0,
     val weekGoalMin: Int = 37 * 60,
     val todayPomodoros: Int = 0,
@@ -138,6 +140,14 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     private data class MonthSlice(val monthly: MonthlyReviewEntity? = null, val monthDone: Int = 0)
 
+    /** 设置/统计/复盘/计划态:预合并成单流,避免 combine 六参超载 */
+    private data class HomeSlice(
+        val settings: SettingsSlice,
+        val stats: FocusStats,
+        val reviews: ReviewSlice,
+        val hasActivePlan: Boolean
+    )
+
     /** 月度复盘 + 本月完成任务数:预合并成单流,避免 combine 六参超载(combine 仅支持最多 5 流) */
     @OptIn(ExperimentalCoroutinesApi::class)
     private val monthSlice = combine(
@@ -214,8 +224,10 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         repo.observeTodayView(),
         repo.observeSubjects(),
         timerRunning,
-        combine(onboarding, focusStats, reviewSlice) { s, f, r -> Triple(s, f, r) }
-    ) { slice, today, subjects, timerRunning, (settings, stats, reviews) ->
+        combine(onboarding, focusStats, reviewSlice, repo.observeHasPlanProjection()) { s, f, r, hasPlan ->
+            HomeSlice(s, f, r, hasPlan)
+        }
+    ) { slice, today, subjects, timerRunning, (settings, stats, reviews, hasActivePlan) ->
         HomeUiState(
             nodes = slice.nodes,
             pinnedIndex = slice.index,
@@ -229,7 +241,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             subjects = subjects,
             timerRunning = timerRunning,
             onboardingDone = settings.onboardingDone,
-            phase = Phases.phaseInfo(slice.now),
+            phase = if (hasActivePlan) Phases.phaseInfo(slice.now) else null,
+            hasActivePlan = hasActivePlan,
             weekMinutes = stats.weekMinutes,
             weekGoalMin = settings.weeklyGoalMin,
             todayPomodoros = stats.todayPomodoros,

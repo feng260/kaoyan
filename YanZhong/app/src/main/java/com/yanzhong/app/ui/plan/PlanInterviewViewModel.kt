@@ -283,6 +283,12 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(sending = true, error = null) }
         val snapshot = _ui.value.messages
         runCatching { ApiClient.aiApi().interview(InterviewReq(messages = snapshot)) }.fold({ resp ->
+            if (resp.needProfile) {
+                // 服务端判定档案未就绪(F4):切回补档案阶段,渲染「填写备考档案」按钮。
+                // 不再让用户对着一句纯文本打转——那是报告里点名的功能性死循环。
+                _ui.update { it.copy(phase = InterviewPhase.NEED_PROFILE, sending = false) }
+                return
+            }
             _ui.update {
                 it.copy(messages = snapshot + InterviewMessageDto("assistant", resp.reply),
                     options = if (resp.done) emptyList() else resp.options,

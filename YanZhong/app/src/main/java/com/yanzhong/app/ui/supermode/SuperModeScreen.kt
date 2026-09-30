@@ -194,15 +194,29 @@ fun SuperModeScreen(padding: PaddingValues, navController: androidx.navigation.N
                 // 悬浮窗权限:全屏覆盖层拦截(防逃逸增强)
                 SectionCard(title = "悬浮窗拦截", icon = AppIcons.Smartphone) {
                     val context = LocalContext.current
+                    // 一行摘要 + 按需展开详情(A3):三四行小字压在一起读不动
+                    var detailOpen by remember { mutableStateOf(false) }
                     Text(
-                        if (state.overlayAccess)
-                            "「显示在其他应用上层」已授予。专注期间对非白名单应用渲染全屏锁定层,直接拦截触摸,消除按 Home 键后的最大逃逸口。"
-                        else
-                            "开启「显示在其他应用上层」后,专注期间对非白名单应用渲染全屏锁定层直接拦截触摸;" +
-                                "未授权时回退为 1 秒轮询拉回方案(体验较差)。注意:覆盖层无法拦截下拉状态栏。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        if (state.overlayAccess) "已授权 · 专注期间非白名单应用被全屏锁定层拦截。"
+                        else "未授权 · 专注期间以 1 秒轮询拉回代替，体验较差。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
+                    if (detailOpen) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            if (state.overlayAccess)
+                                "「显示在其他应用上层」生效中:专注期间对非白名单应用渲染全屏锁定层,直接拦截触摸,消除按 Home 键后的最大逃逸口。"
+                            else
+                                "开启「显示在其他应用上层」后,专注期间对非白名单应用渲染全屏锁定层直接拦截触摸;" +
+                                    "未授权时回退为 1 秒轮询拉回方案(体验较差)。注意:覆盖层无法拦截下拉状态栏。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(onClick = { detailOpen = !detailOpen }) {
+                        Text(if (detailOpen) "收起详情" else "查看详情")
+                    }
                     if (!state.overlayAccess) {
                         Spacer(Modifier.height(8.dp))
                         Button(
@@ -228,12 +242,18 @@ fun SuperModeScreen(padding: PaddingValues, navController: androidx.navigation.N
                     SectionCard(title = "拦截权限", icon = AppIcons.ShieldCheck) {
                         val context = LocalContext.current
                         Text(
-                            if (state.usageAccess) "「使用情况访问」已授予,可识别白名单应用并拦截其余应用。"
-                            else "标准模式需要「使用情况访问」权限识别前台应用,未授权时无法执行白名单拦截。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            if (state.usageAccess) "已授权 · 可识别白名单应用并拦截其余应用。"
+                            else "未授权 · 标准模式无法识别前台应用，白名单拦截不生效。",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                         if (!state.usageAccess) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "标准模式需要「使用情况访问」权限识别前台应用,未授权时无法执行白名单拦截。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             Spacer(Modifier.height(8.dp))
                             Button(
                                 onClick = {

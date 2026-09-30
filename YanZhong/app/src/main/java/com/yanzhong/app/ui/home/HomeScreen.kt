@@ -57,8 +57,7 @@ import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.data.plan.isServerPlanItem
 import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.ui.theme.AppIcons
-import com.yanzhong.app.ui.theme.CoralRed
-import com.yanzhong.app.ui.theme.CoralRedDeep
+import com.yanzhong.app.ui.theme.actionCardGradient
 import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
 import com.yanzhong.app.ui.theme.EnglishColor
 import com.yanzhong.app.ui.theme.HeroCard
@@ -236,19 +235,30 @@ fun HomeScreen(
                                 onManageNodes = { showNodeManager = true }
                             )
                         }
+                        if (!state.hasActivePlan) {
+                            item(key = "plan-empty") {
+                                PlanGuideCard(
+                                    onOpenPlan = {
+                                        navController.navigate(Routes.planInterview()) { launchSingleTop = true }
+                                    }
+                                )
+                            }
+                        }
                         state.phase?.let { info ->
                             item(key = "phase-strip") { PhaseStrip(info = info) }
                         }
-                        item {
-                            TodayProgress(
-                                done = state.doneCount,
-                                total = state.totalCount,
-                                timerRunning = state.timerRunning,
-                                weekMinutes = state.weekMinutes,
-                                weekGoalMin = state.weekGoalMin,
-                                todayPomodoros = state.todayPomodoros,
-                                dailyPomodoroGoal = state.dailyPomodoroGoal
-                            )
+                        if (state.hasActivePlan) {
+                            item {
+                                TodayProgress(
+                                    done = state.doneCount,
+                                    total = state.totalCount,
+                                    timerRunning = state.timerRunning,
+                                    weekMinutes = state.weekMinutes,
+                                    weekGoalMin = state.weekGoalMin,
+                                    todayPomodoros = state.todayPomodoros,
+                                    dailyPomodoroGoal = state.dailyPomodoroGoal
+                                )
+                            }
                         }
                         item(key = "review-card") {
                             ReviewCard(
@@ -308,7 +318,7 @@ fun HomeScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
-                        todayTemplate?.let { tpl ->
+                        if (state.hasActivePlan) todayTemplate?.let { tpl ->
                             item(key = "rhythm-strip") {
                                 TodayRhythmCard(
                                     tpl = tpl,
@@ -385,13 +395,23 @@ fun HomeScreen(
                 )
             }
 
+            if (!state.hasActivePlan) {
+                item(key = "plan-empty") {
+                    PlanGuideCard(
+                        onOpenPlan = {
+                            navController.navigate(Routes.planInterview()) { launchSingleTop = true }
+                        }
+                    )
+                }
+            }
+
             state.phase?.let { info ->
                 item(key = "phase-strip") {
                     PhaseStrip(info = info)
                 }
             }
 
-            todayTemplate?.let { tpl ->
+            if (state.hasActivePlan) todayTemplate?.let { tpl ->
                 item(key = "rhythm-strip") {
                     TodayRhythmCard(
                         tpl = tpl,
@@ -403,16 +423,18 @@ fun HomeScreen(
                 }
             }
 
-            item {
-                TodayProgress(
-                    done = state.doneCount,
-                    total = state.totalCount,
-                    timerRunning = state.timerRunning,
-                    weekMinutes = state.weekMinutes,
-                    weekGoalMin = state.weekGoalMin,
-                    todayPomodoros = state.todayPomodoros,
-                    dailyPomodoroGoal = state.dailyPomodoroGoal
-                )
+            if (state.hasActivePlan) {
+                item {
+                    TodayProgress(
+                        done = state.doneCount,
+                        total = state.totalCount,
+                        timerRunning = state.timerRunning,
+                        weekMinutes = state.weekMinutes,
+                        weekGoalMin = state.weekGoalMin,
+                        todayPomodoros = state.todayPomodoros,
+                        dailyPomodoroGoal = state.dailyPomodoroGoal
+                    )
+                }
             }
 
             // 待办逐项 item 化(key=id):增删位移动画 + 互不牵连重组;断点间距在 header 内
@@ -589,6 +611,8 @@ fun HomeScreen(
 
     if (showOnboarding) {
         OnboardingCard(
+            presetLabel = state.nodes.getOrNull(state.pinnedIndex)
+                ?.let { "${it.name} ${TimeUtils.formatYmd(it.targetAt)}" },
             onManage = {
                 showOnboarding = false
                 showNodeManager = true
@@ -600,6 +624,18 @@ fun HomeScreen(
             }
         )
     }
+}
+
+/** 未生成 AI 计划时的引导空态:不展示阶段进度/今日节奏/进度卡,只引导去和 AI 制定计划 */
+@Composable
+private fun PlanGuideCard(onOpenPlan: () -> Unit) {
+    HeroCard(
+        title = "还没有学习计划",
+        desc = "先和 AI 聊几句,问清目标院校和每天能学多久,再照着一整份规划书给你排全程计划。",
+        icon = AppIcons.Sparkles,
+        colors = actionCardGradient(),
+        onClick = onOpenPlan
+    )
 }
 
 /** 阶段进度条:当前阶段名 + 第几天 + 五段比例轨道 + 阶段内细进度(与计划页同款视觉语言) */
@@ -1011,7 +1047,7 @@ private fun QuickStartBar(
             title = "新番茄 · 直接专注",
             desc = "一键开钟,立刻进入专注状态",
             icon = AppIcons.Timer,
-            colors = listOf(CoralRed, CoralRedDeep),
+            colors = actionCardGradient(),
             onClick = onNewPomodoro
         )
         if (recentTasks.isNotEmpty()) {
@@ -1122,12 +1158,13 @@ private fun BatchImportDialog(
 
 /** 首次启动引导:只讲一件事——添加倒计时节点(PRD 1.4 ③) */
 @Composable
-private fun OnboardingCard(onManage: () -> Unit, onDismiss: () -> Unit) {
+private fun OnboardingCard(presetLabel: String?, onManage: () -> Unit, onDismiss: () -> Unit) {
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("欢迎来到研钟") },
         text = {
-            Text("30 秒开始:为你的考研路添加第一个倒计时节点——\n\n已为你预置「2028 考研初试 2027-12-18」,你可以直接使用,或添加更多节点(模考、报名、复试)。")
+            // 预置节点是按用户档案同步出来的,别再把日期写死——考期因人而异
+            Text("30 秒开始:为你的考研路添加第一个倒计时节点——\n\n已为你预置「${presetLabel ?: "考研初试"}」,你可以直接使用,或添加更多节点(模考、报名、复试)。")
         },
         confirmButton = { TextButton(onClick = onManage) { Text("管理节点") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("开始使用") } }

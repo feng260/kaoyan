@@ -41,6 +41,9 @@ val MintGreenDeep = Color(0xFF009688)
 // 珊瑚红:立即行动 / 番茄专注类
 val CoralRed = Color(0xFFFF7059)
 val CoralRedDeep = Color(0xFFEF5B43)
+// 珊瑚红夜档(A5):深色靛蓝底上高饱和橙红与主色互相抢眼,降到低饱和一档
+val CoralRedNight = Color(0xFFC97C6B)
+val CoralRedDeepNight = Color(0xFFA86050)
 // 天蓝:规划 / 定制类
 val SkyBlue = Color(0xFF4FA8F5)
 val SkyBlueDeep = Color(0xFF3784D9)

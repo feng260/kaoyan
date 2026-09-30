@@ -218,6 +218,14 @@ interface TaskDao {
     @Query("DELETE FROM task WHERE clientGuid = :guid")
     suspend fun deleteByClientGuid(guid: String)
 
+    /** 是否存在生效的服务端计划投影:首页据此决定是否展示阶段进度与今日计划内容 */
+    @Query("SELECT EXISTS(SELECT 1 FROM task WHERE planId IS NOT NULL)")
+    fun observeHasPlanProjection(): Flow<Boolean>
+
+    /** 把已存在任务补打内置参考计划包标记(计划包升级补导时用) */
+    @Query("UPDATE task SET builtin = 1 WHERE id = :id")
+    suspend fun markBuiltin(id: Long)
+
     @Query(
         "UPDATE task SET clientGuid = lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-4'||" +
             "substr(hex(randomblob(2)),2)||'-'||" +

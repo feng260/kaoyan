@@ -8,6 +8,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.dp
 import com.yanzhong.app.data.prefs.ThemeMode
 
@@ -85,6 +86,16 @@ fun YanZhongTheme(
         shapes = AppShapes,
         content = content
     )
+}
+
+/**
+ * 立即行动类功能卡渐变(珊瑚红):深色模式下自动换夜档低饱和(A5)。
+ * 判定用当前主题背景亮度——跟随系统与手动选择深色两种来源都能覆盖。
+ */
+@Composable
+fun actionCardGradient(): List<Color> {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    return if (dark) listOf(CoralRedNight, CoralRedDeepNight) else listOf(CoralRed, CoralRedDeep)
 }
 
 /** 倒计时预警档位(PRD 6.4):>30 正常 / ≤30 琥珀 / ≤10 红 / ≤3 红+呼吸 */

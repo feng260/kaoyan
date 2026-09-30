@@ -105,6 +105,8 @@ data class TaskEntity(
     val accountGuid: String? = null,
     val planId: Long? = null,
     val planItemId: Long? = null,
+    /** 内置 468 天参考计划包导入的条目标记:仅作参考,在生成 AI 计划前不进入今日待办 */
+    @ColumnInfo(defaultValue = "0") val builtin: Boolean = false,
     @ColumnInfo(defaultValue = "") val clientGuid: String = "",
     @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0,
     @ColumnInfo(defaultValue = "1") val dirty: Boolean = true

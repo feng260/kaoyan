@@ -2,6 +2,7 @@ package com.yanzhong.app.ui.onboarding
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -9,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -47,6 +49,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yanzhong.app.data.remote.FOUNDATION_LEVELS
@@ -282,26 +285,25 @@ internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
     Spacer(Modifier.height(20.dp))
     FieldLabel("每周哪几天、哪些时段真坐得下来", "点格子就行。这天没空就不点,排课不会往空格子里塞任务")
     Spacer(Modifier.height(10.dp))
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         (1..7).forEach { day ->
+            // 每周固定一行、五格等宽(A7):FlowRow 放不下五个时段会换行,
+            // 星期标签和格子就错开了,选没选对自己都看不出来。等宽压进一行后标签永远对齐。
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "周${WEEKDAY_LABELS[day - 1]}",
                     style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.width(36.dp)
+                    modifier = Modifier.width(40.dp)
                 )
-                FlowRow(
-                    modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    STUDY_WINDOWS.forEach { window ->
-                        FilterChip(
-                            selected = window in state.availability[day].orEmpty(),
-                            onClick = { vm.toggleAvailability(day, window) },
-                            label = { Text(window, style = MaterialTheme.typography.bodySmall) }
-                        )
-                    }
+                Spacer(Modifier.width(6.dp))
+                val selected = state.availability[day].orEmpty()
+                STUDY_WINDOWS.forEach { window ->
+                    WeekWindowChip(
+                        label = window,
+                        selected = window in selected,
+                        onClick = { vm.toggleAvailability(day, window) },
+                        modifier = Modifier.weight(1f)
+                    )
                 }
             }
         }
@@ -360,9 +362,38 @@ internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
     ManualCommitmentRow { weekday, start, end, label -> vm.addCommitment(weekday, start, end, label) }
 }
 
+/** 周空闲格子(等宽):选中显主题容器色,未选中细描边;固定单行高度,七行始终对齐 */
+@Composable
+private fun RowScope.WeekWindowChip(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(999.dp),
+        color = if (selected) MaterialTheme.colorScheme.secondaryContainer
+        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = if (selected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
+        modifier = modifier
+    ) {
+        Text(
+            label,
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
+            else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            modifier = Modifier.padding(horizontal = 2.dp, vertical = 7.dp)
+        )
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ManualCommitmentRow(onAdd: (Int, String, String, String) -> Unit) {
+private fun ManualCommitmentRow(onAdd: (Int, String, String, String) -> Boolean) {
     var weekday by remember { mutableStateOf(1) }
     var label by remember { mutableStateOf("") }
     var start by remember { mutableStateOf("") }
@@ -413,10 +444,12 @@ private fun ManualCommitmentRow(onAdd: (Int, String, String, String) -> Unit) {
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
             onClick = {
-                onAdd(weekday, start, end, label)
-                label = ""
-                start = ""
-                end = ""
+                // 只有真记下了才清空:校验没过(时间格式/先后顺序)留着让用户改,不白打一遍
+                if (onAdd(weekday, start, end, label)) {
+                    label = ""
+                    start = ""
+                    end = ""
+                }
             },
             shape = RoundedCornerShape(12.dp)
         ) { Text("记下这条") }

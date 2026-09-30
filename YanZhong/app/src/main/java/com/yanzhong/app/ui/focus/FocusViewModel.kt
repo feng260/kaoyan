@@ -205,11 +205,17 @@ class FocusViewModel(app: Application) : AndroidViewModel(app) {
     fun endDuringBreak() = engine.abandon(null)
 
     /**
-     * 紧急退出(防逃逸强化):唯一的专注中断出口,每月配额 4 次。
-     * 非严格模式直接消耗配额退出;严格模式需 6 位密码验证,通过后消耗配额强制结束,
-     * 落库为非正常退出(valid=false),在统计页中断分析中体现。
+     * 普通放弃(非严格模式「结束专注」):随时可走,不消耗紧急退出月配额。
+     * 月配额只约束严格锁定下的防逃逸出口;普通模式本就不锁定,放弃不该被计次。
      */
-    fun emergencyExit(pin: String?, reason: String? = null, onResult: (Boolean) -> Unit) {
+    fun abandonFocus(reason: String? = null) = engine.abandon(reason)
+
+    /**
+     * 紧急退出(防逃逸强化):严格模式下唯一的专注中断出口,每月配额 4 次。
+     * 需 6 位紧急退出密码验证,通过后消耗配额强制结束,落库为非正常退出(valid=false),
+     * 在统计页中断分析中体现。专注不足 1 分钟不消耗配额(引擎本就不落库,不该计次)。
+     */
+    fun emergencyExit(pin: String, onResult: (Boolean) -> Unit) {
         viewModelScope.launch {
             val settings = settingsRepo.current()
             val quotaLeft = AppSettings.EMERGENCY_EXIT_QUOTA -
@@ -222,17 +228,20 @@ class FocusViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(false)
                 return@launch
             }
-            val ok = if (pin == null) true else settingsRepo.verifyEmergencyPin(settings, pin)
-            if (ok) {
-                val remaining = settingsRepo.consumeEmergencyExit()
-                engine.abandon(reason ?: if (pin == null) "紧急退出" else "严格模式紧急退出")
-                android.widget.Toast.makeText(
-                    getApplication(),
-                    "已紧急退出,本次专注记录为非正常退出 · 本月剩余 $remaining 次",
-                    android.widget.Toast.LENGTH_LONG
-                ).show()
+            if (!settingsRepo.verifyEmergencyPin(settings, pin)) {
+                onResult(false)
+                return@launch
             }
-            onResult(ok)
+            // 不足 1 分钟:引擎 abandon() 本就不落库,这里同样不计次
+            val charged = engine.state.value.elapsedFocusMs >= 60_000L
+            val remaining = if (charged) settingsRepo.consumeEmergencyExit() else quotaLeft
+            engine.abandon("严格模式紧急退出")
+            android.widget.Toast.makeText(
+                getApplication(),
+                "已紧急退出,本次专注记录为非正常退出 · 本月剩余 $remaining 次",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+            onResult(true)
         }
     }
 

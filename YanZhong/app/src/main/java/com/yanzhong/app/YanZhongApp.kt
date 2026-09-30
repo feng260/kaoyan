@@ -82,12 +82,12 @@ class YanZhongApp : Application() {
                 input.readBytes().toString(Charsets.UTF_8)
             }
         }.getOrNull() ?: return
-        runCatching { repository.importJson(json) }
+        runCatching { repository.importJson(json, builtin = true) }
             .onSuccess { settingsRepo.setPlanPackVersion(PLAN_PACK_VERSION) }
     }
 
     companion object {
-        /** 内置计划包内容版本:assets 里的 JSON 变更时 +1 */
-        const val PLAN_PACK_VERSION = 2
+        /** 内置计划包内容版本:assets 里的 JSON 变更、或导入语义变更(如 v3 起打内置标记)时 +1 */
+        const val PLAN_PACK_VERSION = 3
     }
 }

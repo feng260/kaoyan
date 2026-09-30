@@ -217,11 +217,15 @@ fun LoginScreen() {
                     prefix = "政策原文在",
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
                 )
-                TextButton(
-                    onClick = { showServerDialog = true },
-                    modifier = Modifier.align(Alignment.Start)
-                ) {
-                    Text("服务器地址（可选）")
+                // 服务器地址是调试入口(F7):普通考生误改后无法登录且难以自行恢复,
+                // 只在 Debug 构建暴露;线上排障可走长按标题唤出。
+                if (com.yanzhong.app.BuildConfig.DEBUG) {
+                    TextButton(
+                        onClick = { showServerDialog = true },
+                        modifier = Modifier.align(Alignment.Start)
+                    ) {
+                        Text("服务器地址（可选）")
+                    }
                 }
             }
         }

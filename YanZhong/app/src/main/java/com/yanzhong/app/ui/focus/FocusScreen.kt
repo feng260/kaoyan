@@ -561,6 +561,19 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
     val timer = state.timer
     var showAbandonConfirm by remember { mutableStateOf(false) }
     var showEmergencyExit by remember { mutableStateOf(false) }
+    // 放弃确认弹窗期间暂停计时:否则犹豫的这几分钟仍在倒数,倒计时甚至可能先跑完
+    var pausedByAbandonDialog by remember { mutableStateOf(false) }
+    /** 开/关普通放弃确认:打开时若在计时则暂停,取消时原样恢复 */
+    fun setAbandonConfirm(open: Boolean) {
+        if (open) {
+            pausedByAbandonDialog = timer.phase == Phase.FOCUSING
+            if (pausedByAbandonDialog) vm.pause()
+        } else if (pausedByAbandonDialog) {
+            pausedByAbandonDialog = false
+            vm.resume()
+        }
+        showAbandonConfirm = open
+    }
     val isBreak = timer.phase == Phase.SHORT_BREAK || timer.phase == Phase.LONG_BREAK
     val superOn = state.settings.superModeOn
     // 紧急退出月度配额(跨月自动清零):严格/普通模式共用的唯一专注中断出口
@@ -807,8 +820,8 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        } else if (quotaLeft <= 0) {
-            // 紧急退出:唯一专注中断出口,每月配额 4 次(防逃逸:逼用户等计时自然结束)
+        } else if (strictFocus && quotaLeft <= 0) {
+            // 严格锁定 + 配额耗尽:防逃逸,计时结束前无法退出
             Text(
                 "本月紧急退出次数已用完 · 计时结束前无法退出",
                 style = MaterialTheme.typography.labelLarge,
@@ -816,7 +829,8 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
             )
         } else {
             TextButton(onClick = {
-                if (strictFocus) showEmergencyExit = true else showAbandonConfirm = true
+                // 严格锁定走密码 + 配额;普通模式随时可放弃,不计次
+                if (strictFocus) showEmergencyExit = true else setAbandonConfirm(true)
             }) {
                 Text(
                     if (strictFocus) "紧急退出 · 本月剩 $quotaLeft 次" else "结束专注",
@@ -859,11 +873,11 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
     }
 
     if (showAbandonConfirm) {
-        // 紧急退出确认(非严格模式):原因记录用于后续专注力分析,可跳过
+        // 普通放弃确认(非严格模式):原因记录用于后续专注力分析,可跳过;不消耗紧急退出配额
         var reason by remember { mutableStateOf<String?>(null) }
         val reasons = listOf("被打断", "临时有事", "状态不好", "不想学了")
         AlertDialog(
-            onDismissRequest = { showAbandonConfirm = false },
+            onDismissRequest = { setAbandonConfirm(false) },
             title = { Text("结束本次专注？") },
             text = {
                 Column {
@@ -883,15 +897,17 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
             confirmButton = {
                 TextButton(
                     onClick = {
+                        // 放弃生效:不必复活计时(abandon 会直接停表)
+                        pausedByAbandonDialog = false
                         showAbandonConfirm = false
-                        vm.emergencyExit(null, reason) { }
+                        vm.abandonFocus(reason)
                     }
                 ) {
                     Text("确认退出", color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showAbandonConfirm = false }) {
+                TextButton(onClick = { setAbandonConfirm(false) }) {
                     Text("继续专注")
                 }
             }
