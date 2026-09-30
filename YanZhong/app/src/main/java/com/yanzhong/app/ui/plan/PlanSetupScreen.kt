@@ -9,14 +9,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -29,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.yanzhong.app.ui.nav.Routes
+import com.yanzhong.app.ui.onboarding.ExamDateField
 import com.yanzhong.app.ui.onboarding.ONBOARDING_STEPS
 import com.yanzhong.app.ui.onboarding.OnboardingPhase
 import com.yanzhong.app.ui.onboarding.OnboardingViewModel
@@ -85,19 +84,8 @@ fun PlanSetupScreen(padding: PaddingValues, navController: NavHostController, pr
                     Text("倒计时和阶段划分都以它为终点", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(10.dp))
-                    OutlinedTextField(
-                        value = state.examDate,
-                        onValueChange = vm::setExamDate,
-                        label = { Text("考试日期") },
-                        placeholder = { Text("2026-12-19") },
-                        leadingIcon = {
-                            Icon(AppIcons.Calendar, contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    // 与问卷第一步同一个组件:日历图标可点,不再是摆设
+                    ExamDateField(value = state.examDate, onValueChange = vm::setExamDate)
                     Spacer(Modifier.height(20.dp))
                 }
                 when (state.step) {

@@ -28,8 +28,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -37,6 +41,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -58,6 +63,9 @@ import com.yanzhong.app.data.remote.TARGET_TYPES
 import com.yanzhong.app.ui.legal.PolicyLinksRow
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.SuccessGreen
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 
 /**
  * 首次问卷。
@@ -177,21 +185,10 @@ internal fun StepTarget(state: OnboardingUiState, vm: OnboardingViewModel) {
     Spacer(Modifier.height(20.dp))
     FieldLabel("考试是哪天", "留出这一天,倒计时和阶段划分都以它为终点")
     Spacer(Modifier.height(10.dp))
-    OutlinedTextField(
+    ExamDateField(
         value = state.examDate,
         onValueChange = vm::setExamDate,
-        label = { Text("考试日期") },
-        placeholder = { Text("2026-12-19") },
-        leadingIcon = { Icon(AppIcons.Calendar, contentDescription = null, tint = colors.onSurfaceVariant) },
-        singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next),
-        keyboardActions = KeyboardActions(onNext = { vm.next() }),
-        shape = RoundedCornerShape(12.dp),
-        colors = OutlinedTextFieldDefaults.colors(
-            focusedBorderColor = colors.primary,
-            unfocusedBorderColor = colors.outline.copy(alpha = 0.7f)
-        ),
-        modifier = Modifier.fillMaxWidth()
+        onImeNext = vm::next
     )
     if (state.targetType == "考研") {
         Spacer(Modifier.height(6.dp))
@@ -201,6 +198,79 @@ internal fun StepTarget(state: OnboardingUiState, vm: OnboardingViewModel) {
             color = colors.onSurfaceVariant
         )
     }
+}
+
+/**
+ * 考试日期输入(问卷第一步与「备考档案」共用)。
+ *
+ * 原本这里只是一个带 Calendar 图标的普通文本框 —— 图标画着日历却点不动,
+ * 用户照着图标去点,自然"日历打不开"。现在左侧图标改成真的按钮,点开 M3 的
+ * DatePickerDialog;文本框本身仍可编辑,想直接敲或从系统日历粘过来都行
+ * (setExamDate 会把 2026/12/19 这类写法归一化成 2026-12-19)。
+ *
+ * DatePicker 的 selectedDateMillis 是 **UTC 午夜**,所以读回日期必须按 UTC 解,
+ * 否则东八区会整体差一天(与 NodeManageSheet 里同一处理)。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun ExamDateField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    onImeNext: () -> Unit = {}
+) {
+    val colors = MaterialTheme.colorScheme
+    var showPicker by remember { mutableStateOf(false) }
+
+    if (showPicker) {
+        val initialMillis = remember(value) {
+            runCatching { LocalDate.parse(value.trim()) }.getOrNull()
+                ?.atStartOfDay(ZoneOffset.UTC)?.toInstant()?.toEpochMilli()
+        }
+        val dateState = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    dateState.selectedDateMillis?.let { millis ->
+                        onValueChange(
+                            Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC)
+                                .toLocalDate().toString()
+                        )
+                    }
+                    showPicker = false
+                }) { Text("确定") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("取消") }
+            }
+        ) { DatePicker(state = dateState) }
+    }
+
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        label = { Text("考试日期") },
+        placeholder = { Text("2026-12-19") },
+        leadingIcon = {
+            IconButton(onClick = { showPicker = true }, modifier = Modifier.size(40.dp)) {
+                Icon(
+                    AppIcons.Calendar,
+                    contentDescription = "打开日历选择日期",
+                    tint = colors.primary
+                )
+            }
+        },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Next),
+        keyboardActions = KeyboardActions(onNext = { onImeNext() }),
+        shape = RoundedCornerShape(12.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = colors.primary,
+            unfocusedBorderColor = colors.outline.copy(alpha = 0.7f)
+        ),
+        modifier = modifier.fillMaxWidth()
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)
