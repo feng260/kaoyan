@@ -1,7 +1,6 @@
 package com.yanzhong.app.data.remote
 
 import android.os.Build
-import android.util.Log
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.timer.Phase
 import kotlinx.coroutines.CoroutineScope

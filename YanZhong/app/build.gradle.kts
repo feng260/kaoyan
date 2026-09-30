@@ -68,6 +68,15 @@ android {
         compose = true
         buildConfig = true
     }
+    lint {
+        abortOnError = true
+        // 「调用了低于 minSdk 的 API」升级为 fatal。
+        // 这不是假想:本项目 minSdk=29,曾用 LocalDate.ofInstant(Android 到 API 33 才有),
+        // 导致 Android 12/12L 上每次启动都 NoSuchMethodError 崩溃,而 assembleDebug 不跑 lint,
+        // 一直到真机 logcat 才暴露。升为 fatal 后,assembleRelease 走的 lintVital 会在
+        // 打包阶段直接拦住同类问题。
+        fatal += "NewApi"
+    }
 }
 
 dependencies {
@@ -98,4 +107,7 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-kotlinx-serialization:2.11.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     testImplementation("junit:junit:4.13.2")
+    // 内存泄漏检测:只进 debug 变体,release 包不含该依赖、体积与行为都不受影响。
+    // 本项目有前台服务 + 悬浮窗 + Room + 长生命周期协程 + 无限循环动画,是泄漏高发形态。
+    debugImplementation(libs.leakcanary.android)
 }

@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -46,8 +47,12 @@ class MainActivity : ComponentActivity() {
         requestNotificationPermissionIfNeeded()
         val app = application as YanZhongApp
         setContent {
-            val themeMode by app.settingsRepo.settings
-                .map { it.themeMode }
+            // Flow 操作符必须待在 remember 里:否则每次重组都会新建一条 Flow,
+            // collectAsStateWithLifecycle 会随之重新订阅(任意一次重组都把主题流重来一遍)。
+            val themeModeFlow = remember {
+                app.settingsRepo.settings.map { it.themeMode }
+            }
+            val themeMode by themeModeFlow
                 .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
             YanZhongTheme(themeMode = themeMode) {
                 // 启动两道门:①登录 ②备考档案。两段都过完才进主界面
@@ -99,11 +104,11 @@ class MainActivity : ComponentActivity() {
             androidx.lifecycle.viewmodel.compose.viewModel()
 
         // 先清零再读状态:顺序反了就会有一帧用上一位用户的结论放行。
-        // remember 在这里正好当"本次进门只跑一次"用——ProfileGate 会随退出登录
-        // 离开组合树,下次登录重新进入时这段代码自然重跑。
-        androidx.compose.runtime.remember { vm.beginSession() }
-
-        val state by vm.state.collectAsStateWithLifecycle()
+        // 清零必须同步发生在组合期,不能挪进 LaunchedEffect —— 那样正好晚一帧,
+        // 短暂闪出上一位用户的计划。所以仍用 remember;区别是块的返回值改成 vm.state
+        // 而不是 Unit:既满足 lint 的「remember 不得返回 Unit」,又保持"本次进门只跑一次"
+        // 的语义(ProfileGate 随退出登录离开组合树,下次登录重进时自然重跑)。
+        val state by remember(vm) { vm.beginSession(); vm.state }.collectAsStateWithLifecycle()
 
         when (state.phase) {
             com.yanzhong.app.ui.onboarding.OnboardingPhase.LOADING -> AuthChecking()
