@@ -46,7 +46,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -102,7 +101,7 @@ fun PlanInterviewScreen(
     BackHandler(adjustPreview && state.phase == InterviewPhase.CHATTING) { adjustPreview = false }
     LaunchedEffect(state.adjustment) { if (state.adjustment == null) adjustPreview = false }
 
-    Column(Modifier.fillMaxSize().background(Color(0xFFF7F8F6)).imePadding()) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding()) {
         Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = { if (fullscreen) fullscreen = false else navController.popBackStack() }) {
@@ -115,14 +114,17 @@ fun PlanInterviewScreen(
                 // 副标题说明「AI 在问什么/已经确认了什么」，避免只有光秃秃一个对话框
                 if (!fullscreen && state.phase == InterviewPhase.CHATTING) {
                     Text(chatterSubtitle(state), style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF6B7A72), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
             if (!fullscreen && state.phase == InterviewPhase.CHATTING) {
                 val answered = state.messages.count { it.role == "user" }
-                if (answered > 0) Surface(color = Color(0xFFEFF6F1), shape = RoundedCornerShape(50.dp)) {
+                if (answered > 0) Surface(color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(50.dp)) {
                     Text("已答 $answered 轮", Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall, color = Color(0xFF1F5A3D))
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer)
                 }
             }
         }
@@ -178,17 +180,19 @@ fun PlanInterviewScreen(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     )
                 }
-                Surface(color = Color.White, shadowElevation = 4.dp) {
+                Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
                     Column(Modifier.fillMaxWidth().padding(12.dp)) {
                         state.error?.let { ErrorRow(it, vm::retry, vm::dismissError) }
                         if (state.done) {
-                            Surface(color = Color(0xFFEFF6F1), shape = RoundedCornerShape(12.dp),
+                            Surface(color = MaterialTheme.colorScheme.secondaryContainer,
+                                shape = RoundedCornerShape(12.dp),
                                 modifier = Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
                                     Text("面谈已完成", style = MaterialTheme.typography.labelLarge,
-                                        color = Color(0xFF1F5A3D))
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer)
                                     Text("确认前不会改变当前计划，草稿可先预览再决定。",
-                                        style = MaterialTheme.typography.bodySmall, color = Color(0xFF4A5C51))
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer)
                                 }
                             }
                             Spacer(Modifier.height(8.dp))
@@ -279,12 +283,14 @@ private fun InterviewProgress(brief: PlanBriefDto?, modifier: Modifier = Modifie
 
 @Composable
 private fun FactChip(label: String, ready: Boolean) {
-    Surface(color = if (ready) Color(0xFFEFF6F1) else Color(0xFFF1F2F0),
+    Surface(color = if (ready) MaterialTheme.colorScheme.secondaryContainer
+        else MaterialTheme.colorScheme.surfaceVariant,
         shape = RoundedCornerShape(50.dp)) {
         Text(if (ready) "✓ $label" else "待确认 · $label",
             Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelSmall,
-            color = if (ready) Color(0xFF1F5A3D) else Color(0xFF8A948D))
+            color = if (ready) MaterialTheme.colorScheme.onSecondaryContainer
+            else MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -319,10 +325,11 @@ private fun MessageBubble(
 ) {
     if (message.role == "user") {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Surface(color = Color(0xFFDCEBE1), shape = RoundedCornerShape(14.dp),
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp),
                 modifier = Modifier.fillMaxWidth(0.85f)) {
                 Text(message.content, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    style = MaterialTheme.typography.bodyMedium, color = Color(0xFF24352C))
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer)
             }
         }
         return
@@ -335,15 +342,19 @@ private fun MessageBubble(
         Spacer(Modifier.width(8.dp))
         Column(Modifier.fillMaxWidth(0.8f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("规划师", style = MaterialTheme.typography.labelSmall, color = Color(0xFF2E7D5B))
+                Text("规划师", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.secondary)
             }
             Spacer(Modifier.height(6.dp))
-            Surface(color = Color.White, shape = RoundedCornerShape(14.dp), shadowElevation = 1.dp) {
+            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp),
+                shadowElevation = 1.dp,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     replyParts(message.content).forEach { part ->
                         if (part.isQuestion) QuestionCard(part.text)
-                        else Text(part.text, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF5A5F5C))
+                        else Text(part.text, style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     QuickAnswers(options, optionsEnabled, onOption)
                 }
@@ -356,25 +367,27 @@ private fun MessageBubble(
 @Composable
 private fun PlannerAvatar() {
     Box(
-        Modifier.size(28.dp).background(Color(0xFF2E7D5B).copy(alpha = 0.12f), CircleShape),
+        Modifier.size(28.dp)
+            .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape),
         contentAlignment = Alignment.Center
     ) {
         Icon(AppIcons.Sparkles, contentDescription = null,
-            modifier = Modifier.size(16.dp), tint = Color(0xFF2E7D5B))
+            modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.secondary)
     }
 }
 
 /** 本轮唯一的问题:单独填色、加「请回答」标签并放大加粗,和上面的接话拉开层级 */
 @Composable
 private fun QuestionCard(text: String) {
-    Surface(color = Color(0xFFEFF6F1), shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, Color(0xFFB8D6C4))) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(10.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
             Text("请回答", style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF2E7D5B), fontWeight = FontWeight.SemiBold)
+                color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(3.dp))
             Text(text, style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold, color = Color(0xFF173D2B))
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer)
         }
     }
 }
@@ -386,7 +399,8 @@ private fun TypingRow() {
         Spacer(Modifier.width(8.dp))
         CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
         Spacer(Modifier.width(8.dp))
-        Text("规划师正在整理…", style = MaterialTheme.typography.labelMedium, color = Color(0xFF7A8A80))
+        Text("规划师正在整理…", style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -400,11 +414,12 @@ private fun QuickAnswers(options: List<String>, enabled: Boolean, onOption: (Str
             Surface(
                 onClick = { onOption(option) },
                 shape = RoundedCornerShape(50.dp),
-                color = Color(0xFFEFF6F1),
-                border = BorderStroke(1.dp, Color(0xFFCBDFD2)),
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
             ) {
                 Text(option, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.labelLarge, color = Color(0xFF1F5A3D))
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer)
             }
         }
     }
@@ -420,11 +435,13 @@ private fun ColumnScope.DraftContent(
 ) {
     if (!fullscreen) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-            Text("DRAFT · 尚未生效", color = Color(0xFFAA5D38), style = MaterialTheme.typography.labelMedium)
+            Text("DRAFT · 尚未生效", color = MaterialTheme.colorScheme.tertiary,
+                style = MaterialTheme.typography.labelMedium)
             Text(draft.title, style = MaterialTheme.typography.titleMedium)
             if (estimatedSubjects.isNotEmpty()) Text(
                 "其中 ${estimatedSubjects.joinToString("、")} 的细节是 AI 按经验估的，「回聊天更正」可逐项改",
-                color = Color(0xFFAA5D38), style = MaterialTheme.typography.bodySmall)
+                color = MaterialTheme.colorScheme.tertiary,
+                style = MaterialTheme.typography.bodySmall)
             Text(if (activeCompared) "今天将移除 ${diff.removed.size} 项，新增 ${diff.added.size} 项"
                 else "当前计划读取失败，无法对比今日移除项", style = MaterialTheme.typography.bodySmall)
             if (activeCompared && diff.removed.isNotEmpty()) Text("移除：${diff.removed.joinToString("、") { it.title }}", style = MaterialTheme.typography.bodySmall)

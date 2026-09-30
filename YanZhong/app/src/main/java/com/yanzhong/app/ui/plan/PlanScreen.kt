@@ -1,6 +1,11 @@
 package com.yanzhong.app.ui.plan
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -345,21 +350,42 @@ private fun PlanActionCard(
     }
 }
 
+/**
+ * 加载卡:用骨架屏脉冲代替转圈。
+ * 这里等的是"一整份全程规划文档",骨架条能比 spinner 更直观地说明内容即将铺开,
+ * 也避免转圈在低端机上持续重绘动画带来的额外开销(脉冲只有一个 alpha 在变)。
+ */
 @Composable
 private fun PlanLoadingCard() {
+    val transition = rememberInfiniteTransition(label = "plan-loading")
+    val pulse by transition.animateFloat(
+        initialValue = 0.35f,
+        targetValue = 0.85f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "plan-loading-pulse"
+    )
+    val bar = MaterialTheme.colorScheme.surfaceVariant
     Surface(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surface,
         tonalElevation = 1.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            Modifier.padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            Text("正在获取云端计划…", style = MaterialTheme.typography.bodyMedium)
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                "正在获取云端计划…",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            listOf(1f, 0.72f, 0.86f).forEach { fraction ->
+                Box(
+                    Modifier
+                        .fillMaxWidth(fraction)
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(bar.copy(alpha = pulse))
+                )
+            }
         }
     }
 }

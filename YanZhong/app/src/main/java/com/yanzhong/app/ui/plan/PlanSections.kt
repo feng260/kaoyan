@@ -39,7 +39,9 @@ import com.yanzhong.app.ui.theme.EnglishColor
 import com.yanzhong.app.ui.theme.MathColor
 import com.yanzhong.app.ui.theme.NeutralTagColor
 import com.yanzhong.app.ui.theme.PoliticsColor
+import com.yanzhong.app.ui.theme.PillTone
 import com.yanzhong.app.ui.theme.SectionCard
+import com.yanzhong.app.ui.theme.StatusPill
 import com.yanzhong.app.ui.theme.Subject408Color
 import com.yanzhong.app.util.PersonalPlan
 import com.yanzhong.app.util.Phases
@@ -464,33 +466,18 @@ private fun PhaseBadge(index: Int, isCurrent: Boolean, isPast: Boolean) {
     }
 }
 
+/**
+ * 阶段状态 → 统一状态胶囊(Components.StatusPill)。
+ * 三态里只有「进行中」需要实心主色来抢注意力,另两态走中性容器色即可。
+ */
 @Composable
-private fun StatusPill(isCurrent: Boolean, isPast: Boolean) {
-    val text: String
-    val bg: Color
-    val fg: Color
-    when {
-        isCurrent -> {
-            text = "进行中"; bg = MaterialTheme.colorScheme.primary
-            fg = MaterialTheme.colorScheme.onPrimary
-        }
-        isPast -> {
-            text = "已完成"; bg = MaterialTheme.colorScheme.surfaceVariant
-            fg = MaterialTheme.colorScheme.onSurfaceVariant
-        }
-        else -> {
-            text = "未开始"; bg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-            fg = MaterialTheme.colorScheme.onSurfaceVariant
-        }
+private fun StageStatusPill(isCurrent: Boolean, isPast: Boolean) {
+    val (text, tone) = when {
+        isCurrent -> "进行中" to PillTone.SOLID
+        isPast -> "已完成" to PillTone.NEUTRAL
+        else -> "未开始" to PillTone.NEUTRAL
     }
-    Surface(shape = RoundedCornerShape(999.dp), color = bg) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall,
-            color = fg,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-        )
-    }
+    StatusPill(text = text, tone = tone)
 }
 
 @Composable
@@ -511,7 +498,7 @@ private fun PhaseContent(
                 else MaterialTheme.colorScheme.onSurface
             )
             Spacer(Modifier.width(8.dp))
-            StatusPill(isCurrent = isCurrent, isPast = isPast)
+            StageStatusPill(isCurrent = isCurrent, isPast = isPast)
             if (isCurrent) {
                 Spacer(Modifier.width(6.dp))
                 Surface(
@@ -934,7 +921,7 @@ private fun PhaseCampaignBlock(
                         else MaterialTheme.colorScheme.onSurface
                     )
                     Spacer(Modifier.width(8.dp))
-                    StatusPill(isCurrent = isCurrent, isPast = isPast)
+                    StageStatusPill(isCurrent = isCurrent, isPast = isPast)
                 }
                 Text(
                     "${fmtYmd(phase.start)} – ${fmtYmd(phase.end)}",

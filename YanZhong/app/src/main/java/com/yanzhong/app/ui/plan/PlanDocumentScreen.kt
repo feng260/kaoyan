@@ -68,9 +68,8 @@ import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.PlanAccent
 import com.yanzhong.app.ui.theme.PlanAccent2
 import com.yanzhong.app.ui.theme.PlanBg
-import com.yanzhong.app.ui.theme.PlanInk
-import com.yanzhong.app.ui.theme.PlanMuted
 import com.yanzhong.app.ui.theme.PlanTeal
+import com.yanzhong.app.ui.theme.Spacing
 
 /**
  * 「全程规划文档」页。
@@ -113,7 +112,8 @@ fun PlanDocumentScreen(padding: PaddingValues, navController: NavHostController)
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(PlanAccent.copy(alpha = 0.06f), PlanAccent2.copy(alpha = 0.04f), Color.White)
+                    listOf(PlanAccent.copy(alpha = 0.06f), PlanAccent2.copy(alpha = 0.04f),
+                        MaterialTheme.colorScheme.background)
                 )
             )
     ) {
@@ -129,9 +129,10 @@ fun PlanDocumentScreen(padding: PaddingValues, navController: NavHostController)
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = PlanAccent)
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.height(12.dp))
-                        Text("正在展开你的规划文档…", style = MaterialTheme.typography.bodyMedium, color = PlanMuted)
+                        Text("正在展开你的规划文档…", style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
 
@@ -166,7 +167,8 @@ private fun DocumentTopBar(title: String, onBack: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically
     ) {
         IconButton(onClick = onBack) {
-            Icon(AppIcons.ArrowBack, contentDescription = "返回", tint = PlanInk)
+            Icon(AppIcons.ArrowBack, contentDescription = "返回",
+                tint = MaterialTheme.colorScheme.onSurface)
         }
         Spacer(Modifier.width(2.dp))
         Column(Modifier.weight(1f)) {
@@ -174,12 +176,12 @@ private fun DocumentTopBar(title: String, onBack: () -> Unit) {
                 "全程规划",
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
-                color = PlanInk
+                color = MaterialTheme.colorScheme.onSurface
             )
             Text(
                 title,
                 style = MaterialTheme.typography.bodySmall,
-                color = PlanMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1
             )
         }
@@ -192,12 +194,12 @@ private fun DocumentBody(document: PlanDocumentDto, bottomPadding: Dp) {
         LazyColumn(
             modifier = Modifier.fillMaxSize().widthIn(max = 760.dp),
             contentPadding = PaddingValues(
-                start = 18.dp,
-                end = 18.dp,
-                top = 8.dp,
+                start = Spacing.lg,
+                end = Spacing.lg,
+                top = Spacing.sm,
                 bottom = bottomPadding + 40.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(26.dp)
+            verticalArrangement = Arrangement.spacedBy(Spacing.xl)
         ) {
             item(key = "hero") { DocumentHero(document) }
             items(
@@ -223,8 +225,8 @@ private fun DocumentHero(document: PlanDocumentDto) {
         if (hero.badge.isNotBlank()) {
             Surface(
                 shape = RoundedCornerShape(999.dp),
-                color = PlanAccent.copy(alpha = 0.08f),
-                border = BorderStroke(1.dp, PlanAccent.copy(alpha = 0.22f))
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.30f))
             ) {
                 Row(
                     Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
@@ -241,7 +243,7 @@ private fun DocumentHero(document: PlanDocumentDto) {
                         hero.badge,
                         style = MaterialTheme.typography.labelMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = PlanAccent
+                        color = MaterialTheme.colorScheme.primary
                     )
                 }
             }
@@ -252,7 +254,7 @@ private fun DocumentHero(document: PlanDocumentDto) {
             text = heroTitle(hero.titleLead, hero.titleAccent, hero.titleTail),
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.ExtraBold,
-            color = PlanInk,
+            color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
         )
@@ -262,7 +264,7 @@ private fun DocumentHero(document: PlanDocumentDto) {
             Text(
                 md(hero.subtitle),
                 style = MaterialTheme.typography.bodyMedium,
-                color = PlanMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth().widthIn(max = 560.dp)
             )
@@ -315,8 +317,8 @@ private fun DocumentHero(document: PlanDocumentDto) {
 private fun StatCell(label: String, value: String, modifier: Modifier = Modifier) {
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = Color.White.copy(alpha = 0.78f),
-        border = BorderStroke(1.dp, Color.White),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         shadowElevation = 1.dp,
         modifier = modifier
     ) {
@@ -328,14 +330,14 @@ private fun StatCell(label: String, value: String, modifier: Modifier = Modifier
                 value,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold,
-                color = PlanInk,
+                color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1
             )
             Spacer(Modifier.height(2.dp))
             Text(
                 label,
                 style = MaterialTheme.typography.labelSmall,
-                color = PlanMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
         }
@@ -353,14 +355,14 @@ private fun DocumentChapter(chapter: DocChapterDto) {
                 style = MaterialTheme.typography.titleMedium,
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
-                color = PlanAccent
+                color = MaterialTheme.colorScheme.primary
             )
             Spacer(Modifier.width(12.dp))
             Text(
                 chapter.title,
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.ExtraBold,
-                color = PlanInk,
+                color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f)
             )
         }
@@ -370,7 +372,7 @@ private fun DocumentChapter(chapter: DocChapterDto) {
             Text(
                 md(chapter.intro),
                 style = MaterialTheme.typography.bodyMedium,
-                color = PlanMuted
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
@@ -401,7 +403,7 @@ private fun ParagraphBlock(text: String) {
     Text(
         md(text),
         style = MaterialTheme.typography.bodyMedium,
-        color = PlanInk
+        color = MaterialTheme.colorScheme.onSurface
     )
 }
 
@@ -420,21 +422,22 @@ private fun CalloutBlock(text: String) {
             Modifier
                 .weight(1f)
                 .clip(RoundedCornerShape(topEnd = 14.dp, bottomEnd = 14.dp))
-                .background(PlanAccent2.copy(alpha = 0.06f))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.10f))
                 .padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
-            Text(md(text), style = MaterialTheme.typography.bodyMedium, color = PlanInk)
+            Text(md(text), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
 
-/** 玻璃拟态卡片:参考文档 status-item / phase 的样子——标题 + 若干要点 */
+/** 层叠表面卡片:参考文档 status-item / phase 的样子——标题 + 若干要点 */
 @Composable
 private fun CardBlock(card: DocCardDto) {
     Surface(
         shape = RoundedCornerShape(16.dp),
-        color = Color.White.copy(alpha = 0.78f),
-        border = BorderStroke(1.dp, Color.White),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         shadowElevation = 2.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -448,7 +451,7 @@ private fun CardBlock(card: DocCardDto) {
                     md(card.title),
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold,
-                    color = PlanInk,
+                    color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f)
                 )
             }
@@ -457,7 +460,7 @@ private fun CardBlock(card: DocCardDto) {
                 Text(
                     card.subtitle,
                     style = MaterialTheme.typography.labelMedium,
-                    color = PlanAccent,
+                    color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.SemiBold
                 )
             }
@@ -466,7 +469,7 @@ private fun CardBlock(card: DocCardDto) {
                 Text(
                     md(line),
                     style = MaterialTheme.typography.bodySmall,
-                    color = PlanMuted
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
@@ -477,14 +480,14 @@ private fun CardBlock(card: DocCardDto) {
 @Composable
 private fun TableBlock(table: DocTableDto) {
     if (table.columns.isEmpty()) return
-    val rule = PlanInk.copy(alpha = 0.10f)
+    val rule = MaterialTheme.colorScheme.outlineVariant
     Column(Modifier.fillMaxWidth()) {
         if (table.title.isNotBlank()) {
             Text(
                 table.title,
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.Bold,
-                color = PlanInk,
+                color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.padding(bottom = 8.dp)
             )
         }
@@ -495,10 +498,10 @@ private fun TableBlock(table: DocTableDto) {
                     Modifier
                         .width(cellWidth * table.columns.size)
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color.White.copy(alpha = 0.55f))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
                         .border(1.dp, rule, RoundedCornerShape(14.dp))
                 ) {
-                    Row(Modifier.background(Color.White.copy(alpha = 0.62f))) {
+                    Row(Modifier.background(MaterialTheme.colorScheme.surfaceContainerHigh)) {
                         table.columns.forEach { column ->
                             TableCell(column, cellWidth, header = true)
                         }
@@ -533,11 +536,12 @@ private fun TableCell(text: String, width: Dp, header: Boolean) {
                 text,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
-                color = PlanMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 letterSpacing = 0.6.sp
             )
         } else {
-            Text(md(text), style = MaterialTheme.typography.bodySmall, color = PlanInk)
+            Text(md(text), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
@@ -548,7 +552,8 @@ private fun TableCell(text: String, width: Dp, header: Boolean) {
 private fun ErrorCard(message: String, onRetry: () -> Unit, onBack: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(20.dp),
-        color = Color.White,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         shadowElevation = 6.dp,
         modifier = Modifier.fillMaxWidth().widthIn(max = 420.dp).padding(24.dp)
     ) {
@@ -566,7 +571,7 @@ private fun ErrorCard(message: String, onRetry: () -> Unit, onBack: () -> Unit) 
             Text(
                 message,
                 style = MaterialTheme.typography.bodyMedium,
-                color = PlanMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
             Spacer(Modifier.height(18.dp))
@@ -578,7 +583,7 @@ private fun ErrorCard(message: String, onRetry: () -> Unit, onBack: () -> Unit) 
             ) {
                 Text("重试", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
             }
-            TextButton(onClick = onBack) { Text("返回", color = PlanMuted) }
+            TextButton(onClick = onBack) { Text("返回", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }

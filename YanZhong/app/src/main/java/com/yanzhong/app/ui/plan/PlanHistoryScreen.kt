@@ -47,6 +47,10 @@ import com.yanzhong.app.data.remote.PlanItemDto
 import com.yanzhong.app.data.remote.PlanSummaryDto
 import com.yanzhong.app.data.remote.PlanStageDto
 import com.yanzhong.app.ui.theme.AppIcons
+import com.yanzhong.app.ui.theme.EmptyState
+import com.yanzhong.app.ui.theme.PillTone
+import com.yanzhong.app.ui.theme.SectionCard
+import com.yanzhong.app.ui.theme.StatusPill
 
 /**
  * 「历史计划」页:按版本倒序保留每一份生成过的计划,供只读回看。
@@ -215,26 +219,14 @@ private fun ErrorBlock(message: String, onRetry: () -> Unit) {
     }
 }
 
+/** 空态:复用全 App 统一的情感化空状态组件,不再自造一套 */
 @Composable
 private fun EmptyBlock() {
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 56.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Icon(
-            AppIcons.ClipboardList,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(36.dp)
-        )
-        Text("还没有历史计划", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text(
-            "生成过计划之后,每一版都会保留在这里,重新生成也不会覆盖旧的。",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
+    EmptyState(
+        icon = AppIcons.ClipboardList,
+        title = "还没有历史计划",
+        hint = "生成过计划之后,每一版都会保留在这里,重新生成也不会覆盖旧的。"
+    )
 }
 
 @Composable
@@ -257,58 +249,32 @@ private fun HistoryList(
 @Composable
 private fun SummaryCard(plan: PlanSummaryDto, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
-    Surface(
+    SectionCard(
+        title = plan.title,
+        subtitle = "第 ${plan.version} 版 · ${plan.startDate} ~ ${plan.examDate}",
         onClick = onClick,
-        shape = MaterialTheme.shapes.large,
-        color = colors.surface,
-        tonalElevation = 1.dp,
-        shadowElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth()
+        trailing = { StatusTag(plan.status) }
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    plan.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                StatusTag(plan.status)
-            }
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                "第 ${plan.version} 版 · ${plan.startDate} ~ ${plan.examDate}",
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant
+                "完成 ${plan.doneItems}/${plan.totalItems} · 共 ${plan.totalDays} 天",
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f)
             )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "完成 ${plan.doneItems}/${plan.totalItems} · 共 ${plan.totalDays} 天",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f)
-                )
-                Text("查看", style = MaterialTheme.typography.labelLarge, color = colors.primary)
-            }
+            Text("查看", style = MaterialTheme.typography.labelLarge, color = colors.primary)
         }
     }
 }
 
+/** 计划生命周期状态 → 统一状态胶囊:生效中走强调色,归档走中性色 */
 @Composable
 private fun StatusTag(status: String) {
-    val colors = MaterialTheme.colorScheme
-    val (label, container, content) = when (status) {
-        "active" -> Triple("当前生效", colors.primaryContainer, colors.onPrimaryContainer)
-        "archived" -> Triple("已归档", colors.surfaceVariant, colors.onSurfaceVariant)
-        else -> Triple(status.ifBlank { "未知" }, colors.surfaceVariant, colors.onSurfaceVariant)
+    val (label, tone) = when (status) {
+        "active" -> "当前生效" to PillTone.ACCENT
+        "archived" -> "已归档" to PillTone.NEUTRAL
+        else -> status.ifBlank { "未知" } to PillTone.NEUTRAL
     }
-    Surface(shape = RoundedCornerShape(999.dp), color = container, contentColor = content) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-        )
-    }
+    StatusPill(text = label, tone = tone)
 }
 
 /** 只读详情:阶段可展开看当日计划项,不做任何写操作——历史就是历史 */

@@ -1,7 +1,12 @@
 package com.yanzhong.app.ui.nav
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -201,13 +206,45 @@ fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
                 NavHost(
                     navController = navController,
                     startDestination = startDestination,
-                    modifier = Modifier.fillMaxSize()
+                    modifier = Modifier.fillMaxSize(),
+                    // 深层页转场:淡入 + 轻微横向位移,方向感来自位移而非整屏横滑。
+                    // 时长压在 250ms 内,Compose 会自动尊重系统的动画缩放设置。
+                    // 专注运行中(timerRunning)会令底部导航隐藏 / Scaffold 高度突变,
+                    // 那种情况下横向位移会和高度变化叠加成一次跳动,所以强制退化为纯淡入。
+                    enterTransition = {
+                        if (timerRunning) fadeIn(tween(140))
+                        else fadeIn(tween(180)) +
+                            slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 12 }
+                    },
+                    exitTransition = { fadeOut(tween(120)) },
+                    popEnterTransition = { fadeIn(tween(180)) },
+                    popExitTransition = {
+                        if (timerRunning) fadeOut(tween(140))
+                        else fadeOut(tween(180)) +
+                            slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 12 }
+                    }
                 ) {
-                    composable(Routes.HOME) { HomeScreen(padding, navController) }
-                    composable(Routes.PLAN) { PlanScreen(padding, navController) }
-                    composable(Routes.FOCUS) { FocusScreen(padding) }
-                    composable(Routes.STATS) { StatsScreen(padding) }
-                    composable(Routes.MINE) { MineScreen(padding, navController) }
+                    // 5 个 tab 之间只做淡入淡出:横滑会让人误以为它们是左右相邻的页面
+                    composable(Routes.HOME, enterTransition = { fadeIn(tween(140)) },
+                        exitTransition = { fadeOut(tween(100)) }) {
+                        HomeScreen(padding, navController)
+                    }
+                    composable(Routes.PLAN, enterTransition = { fadeIn(tween(140)) },
+                        exitTransition = { fadeOut(tween(100)) }) {
+                        PlanScreen(padding, navController)
+                    }
+                    composable(Routes.FOCUS, enterTransition = { fadeIn(tween(140)) },
+                        exitTransition = { fadeOut(tween(100)) }) {
+                        FocusScreen(padding)
+                    }
+                    composable(Routes.STATS, enterTransition = { fadeIn(tween(140)) },
+                        exitTransition = { fadeOut(tween(100)) }) {
+                        StatsScreen(padding)
+                    }
+                    composable(Routes.MINE, enterTransition = { fadeIn(tween(140)) },
+                        exitTransition = { fadeOut(tween(100)) }) {
+                        MineScreen(padding, navController)
+                    }
                     composable(Routes.SUPERMODE) {
                         com.yanzhong.app.ui.supermode.SuperModeScreen(padding, navController)
                     }

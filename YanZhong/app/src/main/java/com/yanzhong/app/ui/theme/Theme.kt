@@ -42,7 +42,19 @@ private val LightScheme = lightColorScheme(
     onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFF565A72),
     outline = androidx.compose.ui.graphics.Color(0xFFC6C8D4),
     error = WarnRed,
-    errorContainer = WarnRedContainer
+    errorContainer = WarnRedContainer,
+    // ---- 以下 8 个槽位此前未覆盖,会漏出 Material 默认灰,与自定义靛蓝体系不一致 ----
+    onError = androidx.compose.ui.graphics.Color.White,
+    onErrorContainer = WarnRedContent,
+    // 承载全部 divider 与描边,取比 outline 更浅一档
+    outlineVariant = androidx.compose.ui.graphics.Color(0xFFE2E4EC),
+    // Snackbar 等反色表面的底色/字色
+    inverseSurface = androidx.compose.ui.graphics.Color(0xFF1A1B26),
+    inverseOnSurface = androidx.compose.ui.graphics.Color(0xFFF2F2F7),
+    inversePrimary = BrandPrimaryDark,
+    // 影响 Card/TextField 的 elevation 叠加色,取主色以保持品牌一致
+    surfaceTint = BrandPrimary,
+    scrim = Color(0x52000000)
 )
 
 /** 深色:低饱和靛蓝底,非纯灰(PRD 5.4) */
@@ -67,7 +79,16 @@ private val DarkScheme = darkColorScheme(
     onSurfaceVariant = androidx.compose.ui.graphics.Color(0xFFA8ABC8),
     outline = DarkOutline,
     error = androidx.compose.ui.graphics.Color(0xFFFFB4AB),
-    errorContainer = androidx.compose.ui.graphics.Color(0xFF93000A)
+    errorContainer = androidx.compose.ui.graphics.Color(0xFF93000A),
+    // ---- 补齐 8 个槽位,与 LightScheme 一一对应 ----
+    onError = androidx.compose.ui.graphics.Color(0xFF690005),
+    onErrorContainer = androidx.compose.ui.graphics.Color(0xFFFFDAD6),
+    outlineVariant = androidx.compose.ui.graphics.Color(0xFF2A2E4F),
+    inverseSurface = androidx.compose.ui.graphics.Color(0xFFE6E7F0),
+    inverseOnSurface = androidx.compose.ui.graphics.Color(0xFF2A2C3C),
+    inversePrimary = BrandPrimary,
+    surfaceTint = BrandPrimaryDark,
+    scrim = Color(0x8A000000)
 )
 
 @Composable

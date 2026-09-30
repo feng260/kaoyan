@@ -31,6 +31,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
 import com.yanzhong.app.ui.theme.EmptyState
+import com.yanzhong.app.ui.theme.SectionCard
 import com.yanzhong.app.ui.theme.StatBanner
 import com.yanzhong.app.ui.theme.StatBannerCell
 import com.yanzhong.app.ui.theme.SuccessGreen
@@ -380,20 +381,10 @@ private fun MonthReportCard(
     }
 }
 
+/** 图表容器卡:复用统一的分组卡片(其自带标题与内容间的 10dp 间隔),不再自造同构 Surface */
 @Composable
 private fun ChartCard(title: String, content: @Composable () -> Unit) {
-    Surface(
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
-            Text(title, style = MaterialTheme.typography.headlineMedium)
-            Spacer(Modifier.height(12.dp))
-            content()
-        }
-    }
+    SectionCard(title = title, content = content)
 }
 
 /** 累计纪录卡:最长单次 / 最佳单日 / 日均 / 累计天数(参考番茄ToDo 累计统计) */
