@@ -880,6 +880,28 @@ test('interview returns the AI result and stores the brief for the next generati
   assert.equal((await service.getProfile(USER))!.brief?.summary, SAMPLE_BRIEF.summary)
 })
 
+test('a profile whose dailyMinutes is 0 (the new questionnaire never asks for it) is still usable', async () => {
+  const fake = createFakeDb()
+  let seenProfile: unknown
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async (input: AiPlanningInput) => ({ title: '考研备考计划', plan: generateRulePlan(input) }),
+    interview: async input => {
+      seenProfile = input.profile
+      return { reply: '信息够了,我这就开始排', options: [], done: true, brief: { ...qualityBrief(), ...SAMPLE_BRIEF } }
+    },
+  })
+  await service.upsertProfile(USER, validProfile() as any)
+  // 问卷已不再收「每天投入多少分钟」,新档案落库就是 0 —— 这正是线上档案的常态
+  fake.state.profiles[0].dailyMinutes = 0
+
+  const result = await service.interview(USER, { messages: [{ role: 'user', content: '我想考浙大 408' }] })
+
+  // 档案被判成 null 时面谈只会回「先去填档案」,用户永远出不来
+  assert.ok(seenProfile, '面谈必须拿到可用档案,否则陷入「先去填档案」的死循环')
+  assert.equal(result.done, true)
+})
+
 test('interview does not store an empty brief when the AI wrapped up with nothing', async () => {
   const fake = createFakeDb()
   const service = createPlanningService(fake.db, {

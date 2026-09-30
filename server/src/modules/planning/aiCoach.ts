@@ -54,6 +54,8 @@ export type InterviewResult = {
   done: boolean
   /** done 为 true 时的考生画像简报 */
   brief: PlanBrief | null
+  /** 档案未就绪:客户端据此切回「填写备考档案」阶段,给用户一个可点击的出口(F4) */
+  needProfile?: boolean
 }
 
 const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,正在和考生做一对一的「备考面谈」,目标是把一份模板计划变成真正贴合他的全程作战计划。

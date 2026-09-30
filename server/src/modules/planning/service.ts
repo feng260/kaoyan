@@ -1,7 +1,7 @@
 import { prisma } from '../../shared/prisma'
 import { ApiError } from '../../middlewares/error'
 import { llmConfigured, visionConfigured } from '../../config/env'
-import { dayStart, diffDays, profileInputSchema, type ProfileInput } from './schemas'
+import { dayStart, diffDays, profileInputSchema, MIN_DAILY_MINUTES, MAX_DAILY_MINUTES, type ProfileInput } from './schemas'
 import type { GeneratedPlan } from './generator'
 import { generateAiPlan, type AiPlanningInput } from './aiGenerator'
 import { runPlanInterview, type InterviewInput, type InterviewResult } from './aiCoach'
@@ -455,10 +455,14 @@ async function runAdjustL2Plan(ai: PlanningAi, args: {
 
 /** 从库里读出的档案行还原成 ProfileInput;档案不可用时返回 null —— 面谈没有档案也能进行 */
 function profileInputFromRow(row: any): ProfileInput | null {
+  // 每日时长早已不是排计划依据,问卷也不再收它;老行/新行里常常是 0。
+  // 直接塞 0 会被 schema 的 min 卡掉,整个档案被判成「不可用」——面谈于是永远
+  // 回「先去填档案」,生成计划也过不了闸门(死循环)。所以只有落在合法区间才带上。
+  const dailyMinutes = Number(row.dailyMinutes ?? 0)
   const parsed = profileInputSchema.safeParse({
     targetType: row.targetType,
     examDate: toDay(row.examDate),
-    dailyMinutes: Number(row.dailyMinutes ?? 0),
+    ...(dailyMinutes >= MIN_DAILY_MINUTES && dailyMinutes <= MAX_DAILY_MINUTES ? { dailyMinutes } : {}),
     studyWindows: jsonArray(row.studyWindowsJson),
     foundation: row.foundation ?? '一般',
     weakSubjects: jsonArray(row.weakSubjectsJson),
@@ -474,9 +478,12 @@ function profileInputFromRow(row: any): ProfileInput | null {
  * 空闲时段非空才覆盖;固定占用只有用户明确确认过才覆盖(这样才能表达「确认没有固定占用」)。
  */
 function applyProfileFacts(brief: PlanBrief, input: ProfileInput): PlanBrief {
+  // 问卷只确认「有哪些科」,逐科进度/范围/里程碑一概没问 —— 所以只按名单建新科目时,
+  // 必须标成 estimated,表示「细节待 AI 按经验估」。若误标为 confirmed(false),
+  // 逐科细节会被当成「用户已确认但没写」而卡住面谈收尾与生成闸门(死循环)。
   const examSubjects = input.examSubjects.length
     ? input.examSubjects.map(name => brief.examSubjects.find(subject => subject.name === name) ?? {
-      name, progress: '', scope: '', remainingMinutes: 0, milestone: '', milestoneDate: '', milestoneMinutes: 0, estimated: false,
+      name, progress: '', scope: '', remainingMinutes: 0, milestone: '', milestoneDate: '', milestoneMinutes: 0, estimated: true,
     })
     : brief.examSubjects
   return {
@@ -715,7 +722,12 @@ export function createPlanningService(
       const brief = normalizeBrief(result.brief)
       const facts = assessPlanningFacts(brief, dayStart(new Date()), profile?.examDate ?? dayStart(new Date()))
       if (!profile) {
-        return { reply: '得先在「备考档案」里填好考期,并确认课表空闲时间,我才好把计划排准。填完回来我们接着聊。', options: [], done: false, brief: null }
+        // 纯文本提示是死路:用户被要求去填档案,却不知道档案在哪(入口在「我的」Tab 深处)。
+        // 带上 needProfile 信号,客户端据此切回「填写备考档案」阶段,渲染可点击的跳转按钮(F4)。
+        return {
+          reply: '得先在「备考档案」里填好考期,并确认课表空闲时间,我才好把计划排准。点下面的按钮去填,填完回来我们接着聊。',
+          options: [], done: false, brief: null, needProfile: true,
+        }
       }
       if (!facts.ready) {
         // 保留模型自己的追问 —— 覆盖成模板句会让面谈每轮都在复读,这是最伤体验的地方。
