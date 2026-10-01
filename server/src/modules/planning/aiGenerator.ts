@@ -25,6 +25,11 @@ export type AiPlanningInput = ProfileInput & {
   /** 面谈得到的考生画像;没聊过就是 null,生成器退化为只看问卷 */
   brief?: PlanBrief | null
   backlog?: Array<{ subject: string; title: string; minutes: number }>
+  /**
+   * 上一轮输出未通过服务端校验的原因。service 层重试时把原因喂回来,
+   * 让模型带着「哪里被拦了」重新出骨架,而不是盲掷骰子。
+   */
+  repairHint?: string
 }
 
 type AiWeeklySlot = {
@@ -115,6 +120,10 @@ function buildUserPrompt(input: AiPlanningInput): string {
   }
   if (input.backlog?.length) {
     lines.push('', '上一版未完成任务(按原顺序优先安排;不要在新模板中重复生成同一任务):', JSON.stringify(input.backlog))
+  }
+  if (input.repairHint) {
+    lines.push('', `上一轮输出被服务端校验拦下,原因:${input.repairHint}`,
+      '请务必修正该问题后重新输出完整骨架;其余部分可以沿用上一轮的合理内容。')
   }
   lines.push('', `请输出从 ${fmt(today)} 到 ${fmt(addDays(exam, -1))} 的备考计划骨架。`)
   return lines.join('\n')
@@ -224,6 +233,40 @@ function layoutStages(stages: AiStage[], today: Date, exam: Date): GeneratedStag
 function isoWeekday(d: Date): number {
   const js = d.getUTCDay()
   return js === 0 ? 7 : js
+}
+
+/**
+ * 把模型骨架里的科目名对齐到考生确认过的科目名。
+ *
+ * 为什么需要:模型偶尔不照抄确认名单,写出「申论范文」「行政职业能力测验」这类变体,
+ * 而生成闸门会以「计划包含未确认的考试科目」为由拦下整份计划 —— 模板本身没问题,
+ * 死在名字上最冤。对齐规则从严到宽:
+ *   1. 归一化(去空白、全角转半角)后精确相等;
+ *   2. 互相包含且唯一命中(「申论范文」⊃「申论」);
+ *   3. 确认科目只有一门时无条件对齐(不存在歧义);
+ *   4. 仍对不上就丢弃该条目 —— 少排一门比整份计划被拦好得多。
+ */
+export function alignSubjectsToConfirmed(
+  stages: AiStage[],
+  confirmed: string[]
+): AiStage[] {
+  if (confirmed.length === 0) return stages
+  const canon = (value: string) => value.replace(/\s+/g, '').replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+  const exact = new Map(confirmed.map(name => [canon(name), name]))
+  const aligned = stages.map(stage => ({
+    ...stage,
+    weeklySlots: stage.weeklySlots.flatMap(slot => {
+      const key = canon(slot.subject)
+      const direct = exact.get(key)
+      if (direct) return [{ ...slot, subject: direct }]
+      const hits = confirmed.filter(name => canon(name).includes(key) || key.includes(canon(name)))
+      if (hits.length === 1) return [{ ...slot, subject: hits[0] }]
+      if (confirmed.length === 1) return [{ ...slot, subject: confirmed[0] }]
+      return []
+    }),
+  }))
+  // 整段 slot 被丢空的阶段留着只会排出空阶段,直接剔除
+  return aligned.filter(stage => stage.weeklySlots.length > 0)
 }
 
 /**
@@ -376,7 +419,10 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
     throw new AiUnavailable((error as Error)?.message ?? '模型返回内容无法解析为 JSON')
   }
 
-  const stages = normalizeStages(parsed, input.weakSubjects)
+  let stages = normalizeStages(parsed, input.weakSubjects)
+  // 模型偶尔不照抄确认科目名(「申论范文」vs「申论」),先对齐再展开,
+  // 避免整份计划死在「包含未确认的考试科目」这种名字问题上
+  stages = alignSubjectsToConfirmed(stages, brief.examSubjects.map(subject => subject.name))
   // 备考天数不足以容纳模型的全部阶段时(考试日期很近),只保留时间上最后的几段:
   // 临考时冲刺/模考的模板比基础段的更有用,也避免「每段至少 1 天」把计划推到考后。
   const usable = stages.slice(-Math.max(1, diffDays(exam, today)))

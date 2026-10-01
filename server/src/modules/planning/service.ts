@@ -3,7 +3,7 @@ import { ApiError } from '../../middlewares/error'
 import { llmConfigured, visionConfigured } from '../../config/env'
 import { dayStart, diffDays, profileInputSchema, MIN_DAILY_MINUTES, MAX_DAILY_MINUTES, type ProfileInput } from './schemas'
 import type { GeneratedPlan } from './generator'
-import { generateAiPlan, type AiPlanningInput } from './aiGenerator'
+import { AiUnavailable, generateAiPlan, type AiPlanningInput } from './aiGenerator'
 import { runPlanInterview, type InterviewInput, type InterviewResult } from './aiCoach'
 import { parseTimetableImage, type TimetableImage, type TimetableResult } from './timetable'
 import { briefIsEmpty, normalizeBrief, assessPlanningFacts, netAvailableMinutes, type PlanBrief, type PlanDocument } from './document'
@@ -1108,41 +1108,68 @@ export function createPlanningService(
       let generated: GeneratedPlan
       let title: string
       let document: PlanDocument | null = null
-      try {
-        const result = await ai.generate({ ...parsedProfile.data, startDate: dayStart(new Date()), brief: remainingBrief, backlog })
-        assertGeneratedPlanValid(result.plan, examDate, brief)
-        if (brief) {
-          const allowed = new Set(brief.examSubjects.map(subject => subject.name))
-          const invalid = result.plan.items.find(item => !allowed.has(item.subject))
-          if (invalid) throw new ApiError(502, 'PLAN_GENERATION_FAILED', `计划包含未确认的考试科目:${invalid.subject}`)
-          for (const subject of brief.examSubjects) {
-            // AI 估计的科目允许范围留空(草稿里已标注可改),不按「编造」拦截
-            if (subject.estimated) continue
-            if (!subject.scope && result.plan.items.some(item => item.subject === subject.name && item.title !== subject.milestone)) {
-              throw new ApiError(502, 'PLAN_GENERATION_FAILED', `${subject.name}考试范围不明,不得编造具体任务`)
-            }
-          }
-          const deficits = remainingBrief!.examSubjects.flatMap(subject => {
-            // AI 估计的剩余量不参与覆盖度校验,由考生在草稿里逐项更正
-            if (subject.estimated) return []
-            const tasks = result.plan.items.filter(item => item.subject === subject.name)
-            const scheduled = tasks.reduce((sum, item) => sum + item.minutes, 0)
-            const beforeDeadline = tasks.filter(item => dateOnly(item.planDate) <= subject.milestoneDate)
-              .reduce((sum, item) => sum + item.minutes, 0)
-            const missingMinutes = Math.max(subject.remainingMinutes - scheduled, subject.milestoneMinutes - beforeDeadline)
-            return missingMinutes > 0 ? [`${subject.name}「${subject.milestone}」缺口 ${missingMinutes} 分钟`] : []
+      // 校验不过不直接放弃:模型输出有随机性,同一份 prompt 盲掷骰子大概率还是失败。
+      // 把上一轮被拦的原因作为 repairHint 喂回去,模型知道「哪里错了」再重出骨架,
+      // 两三次内基本能自愈。事实性缺口(容量真不够)重试无意义,直接上报。
+      const maxAttempts = 3
+      let lastFailure: ApiError | null = null
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        try {
+          const result = await ai.generate({
+            ...parsedProfile.data,
+            startDate: dayStart(new Date()),
+            brief: remainingBrief,
+            backlog,
+            ...(lastFailure ? { repairHint: lastFailure.message } : {}),
           })
-          if (deficits.length) throw new ApiError(400, 'PLAN_CAPACITY_INSUFFICIENT', `草稿安排未覆盖已确认的剩余任务:${deficits.join('；')}`)
+          assertGeneratedPlanValid(result.plan, examDate, brief)
+          if (brief) {
+            const allowed = new Set(brief.examSubjects.map(subject => subject.name))
+            const invalid = result.plan.items.find(item => !allowed.has(item.subject))
+            if (invalid) throw new ApiError(502, 'PLAN_GENERATION_FAILED', `计划包含未确认的考试科目:${invalid.subject}`)
+            for (const subject of brief.examSubjects) {
+              // AI 估计的科目允许范围留空(草稿里已标注可改),不按「编造」拦截
+              if (subject.estimated) continue
+              if (!subject.scope && result.plan.items.some(item => item.subject === subject.name && item.title !== subject.milestone)) {
+                throw new ApiError(502, 'PLAN_GENERATION_FAILED', `${subject.name}考试范围不明,不得编造具体任务`)
+              }
+            }
+            const deficits = remainingBrief!.examSubjects.flatMap(subject => {
+              // AI 估计的剩余量不参与覆盖度校验,由考生在草稿里逐项更正
+              if (subject.estimated) return []
+              const tasks = result.plan.items.filter(item => item.subject === subject.name)
+              const scheduled = tasks.reduce((sum, item) => sum + item.minutes, 0)
+              const beforeDeadline = tasks.filter(item => dateOnly(item.planDate) <= subject.milestoneDate)
+                .reduce((sum, item) => sum + item.minutes, 0)
+              const missingMinutes = Math.max(subject.remainingMinutes - scheduled, subject.milestoneMinutes - beforeDeadline)
+              return missingMinutes > 0 ? [`${subject.name}「${subject.milestone}」缺口 ${missingMinutes} 分钟`] : []
+            })
+            if (deficits.length) throw new ApiError(400, 'PLAN_CAPACITY_INSUFFICIENT', `草稿安排未覆盖已确认的剩余任务:${deficits.join('；')}`)
+          }
+          generated = result.plan
+          title = result.title
+          document = result.document ?? null
+          lastFailure = null
+          break
+        } catch (error) {
+          if (error instanceof ApiError) {
+            if (error.code === 'PLAN_CAPACITY_INSUFFICIENT') throw error
+            lastFailure = error
+            console.warn(`[planning] AI 计划生成第 ${attempt}/${maxAttempts} 次校验未过:${error.message}`)
+            continue
+          }
+          const reason = error instanceof Error ? error.message : String(error)
+          // 模型侧异常(网络/JSON 解析/阶段数不足)也有随机成分,同样给一轮机会;
+          // 但「缺少已确认的空闲时段」这类确定性错误重试无意义,原样上报。
+          if (error instanceof AiUnavailable && reason.includes('缺少已确认的空闲时段')) {
+            throw new ApiError(502, 'PLAN_GENERATION_FAILED', `AI 计划生成失败:${reason}`)
+          }
+          lastFailure = new ApiError(502, 'PLAN_GENERATION_FAILED', `AI 计划生成失败:${reason}`)
+          console.warn(`[planning] AI 计划生成第 ${attempt}/${maxAttempts} 次失败:${reason}`)
+          continue
         }
-        generated = result.plan
-        title = result.title
-        document = result.document ?? null
-      } catch (error) {
-        if (error instanceof ApiError) throw error
-        const reason = error instanceof Error ? error.message : String(error)
-        console.warn(`[planning] AI 计划生成失败:${reason}`)
-        throw new ApiError(502, 'PLAN_GENERATION_FAILED', `AI 计划生成失败:${reason}`)
       }
+      if (lastFailure) throw lastFailure
 
       const lastPlan = await db.plan.findFirst({ where: { userGuid }, orderBy: { version: 'desc' } })
       const version = Number(lastPlan?.version ?? 0) + 1

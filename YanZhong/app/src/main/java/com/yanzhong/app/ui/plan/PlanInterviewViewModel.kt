@@ -354,8 +354,9 @@ private fun ServerError.friendly(): String? {
         "PLANNING_FACTS_INCOMPLETE" -> or("还有关键信息没确认，先在对话里补上")
         "PROFILE_INCOMPLETE" -> or("请先完成备考问卷，再生成计划")
         "PLAN_PROFILE_CHANGED", "PLAN_PROGRESS_CHANGED" -> or("备考档案或进度已变化，请重新生成草稿")
-        // reason 偏技术（如「阶段之间有空隙或重叠:基础阶段」），换成能照着做的说法
-        "PLAN_GENERATION_FAILED" -> "这次生成的计划不合规，已拦下。可回聊天补充科目范围或剩余量后重试"
+        // 服务端 message 已带具体被拦原因(如「计划包含未确认的考试科目:常识判断」),
+        // 原样透出比一句笼统的「不合规」有用 —— 用户才知道回聊天里该补什么
+        "PLAN_GENERATION_FAILED" -> or("这次生成的计划不合规,已拦下。可回聊天补充科目范围或剩余量后重试")
         "PLAN_INTERVIEW_FAILED" -> "AI 面谈这次没接上，稍后重试"
         "AI_NOT_CONFIGURED", "AI_VISION_NOT_CONFIGURED" -> or("服务端还没配置好 AI，请稍后再试")
         "ADJUSTMENT_STALE" -> or("计划在生成调整单之后又被改过，这张调整单失效了，重新说一遍即可")

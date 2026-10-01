@@ -1126,6 +1126,35 @@ test('draft generation rejects AI subjects not present in the confirmed exam fac
   assert.equal(fake.state.plans.length, 0)
 })
 
+test('generation retries with the validation reason and succeeds when the model fixes its subject names', async () => {
+  const fake = createFakeDb()
+  let calls = 0
+  const hints: Array<string | undefined> = []
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async input => {
+      calls++
+      hints.push(input.repairHint)
+      const plan = generateRulePlan({ ...input, weakSubjects: ['英语一'] })
+      // 模拟模型第一次没照抄确认科目名:写出变体「英语阅读」,必然被生成闸门拦下
+      if (calls === 1) for (const item of plan.items) item.subject = '英语阅读'
+      // 第二次"改对了":所有条目都归到确认过的科目名下
+      if (calls >= 2) for (const item of plan.items) item.subject = '英语一'
+      return { title: '英语计划', plan }
+    },
+  })
+  await service.upsertProfile(USER, validProfile() as any)
+  fake.state.profiles[0].briefJson = JSON.stringify(qualityBrief())
+
+  const draft = await service.generatePlanDraft(USER)
+
+  assert.equal(calls, 2, '第一次被拦后必须自动重试,而不是把失败抛给用户')
+  assert.ok(hints[1], '第二次调用必须携带上一轮被拦的原因(repairHint)')
+  assert.ok(hints[1]!.includes('未确认的考试科目'))
+  assert.equal(draft.status, 'draft')
+  assert.equal(fake.state.plans.length, 1)
+})
+
 test('confirmation rejects another user and a changed profile without archiving the active plan', async () => {
   const fake = createFakeDb()
   const service = serviceWithConfirmedSubject(fake)
