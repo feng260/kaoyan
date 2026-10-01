@@ -274,9 +274,11 @@ export function alignSubjectsToConfirmed(
 
 /**
  * 把阶段模板铺满整个阶段:
- * - 命中的 weeklySlots 排上;合计超出每日预算时先按比例等比压缩,若受 5 分钟下限所限压不下来,
- *   则按上限裁掉多出的条目,保证每天的合计一定不超过预算;
- * - 某天一条都没命中(模型漏写星期几),用该阶段第一条模板兜底,保证每天都有安排。
+ * - 每天按当天净空闲预算逐条安排,直到用满预算或该阶段的任务队列耗尽 ——
+ *   "一天只排一条、其余空闲全空着"曾让整份计划稀得没法看;
+ * - 当天没有 weekday 命中的条目时,取该阶段任一未消费条目兜底,保证每天都有安排;
+ * - 队列全部消费完则清空标记进入新一轮复习轮(备考本就多轮刷同类任务),
+ *   避免 394 天的长周期计划在头一个月耗尽队列后大面积空天。
  */
 export function expandStage(stage: AiStage, range: GeneratedStage, brief: Pick<PlanBrief, 'availability' | 'fixedCommitments'>): GeneratedItem[] {
   const items: GeneratedItem[] = []
@@ -285,48 +287,44 @@ export function expandStage(stage: AiStage, range: GeneratedStage, brief: Pick<P
   const completed = new Map(subjects.map(subject => [subject, new Set<number>()]))
   for (let offset = 0; offset < stageLength; offset++) {
     const planDate = addDays(range.startDate, offset)
-    const budget = netAvailableMinutes(brief, planDate)
-    if (budget < MIN_SLOT_MINUTES) continue
+    let dayBudget = netAvailableMinutes(brief, planDate)
+    if (dayBudget < MIN_SLOT_MINUTES) continue
     const dow = isoWeekday(planDate)
     const weekParity = Math.floor(offset / 7) % 2 === 0 ? 'odd' : 'even'
-    const matched = subjects.flatMap(subject => {
-      const next = stage.weeklySlots.findIndex((slot, index) => slot.subject === subject
-        && !completed.get(subject)?.has(index)
-        && (!slot.weekParity || slot.weekParity === weekParity) && slot.weekdays.includes(dow))
-      return next >= 0 ? [{ slot: stage.weeklySlots[next], next }] : []
-    })
-    if (matched.length === 0) continue
 
-    // 每项都有 MIN_SLOT_MINUTES 的下限,命中条数 × 下限若已超出每日预算,
-    // 再怎么压缩也降不下来,落库前校验必然判定「超出每日可用」。这里先按预算裁掉超出的条目。
-    const slots = matched.slice(0, Math.floor(budget / MIN_SLOT_MINUTES))
-
-    let total = slots.reduce((sum, entry) => sum + entry.slot.minutes, 0)
-    const scale = total > budget ? budget / total : 1
-    // 压缩后每项不低于 MIN_SLOT_MINUTES;宁可略微超出也不再往下砍,避免出现无意义的碎片任务
-    const minutes = slots.map(entry => Math.max(MIN_SLOT_MINUTES, Math.floor(entry.slot.minutes * scale)))
-    total = minutes.reduce((a, b) => a + b, 0)
-    // 压缩后仍超出预算则从最后一项起逐分钟削减
-    for (let i = minutes.length - 1; total > budget && i >= 0; i--) {
-      const cut = Math.min(minutes[i] - MIN_SLOT_MINUTES, total - budget)
-      if (cut > 0) {
-        minutes[i] -= cut
-        total -= cut
+    let sortOrder = 0
+    // 单日防御上限:预算再大也最多 12 条,避免极端小分钟的 slot 把清单刷成流水账
+    let guard = 0
+    while (dayBudget >= MIN_SLOT_MINUTES && guard++ < 12) {
+      const unconsumed = (slot: AiWeeklySlot, index: number) =>
+        !completed.get(slot.subject)?.has(index)
+        && (!slot.weekParity || slot.weekParity === weekParity)
+      // 第一优先:weekdays 命中今天的未消费条目(模型的任务队列节奏)
+      let pick = stage.weeklySlots.findIndex((slot, index) => unconsumed(slot, index) && slot.weekdays.includes(dow))
+      // 第二优先:今天没有命中就取任一未消费条目(模型漏写星期几/队列节奏缺口),保证每天有安排
+      if (pick < 0) pick = stage.weeklySlots.findIndex((slot, index) => unconsumed(slot, index))
+      // 队列耗尽:进入新一轮复习轮,清空消费标记重放
+      if (pick < 0) {
+        subjects.forEach(subject => completed.get(subject)?.clear())
+        pick = stage.weeklySlots.findIndex((slot, index) =>
+          (!slot.weekParity || slot.weekParity === weekParity) && slot.weekdays.includes(dow))
+        if (pick < 0) pick = 0
       }
-    }
-
-    slots.forEach(({ slot, next }, i) => {
-      completed.get(slot.subject)?.add(next)
+      const slot = stage.weeklySlots[pick]
+      const minutes = Math.min(slot.minutes, dayBudget)
+      if (minutes < MIN_SLOT_MINUTES) break
+      completed.get(slot.subject)?.add(pick)
       items.push({
         stageOrder: range.sortOrder,
         subject: slot.subject,
         title: slot.title,
         planDate,
-        minutes: minutes[i],
+        minutes,
         priority: range.sortOrder,
-        sortOrder: i,
+        sortOrder: sortOrder++,
       })
-    })
+      dayBudget -= minutes
+    }
   }
   return items
 }

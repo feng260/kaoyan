@@ -175,7 +175,7 @@ test('produces identical output for repeated calls with the same input', () => {
   assert.deepEqual(second, first)
 })
 
-test('AI stage uses net availability and keeps queued work for a later free day', () => {
+test('AI stage fills every available day up to its net availability', () => {
   const monday = new Date('2026-09-28T00:00:00.000Z')
   const brief = {
     availability: [1, 2, 3].map(weekday => ({ weekday, windows: [{ start: '19:00', end: '21:00' }] })),
@@ -185,41 +185,68 @@ test('AI stage uses net availability and keeps queued work for a later free day'
     { weekdays: [1, 2, 3], subject: '英语一', title: '2015 阅读', minutes: 90 },
     { weekdays: [1, 2, 3], subject: '英语一', title: '2016 阅读', minutes: 90 },
   ] }, { name: '基础', startDate: monday, endDate: new Date('2026-09-30T00:00:00.000Z'), sortOrder: 0 }, brief)
+  // 周一值班净空闲 0 → 无任务;周二会议后净 60;周三净 120 排满,
+  // 队列耗尽后循环重放补足剩余预算,不再空天
   assert.deepEqual(items.map(item => [item.planDate.getUTCDay(), item.title, item.minutes]),
-    [[2, '2015 阅读', 60], [3, '2016 阅读', 90]])
+    [[2, '2015 阅读', 60], [3, '2016 阅读', 90], [3, '2015 阅读', 30]])
 })
 
-test('AI stage waits for the next queued task weekday rather than skipping it', () => {
+test('AI stage cycles the queue so later days stay covered after it runs dry', () => {
   const monday = new Date('2026-09-28T00:00:00.000Z')
   const items = expandStage({ name: '基础', weeklySlots: [
     { weekdays: [1], subject: '英语一', title: '先读 2015', minutes: 60 },
     { weekdays: [2], subject: '英语一', title: '再读 2016', minutes: 60 },
   ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-06T00:00:00.000Z'), sortOrder: 0 }, FULL_BRIEF)
-  assert.deepEqual(items.map(item => [item.planDate.toISOString().slice(0, 10), item.title]), [
-    ['2026-09-28', '先读 2015'], ['2026-09-29', '再读 2016'],
-  ])
+  // 队列两条各 60 分钟,每天净空闲 180:耗尽后循环重放,9 天每天 3 条,不再 7 天全空
+  assert.equal(items.length, 27)
+  const byDay = new Map<string, number>()
+  items.forEach(item => {
+    const key = item.planDate.toISOString().slice(0, 10)
+    byDay.set(key, (byDay.get(key) ?? 0) + item.minutes)
+  })
+  assert.equal(byDay.size, 9)
+  assert.ok([...byDay.values()].every(total => total === 180))
 })
 
-test('AI stage advances a subject task queue across consecutive weeks', () => {
+test('AI stage consumes the task queue in order within a day, then cycles on replay', () => {
   const monday = new Date('2026-09-28T00:00:00.000Z')
   const items = expandStage({ name: '基础', weeklySlots: [
     { weekdays: [1], subject: '英语一', title: '2015 阅读', minutes: 60 },
     { weekdays: [1], subject: '英语一', title: '2016 阅读', minutes: 60 },
   ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-12T00:00:00.000Z'), sortOrder: 0 }, FULL_BRIEF)
-  assert.deepEqual(items.filter(item => item.planDate.getUTCDay() === 1).map(item => item.title),
-    ['2015 阅读', '2016 阅读'])
+  // 第一周周一按队列顺序消费 2015 → 2016,随后进入复习轮
+  const mondayItems = items.filter(item => item.planDate.getUTCDay() === 1)
+  assert.deepEqual(mondayItems.slice(0, 2).map(item => item.title), ['2015 阅读', '2016 阅读'])
+  // 15 天每天 3 条 60 分钟,无空天
+  assert.equal(items.length, 45)
+  const byDay = new Map<string, number>()
+  items.forEach(item => {
+    const key = item.planDate.toISOString().slice(0, 10)
+    byDay.set(key, (byDay.get(key) ?? 0) + item.minutes)
+  })
+  assert.equal(byDay.size, 15)
+  assert.ok([...byDay.values()].every(total => total === 180))
 })
 
-test('AI stage alternates odd and even week queues without replaying finished work', () => {
+test('AI stage alternates odd and even week queues and keeps the other days covered by replay', () => {
   const monday = new Date('2026-09-28T00:00:00.000Z')
   const items = expandStage({ name: '基础', weeklySlots: [
     { weekdays: [1], subject: '英语一', title: '偶周阅读', minutes: 60, weekParity: 'even' },
     { weekdays: [1], subject: '英语一', title: '奇周阅读', minutes: 60, weekParity: 'odd' },
     { weekdays: [1], subject: '英语一', title: '下一奇周阅读', minutes: 60, weekParity: 'odd' },
   ] }, { name: '基础', startDate: monday, endDate: new Date('2026-10-26T00:00:00.000Z'), sortOrder: 0 }, FULL_BRIEF)
-  assert.deepEqual(items.map(item => [item.planDate.toISOString().slice(0, 10), item.title]), [
-    ['2026-09-28', '奇周阅读'], ['2026-10-05', '偶周阅读'], ['2026-10-12', '下一奇周阅读'],
-  ])
+  // 奇偶周节奏保留:奇周不出现偶周条目,偶周排上偶周条目
+  const titlesOf = (iso: string) => items
+    .filter(item => item.planDate.toISOString().slice(0, 10) === iso).map(item => item.title)
+  assert.ok(titlesOf('2026-09-28').includes('奇周阅读') && !titlesOf('2026-09-28').includes('偶周阅读'))
+  assert.ok(titlesOf('2026-10-05').includes('偶周阅读'))
+  // 29 天全部有安排(队列耗尽后循环重放),不再 26 天空天
+  const byDay = new Map<string, number>()
+  items.forEach(item => {
+    const key = item.planDate.toISOString().slice(0, 10)
+    byDay.set(key, (byDay.get(key) ?? 0) + item.minutes)
+  })
+  assert.equal(byDay.size, 29)
 })
 
 test('pending backlog is not duplicated when AI repeats the same subject and title', () => {
