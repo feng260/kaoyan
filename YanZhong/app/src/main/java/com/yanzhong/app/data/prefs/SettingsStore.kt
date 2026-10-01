@@ -74,7 +74,6 @@ data class AppSettings(
     val weeklyGoalHours: Int = 37,
     /** 每日番茄目标数(参考番茄ToDo §8) */
     val dailyPomodoroGoal: Int = 8,
-    val planPackVersion: Int = 0,
     /** 学霸模式:专注计时期间自动拦截非白名单应用(参考番茄ToDo 学霸模式) */
     val superModeOn: Boolean = false,
     /** 严格等级:标准=放行白名单应用;严格=完全锁定在研钟内 */
@@ -142,7 +141,6 @@ class SettingsRepository(private val context: Context) {
         val ONBOARDING = booleanPreferencesKey("onboarding_done")
         val WEEKLY_GOAL = intPreferencesKey("weekly_goal_hours")
         val DAILY_POMODORO = intPreferencesKey("daily_pomodoro_goal")
-        val PLAN_PACK = intPreferencesKey("plan_pack_version")
         val SUPER_ON = booleanPreferencesKey("super_mode_on")
         val SUPER_STRICT = booleanPreferencesKey("super_mode_strict")
         val EMERGENCY_PIN = stringPreferencesKey("emergency_pin_hash")
@@ -172,7 +170,6 @@ class SettingsRepository(private val context: Context) {
             onboardingDone = p[Keys.ONBOARDING] ?: false,
             weeklyGoalHours = (p[Keys.WEEKLY_GOAL] ?: 37).coerceIn(10, 80),
             dailyPomodoroGoal = (p[Keys.DAILY_POMODORO] ?: 8).coerceIn(1, 30),
-            planPackVersion = p[Keys.PLAN_PACK] ?: 0,
             superModeOn = p[Keys.SUPER_ON] ?: false,
             superModeStrict = p[Keys.SUPER_STRICT] ?: false,
             emergencyPinHash = p[Keys.EMERGENCY_PIN] ?: "",
@@ -228,9 +225,6 @@ class SettingsRepository(private val context: Context) {
         .map { it[Keys.RELAY_GUIDE] ?: false }
 
     suspend fun setRelayGuideShown() = context.settingsStore.edit { it[Keys.RELAY_GUIDE] = true }
-
-    suspend fun setPlanPackVersion(version: Int) =
-        context.settingsStore.edit { it[Keys.PLAN_PACK] = version }
 
     suspend fun setWeeklyGoal(hours: Int) = context.settingsStore.edit {
         it[Keys.WEEKLY_GOAL] = hours.coerceIn(10, 80)

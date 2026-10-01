@@ -2,6 +2,7 @@ import { addDays, dayStart, diffDays, type ProfileInput } from './schemas'
 import { chatComplete, extractJson, LlmError } from '../../shared/llm/client'
 import type { GeneratedItem, GeneratedPlan, GeneratedStage } from './generator'
 import { generatePlanDocument } from './aiDocument'
+import { KAOYAN_KNOWN_SUBJECT_NAMES, PLAN_STRUCTURE_EXEMPLAR } from './planExemplar'
 import { briefIsEmpty, briefToPrompt, documentMatchesSubjects, netAvailableMinutes, type PlanBrief, type PlanDocument } from './document'
 
 /**
@@ -127,6 +128,10 @@ function buildUserPrompt(input: AiPlanningInput): string {
   if (input.repairHint) {
     lines.push('', `上一轮输出被服务端校验拦下,原因:${input.repairHint}`,
       '请务必修正该问题后重新输出完整骨架;其余部分可以沿用上一轮的合理内容。')
+  }
+  // 优秀计划的结构范例只对考研注入:考公/法考有自己的阶段逻辑,硬塞考研范例只有干扰
+  if (input.targetType === '考研') {
+    lines.push('', PLAN_STRUCTURE_EXEMPLAR)
   }
   lines.push('', `请输出从 ${fmt(today)} 到 ${fmt(addDays(exam, -1))} 的备考计划骨架。`)
   return lines.join('\n')
@@ -456,7 +461,12 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
       stages: ranges,
       startDate: today,
     })
-    if (generatedDocument && documentMatchesSubjects(generatedDocument, brief.examSubjects.map(subject => subject.name))) {
+    if (generatedDocument && documentMatchesSubjects(
+      generatedDocument,
+      brief.examSubjects.map(subject => subject.name),
+      // 只有考研启用「统考科目名」闸门:考公文档出现「政治」是正常内容,不能拦
+      input.targetType === '考研' ? KAOYAN_KNOWN_SUBJECT_NAMES : [],
+    )) {
       document = generatedDocument
     }
   } catch (error) {

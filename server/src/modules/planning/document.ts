@@ -345,11 +345,16 @@ export function mergeBrief(base: PlanBrief, patch: PlanBrief): PlanBrief {
   }
 }
 
-export function documentMatchesSubjects(document: PlanDocument, subjects: string[]): boolean {
+/**
+ * 长文档的科目闸门:文档不得出现未确认的考试科目。
+ * knownNames 是「广为人知但考生未必选考」的科目名(如考研的 408/数学一/政治):
+ * 文档全文提到这些名字而考生未确认选考,说明模型把常见组合当成了考生科目,整份拦下。
+ * 非考研目标传空数组 —— 「政治」「申论」在考公语境是正常内容,不该被误拦。
+ */
+export function documentMatchesSubjects(document: PlanDocument, subjects: string[], knownNames: string[]): boolean {
   const allowed = new Set(subjects)
   if (document.hero.subjects.some(subject => !allowed.has(subject))) return false
   const text = JSON.stringify(document)
-  const knownNames = ['408', '数学一', '数学二', '数学三', '英语一', '英语二', '政治']
   return knownNames.every(name => allowed.has(name) || !text.includes(name))
 }
 

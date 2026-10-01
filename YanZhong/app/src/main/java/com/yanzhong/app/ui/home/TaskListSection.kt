@@ -51,7 +51,7 @@ import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.data.plan.isServerPlanItem
 import com.yanzhong.app.ui.theme.AmberGold
 import com.yanzhong.app.ui.theme.AppIcons
-import com.yanzhong.app.ui.theme.Subject408Color
+import com.yanzhong.app.ui.theme.SubjectCsColor
 import com.yanzhong.app.ui.theme.SubjectArtwork
 import com.yanzhong.app.ui.theme.SuccessGreen
 import com.yanzhong.app.ui.theme.WarnRed
@@ -444,8 +444,8 @@ private fun EmptyTaskHint() {
                 // 日出山丘场景
                 val skyTop = MaterialTheme.colorScheme.primaryContainer
                 val skyBottom = MaterialTheme.colorScheme.surface
-                val hillFar = Subject408Color.copy(alpha = 0.30f)
-                val hillNear = Subject408Color.copy(alpha = 0.45f)
+                val hillFar = SubjectCsColor.copy(alpha = 0.30f)
+                val hillNear = SubjectCsColor.copy(alpha = 0.45f)
                 Canvas(Modifier.fillMaxSize()) {
                     val w = size.width
                     val h = size.height

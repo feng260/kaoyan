@@ -17,11 +17,12 @@ import com.yanzhong.app.data.plan.projectPlanTasks
 import com.yanzhong.app.data.plan.resolvePlanSubjectId
 import com.yanzhong.app.data.plan.stalePlanTaskIds
 import com.yanzhong.app.data.remote.*
-import com.yanzhong.app.util.PersonalPlan
+import com.yanzhong.app.util.RhythmEngine
 import com.yanzhong.app.util.TimeUtils
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
@@ -42,27 +43,6 @@ data class TodayView(
     val open: List<TaskEntity> = emptyList(),
     val done: List<TaskEntity> = emptyList()
 )
-
-/** 全量数据交换格式:导出与导入共用(PRD 3.11 数据自有) */
-@kotlinx.serialization.Serializable
-data class ExportPayload(
-    val subjects: List<SubjectEntity>,
-    val nodes: List<CountdownNodeEntity>,
-    val tasks: List<TaskEntity>,
-    val sessions: List<com.yanzhong.app.data.db.PomodoroSessionEntity> = emptyList()
-)
-
-/** 导入结果摘要 */
-data class ImportResult(
-    val subjectsAdded: Int,
-    val nodesAdded: Int,
-    val tasksAdded: Int,
-    val skipped: Int
-) {
-    val summary: String
-        get() = "科目 +$subjectsAdded · 节点 +$nodesAdded · 任务 +$tasksAdded" +
-            if (skipped > 0) " · 跳过重复 $skipped" else ""
-}
 
 /** 批量添加科目的配色盘(ARGB 长整型,避免仓库层依赖 Compose 颜色类型) */
 private val subjectPalette = longArrayOf(
@@ -519,9 +499,9 @@ class StudyRepository(private val db: YanZhongDatabase) {
         db.withTransaction {
             val now = TimeUtils.now()
             lines.forEach { line ->
-                val tag = PersonalPlan.tagOfSubject(line)
-                val subject = if (tag == PersonalPlan.TAG_GEN) subjects.firstOrNull()
-                else subjects.firstOrNull { PersonalPlan.tagOfSubject(it.name) == tag }
+                val tag = RhythmEngine.tagOfSubject(line)
+                val subject = if (tag == RhythmEngine.TAG_GEN) subjects.firstOrNull()
+                else subjects.firstOrNull { RhythmEngine.tagOfSubject(it.name) == tag }
                     ?: subjects.firstOrNull()
                 db.taskDao().insert(
                     TaskEntity(
@@ -576,12 +556,14 @@ class StudyRepository(private val db: YanZhongDatabase) {
                 .forEach { db.taskDao().insert(it) }
             count = projected.count { it.planId == plan.id && it.accountGuid == accountGuid }
         }
+        activePlan.value = plan
         return count
     }
 
     /** 注销或切换账号时只清理当前账号的计划投影。 */
     suspend fun clearPlanProjections(accountGuid: String) {
         db.taskDao().deleteByPlanAccount(accountGuid)
+        activePlan.value = null
     }
 
     /**
@@ -589,6 +571,13 @@ class StudyRepository(private val db: YanZhongDatabase) {
      * 首页据此判断「计划是否已生成」:未生成时不展示阶段进度与今日计划内容,只给引导空态。
      */
     fun observeHasPlanProjection(): Flow<Boolean> = db.taskDao().observeHasPlanProjection()
+
+    /**
+     * 当前生效的服务端计划(内存态):applyPlanProjection/clearPlanProjections 维护,
+     * 首页阶段进度条据此从 stages 派生阶段信息,零额外网络请求。
+     * 冷启动到首次计划同步之间为 null —— 阶段条隐藏,其余 UI 以 Room 投影为准正常展示。
+     */
+    val activePlan = MutableStateFlow<PlanDto?>(null)
 
     /** 本周(周一始)任务视图 */
     fun observeWeekView(): Flow<List<TaskEntity>> {
@@ -705,142 +694,6 @@ class StudyRepository(private val db: YanZhongDatabase) {
             )
         )
         signalDirty()
-    }
-
-    // ---------- 导入 ----------
-
-    /**
-     * 内置参考包科目 → 本地科目的对齐。
-     *
-     * 包里写的是"专业课 408",但考研人未必考 408 —— 问卷确认的科目可能就叫"专业课"。
-     * [fuzzy] = true(问卷已确认考研后的补导)时允许互相包含的唯一命中
-     * (「专业课」⊂「专业课 408」);歧义(本地的「数学」「数学一」同时命中)宁可跳过不乱挂。
-     * [fuzzy] = false(启动期版本补导,用户考什么还未知)只认精确同名,
-     * 避免专升本用户的「高等数学」被包里的「数学」模糊卷走。
-     */
-    private fun matchBuiltinSubject(
-        packName: String,
-        localSubjects: List<SubjectEntity>,
-        fuzzy: Boolean,
-    ): SubjectEntity? {
-        fun canon(value: String): String = value.filter { !it.isWhitespace() }
-        val key = canon(packName)
-        localSubjects.firstOrNull { canon(it.name) == key }?.let { return it }
-        if (!fuzzy) return null
-        val hits = localSubjects.filter { canon(it.name).contains(key) || key.contains(canon(it.name)) }
-        return hits.singleOrNull()
-    }
-
-    /**
-     * 导入全量 JSON(计划包 / 换机恢复)。
-     *
-     * 合并策略:科目按名称匹配(不存在则新建),任务的 subjectId 重映射到本地科目;
-     * 节点与任务按「同名已存在即跳过」保证重复导入同一文件幂等,不产生脏数据。
-     *
-     * [builtin] = true 表示导入的是内置参考计划包:任务打上只读标记,生成 AI 计划前不进今日待办。
-     * **builtin 导入不创建科目**:参考计划是考研 408 专属,选了考公/法考的用户不应该
-     * 因为 APK 自作主张建出一堆 408 科目(这正是「科目选项永远是 408」问题的源头之一)。
-     * 科目匹配按 [matchBuiltinSubject] 模糊对齐(模型/包里的"专业课 408"能挂到用户的
-     * "专业课"上),实在没有就跳过,等问卷确认了匹配科目后再补导(幂等)。
-     *
-     * [withNodes] = false 时跳过包内节点:内置节点是考研关键日期,启动期的版本补导
-     * 还不知道用户考什么,不能先把考研日期塞给考公用户 —— 节点只在问卷确认考研后的
-     * 补导(withNodes = true)才进入本地。
-     */
-    suspend fun importJson(
-        json: String,
-        builtin: Boolean = false,
-        withNodes: Boolean = true,
-        fuzzySubjects: Boolean = false,
-    ): ImportResult {
-        val payload = Json { ignoreUnknownKeys = true }
-            .decodeFromString<ExportPayload>(json)
-        var subjectsAdded = 0
-        var nodesAdded = 0
-        var tasksAdded = 0
-        var skipped = 0
-
-        db.withTransaction {
-            val now = TimeUtils.now()
-            val localSubjects = db.subjectDao().getAll()
-            val subjectIdMap = mutableMapOf<Long, Long>()
-            payload.subjects.forEach { subject ->
-                val existing = if (builtin) matchBuiltinSubject(subject.name, localSubjects, fuzzySubjects)
-                else localSubjects.firstOrNull { it.name == subject.name }
-                when {
-                    existing != null -> subjectIdMap[subject.id] = existing.id
-                    // 只有用户自己的数据(备份恢复/手动导入)才有资格建科目
-                    !builtin -> {
-                        // 导入的行落新本地 guid(源 guid 可能与云端/本机存量冲突)
-                        val newId = db.subjectDao().insert(
-                            subject.copy(id = 0, clientGuid = "").stamped(now)
-                        )
-                        subjectIdMap[subject.id] = newId
-                        subjectsAdded++
-                    }
-                    // builtin 且本地没有可对齐科目:不建科目,关联任务在下方按映射缺失跳过
-                }
-            }
-
-            val existingNodeNames = db.countdownNodeDao().getAll().map { it.name }.toSet()
-            payload.nodes.forEach { node ->
-                when {
-                    !withNodes -> skipped++ // 启动期补导不知道用户考什么,考研日期节点等问卷确认后再进
-                    node.name in existingNodeNames -> skipped++
-                    else -> {
-                        db.countdownNodeDao().insert(node.copy(id = 0, clientGuid = "").stamped(now))
-                        nodesAdded++
-                    }
-                }
-            }
-
-            val existingTasks = db.taskDao().getAllTasks()
-            val taskIdMap = mutableMapOf<Long, Long>()
-            payload.tasks.forEach { task ->
-                val existing = existingTasks.firstOrNull { it.title == task.title }
-                if (existing != null) {
-                    taskIdMap[task.id] = existing.id
-                    // 计划包升级补导:把已存在的同名任务补打内置参考标记(仅导入内置包时)
-                    if (builtin && !existing.builtin) db.taskDao().markBuiltin(existing.id)
-                    skipped++
-                } else if (builtin && subjectIdMap[task.subjectId] == null) {
-                    // builtin 且科目本地不存在:跳过(不建科目),等问卷确认后再补导
-                    skipped++
-                } else {
-                    // 换机/备份恢复时保留原始完成状态与顺延次数,仅重映射科目引用
-                    val newId = db.taskDao().insert(
-                        task.copy(
-                            id = 0,
-                            subjectId = subjectIdMap[task.subjectId] ?: task.subjectId,
-                            builtin = builtin,
-                            clientGuid = ""
-                        ).stamped(now)
-                    )
-                    taskIdMap[task.id] = newId
-                    tasksAdded++
-                }
-            }
-
-            val existingSessions = db.sessionDao().getAll()
-            val importedSessionKeys = mutableSetOf<String>()
-            payload.sessions.forEach { session ->
-                val imported = session.copy(
-                    id = 0,
-                    taskId = session.taskId?.let { taskIdMap[it] },
-                    subjectId = session.subjectId?.let { subjectIdMap[it] }
-                ).stamped(now)
-                val sessionKey = "${imported.startedAt}|${imported.endedAt}|${imported.durationMin}|${imported.taskId}|${imported.subjectId}|${imported.planName}"
-                val duplicate = existingSessions.any {
-                    it.startedAt == imported.startedAt && it.endedAt == imported.endedAt &&
-                        it.durationMin == imported.durationMin && it.taskId == imported.taskId &&
-                        it.subjectId == imported.subjectId && it.planName == imported.planName
-                }
-                if (duplicate || !importedSessionKeys.add(sessionKey)) skipped++
-                else db.sessionDao().insert(imported)
-            }
-        }
-        if (subjectsAdded + nodesAdded + tasksAdded > 0) signalDirty()
-        return ImportResult(subjectsAdded, nodesAdded, tasksAdded, skipped)
     }
 
     // ---------- 云同步映射 ----------

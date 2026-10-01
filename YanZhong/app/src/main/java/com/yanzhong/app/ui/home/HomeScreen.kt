@@ -66,12 +66,11 @@ import com.yanzhong.app.ui.theme.MathColor
 import com.yanzhong.app.ui.theme.NeutralTagColor
 import com.yanzhong.app.ui.theme.PageHeader
 import com.yanzhong.app.ui.theme.PoliticsColor
-import com.yanzhong.app.ui.theme.Subject408Color
+import com.yanzhong.app.ui.theme.SubjectCsColor
 import com.yanzhong.app.ui.theme.SubjectArtwork
 import com.yanzhong.app.ui.theme.SuccessGreen
-import com.yanzhong.app.util.PersonalPlan
-import com.yanzhong.app.util.PhaseInfo
-import com.yanzhong.app.util.Phases
+import com.yanzhong.app.util.RhythmEngine
+import com.yanzhong.app.util.StageInfo
 import com.yanzhong.app.util.TimeUtils
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -137,16 +136,16 @@ fun HomeScreen(
     val epochDay = remember(state.now) {
         Instant.ofEpochMilli(state.now).atZone(ZoneId.systemDefault()).toLocalDate()
     }
-    val todayTemplate = remember(epochDay) { PersonalPlan.todayTemplate(state.now) }
+    val todayTemplate = remember(epochDay) { RhythmEngine.defaultTemplate(epochDay.dayOfWeek) }
     /** 今日节奏输入:今日待办(含已完成)按科目标签 + 番茄数,供节奏卡动态排程 */
     val rhythmTasks = remember(state.today, state.subjects) {
-        val tagOf = state.subjects.associate { it.id to PersonalPlan.tagOfSubject(it.name) }
+        val tagOf = state.subjects.associate { it.id to RhythmEngine.tagOfSubject(it.name) }
         (state.today.open + state.today.done)
             .sortedWith(compareBy({ it.priority }, { it.dueAt ?: Long.MAX_VALUE }))
             .filter { it.pomodoroEstimate > 0 }
             .map {
-                PersonalPlan.RhythmTask(
-                    tag = tagOf[it.subjectId] ?: PersonalPlan.TAG_GEN,
+                RhythmEngine.RhythmTask(
+                    tag = tagOf[it.subjectId] ?: RhythmEngine.TAG_GEN,
                     title = it.title,
                     pomodoros = it.pomodoroEstimate,
                     taskId = it.id
@@ -157,8 +156,7 @@ fun HomeScreen(
     val isMonthEnd = remember(epochDay) { epochDay.dayOfMonth == epochDay.lengthOfMonth() }
     /** 今日节奏排程(逐番茄 + 智能休息):提到列表层计算,供节奏卡与待办时段同步复用 */
     val rhythmRows = remember(todayTemplate, epochDay, rhythmTasks, state.focusMinutes) {
-        todayTemplate?.let { PersonalPlan.buildTodayRhythm(it, epochDay, rhythmTasks, state.focusMinutes) }
-            ?: emptyList()
+        RhythmEngine.buildTodayRhythm(todayTemplate, epochDay, rhythmTasks, state.focusMinutes)
     }
     /** 待办任务 → 节奏计划时段(整段起止):任务卡不再用固定 dueAt,动态跟随排程 */
     val planSlots = remember(rhythmRows) {
@@ -224,7 +222,7 @@ fun HomeScreen(
                             }
                             PageHeader(
                                 title = "今日",
-                                subtitle = dateLabel + (state.phase?.let { " · ${it.phase.name}" } ?: "")
+                                subtitle = dateLabel + (state.phase?.let { " · ${it.stageName}" } ?: "")
                             )
                         }
                         item {
@@ -318,10 +316,10 @@ fun HomeScreen(
                         ),
                         verticalArrangement = Arrangement.spacedBy(18.dp)
                     ) {
-                        if (state.hasActivePlan) todayTemplate?.let { tpl ->
+                        if (state.hasActivePlan) {
                             item(key = "rhythm-strip") {
                                 TodayRhythmCard(
-                                    tpl = tpl,
+                                    tpl = todayTemplate,
                                     rows = rhythmRows,
                                     now = state.now,
                                     focusMinutes = state.focusMinutes,
@@ -377,7 +375,7 @@ fun HomeScreen(
                 }
                 PageHeader(
                     title = "今日",
-                    subtitle = dateLabel + (state.phase?.let { " · ${it.phase.name}" } ?: "")
+                    subtitle = dateLabel + (state.phase?.let { " · ${it.stageName}" } ?: "")
                 ) {
                     TextButton(onClick = {
                         editingTask = null
@@ -411,10 +409,10 @@ fun HomeScreen(
                 }
             }
 
-            if (state.hasActivePlan) todayTemplate?.let { tpl ->
+            if (state.hasActivePlan) {
                 item(key = "rhythm-strip") {
                     TodayRhythmCard(
-                        tpl = tpl,
+                        tpl = todayTemplate,
                         rows = rhythmRows,
                         now = state.now,
                         focusMinutes = state.focusMinutes,
@@ -638,9 +636,9 @@ private fun PlanGuideCard(onOpenPlan: () -> Unit) {
     )
 }
 
-/** 阶段进度条:当前阶段名 + 第几天 + 五段比例轨道 + 阶段内细进度(与计划页同款视觉语言) */
+/** 阶段进度条:当前阶段名 + 第几天 + 各阶段占比轨道 + 阶段内细进度(结构来自生效 AI 计划的 stages) */
 @Composable
-private fun PhaseStrip(info: PhaseInfo) {
+private fun PhaseStrip(info: StageInfo) {
     Surface(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surface,
@@ -654,9 +652,9 @@ private fun PhaseStrip(info: PhaseInfo) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text(info.phase.name, style = MaterialTheme.typography.headlineMedium)
+                    Text(info.stageName, style = MaterialTheme.typography.headlineMedium)
                     Text(
-                        info.phase.slogan,
+                        info.slogan,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -672,12 +670,12 @@ private fun PhaseStrip(info: PhaseInfo) {
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                Phases.all.forEach { phase ->
-                    val isCurrent = phase == info.phase
-                    val isPast = phase.start.isBefore(info.phase.start)
+                info.stageDays.forEachIndexed { index, days ->
+                    val isCurrent = index == info.currentIndex
+                    val isPast = index < info.currentIndex
                     Box(
                         Modifier
-                            .weight(phase.daysCount().toFloat())
+                            .weight(days.toFloat())
                             .height(8.dp)
                             .clip(RoundedCornerShape(4.dp))
                             .background(
@@ -707,15 +705,10 @@ private fun PhaseStrip(info: PhaseInfo) {
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                buildString {
-                    if (info.phase.weeklyHours.isNotEmpty()) append("目标 ${info.phase.weeklyHours} h/周 · ")
-                    append(
-                        when {
-                            info.daysToEnd <= 0 -> "阶段收官在即"
-                            info.next != null -> "${info.daysToEnd} 天后进入${info.next.name}"
-                            else -> "距初试 ${info.daysToEnd} 天"
-                        }
-                    )
+                when {
+                    info.daysToEnd <= 0 -> "阶段收官在即"
+                    info.nextStageName != null -> "${info.daysToEnd} 天后进入${info.nextStageName}"
+                    else -> "距考试 ${info.daysToEnd} 天"
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -727,8 +720,8 @@ private fun PhaseStrip(info: PhaseInfo) {
 /** 今日节奏:待办合并为整段任务时段(去掉逐番茄与小憩/长休明细),当前时段以「现在」高亮 */
 @Composable
 private fun TodayRhythmCard(
-    tpl: PersonalPlan.DayTemplate,
-    rows: List<PersonalPlan.RhythmRow>,
+    tpl: RhythmEngine.DayTemplate,
+    rows: List<RhythmEngine.RhythmRow>,
     now: Long,
     focusMinutes: Int = 25,
     doneTaskIds: Set<Long> = emptySet()
@@ -745,7 +738,7 @@ private fun TodayRhythmCard(
             .map { group ->
                 val first = group.first()
                 val last = group.last()
-                PersonalPlan.RhythmRow(
+                RhythmEngine.RhythmRow(
                     time = first.time.substringBefore("–") + "–" + last.time.substringAfterLast("–"),
                     label = first.label.substringBefore(" · "),
                     tag = first.tag,
@@ -755,7 +748,7 @@ private fun TodayRhythmCard(
                 )
             }
     }
-    val activeIdx = remember(slots, localNow) { PersonalPlan.activeRhythmIndex(slots, localNow) }
+    val activeIdx = remember(slots, localNow) { RhythmEngine.activeRhythmIndex(slots, localNow) }
     val totalMinutes = slots.sumOf { it.minutes }
     val totalPomodoros = if (focusMinutes > 0) totalMinutes / focusMinutes else 0
     // 概览行进度按任务真实完成态统计,分母与展开后的任务段一致
@@ -881,10 +874,10 @@ private fun formatStudyMinutes(min: Int): String {
 
 /** 标签 → 学科色(与计划页保持一致) */
 private fun rhythmTagColor(tag: String): Color = when (tag) {
-    PersonalPlan.TAG_MATH -> MathColor
-    PersonalPlan.TAG_CS -> Subject408Color
-    PersonalPlan.TAG_EN -> EnglishColor
-    PersonalPlan.TAG_POL -> PoliticsColor
+    RhythmEngine.TAG_MATH -> MathColor
+    RhythmEngine.TAG_CS -> SubjectCsColor
+    RhythmEngine.TAG_EN -> EnglishColor
+    RhythmEngine.TAG_POL -> PoliticsColor
     else -> NeutralTagColor
 }
 

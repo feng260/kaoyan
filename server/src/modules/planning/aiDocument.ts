@@ -1,6 +1,7 @@
 import { chatComplete, extractJson, LlmError } from '../../shared/llm/client'
 import type { GeneratedStage } from './generator'
 import { dayStart, diffDays, type ProfileInput } from './schemas'
+import { PLAN_STRUCTURE_EXEMPLAR } from './planExemplar'
 import {
   DOC_CHAPTER_PLAN,
   briefIsEmpty,
@@ -11,7 +12,7 @@ import {
 } from './document'
 
 /**
- * 计划长文档生成器 —— 对标「468 天考研全程作战计划」那份 PlanDocument。
+ * 计划长文档生成器 —— 把 AI 生成的计划渲染成一份完整的「作战计划书」。
  *
  * 分段并发生成的理由:
  * 1. 完整 8 章一次生成必然超过 max_tokens 被截断,截断后 JSON 直接不可解析;
@@ -40,7 +41,7 @@ const DOC_TIMEOUT_MS = 180_000
  */
 const DOC_MAX_TOKENS = 4096
 
-const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,正在为考生撰写一份与《468 天考研全程作战计划》同等水准的全程计划书。
+const SYSTEM_PROMPT = `你是一位资深的中国备考全程规划师,正在为考生撰写一份结构完整、可直接执行的全程备考计划书。
 
 写作要求:
 - 内容必须具体、可执行、有信息量;只写已确认科目、范围和资料,缺失的信息保持未知,不得猜测教材、题型、目标分数或考试场次。
@@ -80,6 +81,12 @@ function buildContext(input: AiDocumentInput): string {
   ]
   if (input.brief && !briefIsEmpty(input.brief)) {
     lines.push('', '面谈得到的考生画像(必须体现到内容里,不要写与画像矛盾的建议):', briefToPrompt(input.brief))
+  }
+  // 结构范例只对考研注入:让文档的阶段命名、里程碑表达、内容具体度向它看齐。
+  // 放在阶段列表之前 —— 紧随其后的服务端排定阶段才是权威,避免范例中的理想结构与之打架。
+  if (input.profile.targetType === '考研') {
+    lines.push('', PLAN_STRUCTURE_EXEMPLAR,
+      '(写作时参照以上范例的结构理念与表达标准;但阶段划分、名称与日期一律以服务端排定的阶段为准,禁止照抄范例中的科目、书目或阶段名。)')
   }
   lines.push('', '阶段划分(服务端已排定,严禁改动日期与阶段数量):')
   input.stages.forEach((stage, index) => {

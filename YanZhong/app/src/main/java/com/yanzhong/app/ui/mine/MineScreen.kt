@@ -76,7 +76,7 @@ import com.yanzhong.app.ui.theme.PlanInk
 import com.yanzhong.app.ui.theme.PlanMuted
 import com.yanzhong.app.ui.theme.PoliticsColor
 import com.yanzhong.app.ui.theme.SkyBlue
-import com.yanzhong.app.ui.theme.Subject408Color
+import com.yanzhong.app.ui.theme.SubjectCsColor
 import com.yanzhong.app.util.TimeUtils
 
 /**
@@ -407,7 +407,7 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
             }
 
             item(key = "about") {
-                MineCard(title = "研钟 YanZhong", icon = AppIcons.Info, accent = Subject408Color, palette = palette) {
+                MineCard(title = "研钟 YanZhong", icon = AppIcons.Info, accent = SubjectCsColor, palette = palette) {
                     // 版本号跟 BuildConfig 走(F5):写死会随发版漂移,关于页和实际包对不上
                     Text("版本 ${com.yanzhong.app.BuildConfig.VERSION_NAME}",
                         style = MaterialTheme.typography.bodyLarge, color = palette.ink)
@@ -1099,7 +1099,7 @@ private fun SubjectEditorDialog(
     var name by remember { mutableStateOf("") }
     var colorIdx by remember { mutableStateOf(0) }
     val palette = listOf(
-        MathColor, Subject408Color, EnglishColor, PoliticsColor,
+        MathColor, SubjectCsColor, EnglishColor, PoliticsColor,
         Color(0xFF7E57C2), Color(0xFF26A69A), Color(0xFFEF5350), Color(0xFF5C6BC0)
     )
     AlertDialog(

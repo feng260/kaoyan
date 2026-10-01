@@ -222,10 +222,6 @@ interface TaskDao {
     @Query("SELECT EXISTS(SELECT 1 FROM task WHERE planId IS NOT NULL)")
     fun observeHasPlanProjection(): Flow<Boolean>
 
-    /** 把已存在任务补打内置参考计划包标记(计划包升级补导时用) */
-    @Query("UPDATE task SET builtin = 1 WHERE id = :id")
-    suspend fun markBuiltin(id: Long)
-
     /** 删除某科目的全部任务(含内置参考任务):实体无外键,级联靠调用方显式处理 */
     @Query("DELETE FROM task WHERE subjectId = :subjectId")
     suspend fun deleteBySubject(subjectId: Long)

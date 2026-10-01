@@ -5,7 +5,7 @@ import com.yanzhong.app.data.db.TaskStatus
 import java.time.Instant
 import java.time.ZoneId
 
-/** 首页当天服务端计划任务摘要；无服务端任务时由 PersonalPlan 提供展示 fallback。 */
+/** 首页当天服务端计划任务摘要。 */
 data class TodayPlanSummary(
     val isServerPlan: Boolean = false,
     val tasks: List<TaskEntity> = emptyList(),

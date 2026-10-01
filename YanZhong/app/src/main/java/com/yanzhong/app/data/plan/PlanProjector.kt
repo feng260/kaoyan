@@ -4,7 +4,7 @@ import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.data.db.TaskStatus
 import com.yanzhong.app.data.remote.PlanDto
-import com.yanzhong.app.util.PersonalPlan
+import com.yanzhong.app.util.RhythmEngine
 import com.yanzhong.app.data.remote.PlanItemDto
 import java.time.LocalDate
 import java.time.ZoneId
@@ -108,9 +108,9 @@ private fun projectedTask(
 fun resolvePlanSubjectId(name: String, subjects: List<SubjectEntity>): Long {
     if (name.isBlank()) return 0L
     subjects.firstOrNull { it.name == name }?.let { return it.id }
-    val tag = PersonalPlan.tagOfSubject(name)
-    if (tag == PersonalPlan.TAG_GEN) return 0L
-    return subjects.firstOrNull { PersonalPlan.tagOfSubject(it.name) == tag }?.id ?: 0L
+    val tag = RhythmEngine.tagOfSubject(name)
+    if (tag == RhythmEngine.TAG_GEN) return 0L
+    return subjects.firstOrNull { RhythmEngine.tagOfSubject(it.name) == tag }?.id ?: 0L
 }
 
 private fun parsePlanDate(planDate: String, zone: ZoneId): Long? =

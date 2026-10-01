@@ -4,7 +4,7 @@ import androidx.compose.ui.graphics.Color
 
 // 科目色(PRD 4.1):贯穿任务标签、专注环、图表
 val MathColor = Color(0xFF5865F2)
-val Subject408Color = Color(0xFF18A999)
+val SubjectCsColor = Color(0xFF18A999)
 val EnglishColor = Color(0xFFFF8A5C)
 val PoliticsColor = Color(0xFFE8618C)
 

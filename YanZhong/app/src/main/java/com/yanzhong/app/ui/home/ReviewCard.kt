@@ -34,7 +34,13 @@ import com.yanzhong.app.data.db.DailyReviewEntity
 import com.yanzhong.app.data.db.MonthlyReviewEntity
 import com.yanzhong.app.data.db.WeeklyReviewEntity
 import com.yanzhong.app.ui.theme.AppIcons
-import com.yanzhong.app.util.PersonalPlan
+
+/** 每日复盘三问(文案与 DailyReviewEntity 字段语义一一对应,改动需同步) */
+private val REVIEW_QUESTIONS = listOf(
+    "今天完成了什么?" to "对照日计划打勾,诚实一点",
+    "哪个知识点最模糊?" to "写进错题本,变成明天第一件事",
+    "明天最重要的 1 件事?" to "睡前定好,早起不犹豫"
+)
 
 /**
  * 复盘卡(作战计划的雷打不动动作落地):
@@ -249,7 +255,7 @@ fun DailyReviewSheet(
     onSave: (q1: String, q2: String, q3: String) -> Unit,
     onDismiss: () -> Unit
 ) {
-    val questions = PersonalPlan.reviewQuestions
+    val questions = REVIEW_QUESTIONS
     var q1 by remember { mutableStateOf(initial?.q1Done ?: "") }
     var q2 by remember { mutableStateOf(initial?.q2Weak ?: "") }
     var q3 by remember { mutableStateOf(initial?.q3Tomorrow ?: "") }

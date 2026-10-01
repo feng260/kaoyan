@@ -167,7 +167,7 @@ abstract class YanZhongDatabase : RoomDatabase() {
             }
         }
 
-        /** v8:内置参考计划包标记;存量行默认非内置,升级后由计划包补导(PLAN_PACK_VERSION)回填。 */
+        /** v8:任务 builtin 标记列(历史内置参考计划包);新行恒为默认值 0,列保留以兼容存量 schema。 */
         private val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE task ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0")
@@ -194,7 +194,7 @@ abstract class YanZhongDatabase : RoomDatabase() {
                 .toInstant().toEpochMilli()
             db.execSQL(
                 "INSERT INTO countdown_node (name, type, targetAt, pinned, sort, clientGuid, updatedAt, dirty) " +
-                    "VALUES ('2028 考研初试', 0, $exam, 1, 0, $uuid, $now, 1)"
+                    "VALUES ('目标考试', 0, $exam, 1, 0, $uuid, $now, 1)"
             )
         }
     }

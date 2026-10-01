@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { profileInputSchema, SUPPORTED_TARGET_TYPES } from './schemas'
 import { normalizeBrief, briefIsEmpty, assessPlanningFacts, documentMatchesSubjects } from './document'
+import { KAOYAN_KNOWN_SUBJECT_NAMES } from './planExemplar'
 
 test('rejects a generated document that mentions unconfirmed exam subjects', () => {
   const document = {
@@ -9,7 +10,16 @@ test('rejects a generated document that mentions unconfirmed exam subjects', () 
     hero: { badge: '', titleLead: '', titleAccent: '', titleTail: '', subtitle: '', subjects: ['英语一', '数学二'], stats: [] },
     chapters: [{ no: '01', title: '科目规划', blocks: [{ type: 'text' as const, text: '按照 408 题型训练' }] }],
   }
-  assert.equal(documentMatchesSubjects(document, ['英语一']), false)
+  assert.equal(documentMatchesSubjects(document, ['英语一'], KAOYAN_KNOWN_SUBJECT_NAMES), false)
+})
+
+test('a civil-service document mentioning 政治 passes because the guard list is target-specific', () => {
+  const document = {
+    title: '考公计划',
+    hero: { badge: '', titleLead: '', titleAccent: '', titleTail: '', subtitle: '', subjects: ['申论', '行政职业能力测验'], stats: [] },
+    chapters: [{ no: '01', title: '科目规划', blocks: [{ type: 'text' as const, text: '政治理论学习与申论范文精读交替安排' }] }],
+  }
+  assert.equal(documentMatchesSubjects(document, ['申论', '行政职业能力测验'], []), true)
 })
 
 /** 用相对今天的日期构造,避免写死日期导致测试随时间失效 */

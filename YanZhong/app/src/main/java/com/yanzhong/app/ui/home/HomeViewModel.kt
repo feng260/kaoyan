@@ -13,13 +13,14 @@ import com.yanzhong.app.data.db.WeeklyReviewEntity
 import com.yanzhong.app.data.repo.TodayView
 import com.yanzhong.app.data.plan.isServerPlanItem
 import com.yanzhong.app.data.remote.ApiClient
+import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.remote.PlanItemStatusReq
 import com.yanzhong.app.data.remote.TokenStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import com.yanzhong.app.util.PhaseInfo
-import com.yanzhong.app.util.Phases
+import com.yanzhong.app.util.StageInfo
+import com.yanzhong.app.util.stageInfo
 import com.yanzhong.app.util.TimeUtils
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -47,7 +48,7 @@ data class HomeUiState(
     val subjects: List<SubjectEntity> = emptyList(),
     val timerRunning: Boolean = false,
     val onboardingDone: Boolean = true,
-    val phase: PhaseInfo? = null,
+    val phase: StageInfo? = null,
     /** 是否已有生效的服务端计划:false 时首页不展示阶段进度/今日节奏/进度卡,改给引导空态 */
     val hasActivePlan: Boolean = false,
     val weekMinutes: Int = 0,
@@ -145,7 +146,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         val settings: SettingsSlice,
         val stats: FocusStats,
         val reviews: ReviewSlice,
-        val hasActivePlan: Boolean
+        val hasActivePlan: Boolean,
+        val activePlan: PlanDto?
     )
 
     /** 月度复盘 + 本月完成任务数:预合并成单流,避免 combine 六参超载(combine 仅支持最多 5 流) */
@@ -224,10 +226,16 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         repo.observeTodayView(),
         repo.observeSubjects(),
         timerRunning,
-        combine(onboarding, focusStats, reviewSlice, repo.observeHasPlanProjection()) { s, f, r, hasPlan ->
-            HomeSlice(s, f, r, hasPlan)
+        combine(
+            onboarding,
+            focusStats,
+            reviewSlice,
+            repo.observeHasPlanProjection(),
+            repo.activePlan
+        ) { s, f, r, hasPlan, plan ->
+            HomeSlice(s, f, r, hasPlan, plan)
         }
-    ) { slice, today, subjects, timerRunning, (settings, stats, reviews, hasActivePlan) ->
+    ) { slice, today, subjects, timerRunning, (settings, stats, reviews, hasActivePlan, activePlan) ->
         HomeUiState(
             nodes = slice.nodes,
             pinnedIndex = slice.index,
@@ -241,7 +249,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             subjects = subjects,
             timerRunning = timerRunning,
             onboardingDone = settings.onboardingDone,
-            phase = if (hasActivePlan) Phases.phaseInfo(slice.now) else null,
+            phase = activePlan?.stageInfo(slice.now),
             hasActivePlan = hasActivePlan,
             weekMinutes = stats.weekMinutes,
             weekGoalMin = settings.weeklyGoalMin,

@@ -316,11 +316,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                         localSubjectNames = runCatching {
                             repo.observeSubjects().first().map { it.name.trim() }.filter { it.isNotEmpty() }
                         }.getOrDefault(localSubjectNames)
-                        // 内置 468 参考计划是考研专属:只在确认考研后补导(科目已就位,
-                        // 模糊对齐让"专业课"挂上包里的"专业课 408");其他考试类型不掺考研参考
-                        if (s.targetType == "考研") {
-                            yanzhongApp.importBuiltinPlanPack(force = true, fuzzySubjects = true)
-                        }
                     }
                 _ui.update {
                     it.copy(
