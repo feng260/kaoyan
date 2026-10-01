@@ -51,7 +51,7 @@ class YanZhongApp : Application() {
         appScope.launch {
             settingsRepo.settings.collect { engine.primeSettings(it) }
         }
-        appScope.launch { importBuiltinPlanPack() }
+        appScope.launch { importBuiltinPlanPack(withNodes = false) }
         appScope.launch {
             // 登录门翻转联动:登录→常驻状态+数据同步,登出/被踢→断开
             authState.collect { logged ->
@@ -76,16 +76,23 @@ class YanZhongApp : Application() {
      * 导入失败不记录版本,下次启动自动重试。
      *
      * [force] 绕过版本闸门:问卷保存后科目刚建好,首启那次导入因"科目不存在"而挂不上
-     * 的参考任务,靠这次幂等补导就位(只有已存在的同名科目会挂上,考公用户自然挂不上)。
+     * 的参考任务,靠这次幂等补导就位。
+     * [fuzzySubjects] 允许科目名模糊对齐(「专业课」挂上包里的「专业课 408」)——
+     * 只在问卷确认考研后的补导开启;启动期用户考什么未知,保持精确匹配。
+     * [withNodes] 控制包内考研关键日期节点是否进入本地,见 StudyRepository.importJson。
      */
-    suspend fun importBuiltinPlanPack(force: Boolean = false) {
+    suspend fun importBuiltinPlanPack(
+        force: Boolean = false,
+        fuzzySubjects: Boolean = false,
+        withNodes: Boolean = true,
+    ) {
         if (!force && settingsRepo.current().planPackVersion >= PLAN_PACK_VERSION) return
         val json = runCatching {
             assets.open("plan/yanzhong-plan-import.json").use { input ->
                 input.readBytes().toString(Charsets.UTF_8)
             }
         }.getOrNull() ?: return
-        runCatching { repository.importJson(json, builtin = true) }
+        runCatching { repository.importJson(json, builtin = true, withNodes = withNodes, fuzzySubjects = fuzzySubjects) }
             .onSuccess { settingsRepo.setPlanPackVersion(PLAN_PACK_VERSION) }
     }
 

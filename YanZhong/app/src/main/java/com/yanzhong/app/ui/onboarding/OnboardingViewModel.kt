@@ -79,11 +79,13 @@ private val DEFAULT_WEAK_SUBJECTS = listOf("政治", "英语", "数学", "专业
 /**
  * 按 [TARGET_TYPES] 分型的科目预设(F3):选法考不该看到"数学"。
  * 用户仍可自由增删,本地已有科目会追加在预设之后供选择。
+ *
+ * 考研 preset 刻意只给公共课 + 泛化的"专业课":考研人未必考 408,
+ * 自命题、数一数二、法硕西医都是常见路径,预设只是起点不是结论 ——
+ * 统考科目(408/396/311…)让用户自己加,加出来的名字才是他真正要考的。
  */
 private val SUBJECT_PRESETS: Map<String, List<String>> = mapOf(
-    // 与旧版首启种子、内置 468 计划包的科目名完全一致(「专业课 408」带空格),
-    // 这样考研用户保存问卷后,本地科目名能精确匹配,内置参考任务才能挂上
-    "考研" to listOf("政治", "英语", "数学", "专业课 408"),
+    "考研" to listOf("政治", "英语", "数学", "专业课"),
     "法考" to listOf("民法", "刑法", "行政法", "理论法", "商经法", "三国法", "刑诉", "民诉"),
     "考公" to listOf("行测", "申论"),
     "专升本" to listOf("英语", "政治", "大学语文", "高等数学"),
@@ -314,9 +316,11 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                         localSubjectNames = runCatching {
                             repo.observeSubjects().first().map { it.name.trim() }.filter { it.isNotEmpty() }
                         }.getOrDefault(localSubjectNames)
-                        // 科目就位后补导一次内置参考计划包:首启时科目还不存在,参考任务挂不上;
-                        // 导入按标题幂等,考研用户的 468 参考计划此刻才真正就位(考公用户则自然挂不上)
-                        yanzhongApp.importBuiltinPlanPack(force = true)
+                        // 内置 468 参考计划是考研专属:只在确认考研后补导(科目已就位,
+                        // 模糊对齐让"专业课"挂上包里的"专业课 408");其他考试类型不掺考研参考
+                        if (s.targetType == "考研") {
+                            yanzhongApp.importBuiltinPlanPack(force = true, fuzzySubjects = true)
+                        }
                     }
                 _ui.update {
                     it.copy(

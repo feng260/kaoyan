@@ -710,6 +710,28 @@ class StudyRepository(private val db: YanZhongDatabase) {
     // ---------- 导入 ----------
 
     /**
+     * 内置参考包科目 → 本地科目的对齐。
+     *
+     * 包里写的是"专业课 408",但考研人未必考 408 —— 问卷确认的科目可能就叫"专业课"。
+     * [fuzzy] = true(问卷已确认考研后的补导)时允许互相包含的唯一命中
+     * (「专业课」⊂「专业课 408」);歧义(本地的「数学」「数学一」同时命中)宁可跳过不乱挂。
+     * [fuzzy] = false(启动期版本补导,用户考什么还未知)只认精确同名,
+     * 避免专升本用户的「高等数学」被包里的「数学」模糊卷走。
+     */
+    private fun matchBuiltinSubject(
+        packName: String,
+        localSubjects: List<SubjectEntity>,
+        fuzzy: Boolean,
+    ): SubjectEntity? {
+        fun canon(value: String): String = value.filter { !it.isWhitespace() }
+        val key = canon(packName)
+        localSubjects.firstOrNull { canon(it.name) == key }?.let { return it }
+        if (!fuzzy) return null
+        val hits = localSubjects.filter { canon(it.name).contains(key) || key.contains(canon(it.name)) }
+        return hits.singleOrNull()
+    }
+
+    /**
      * 导入全量 JSON(计划包 / 换机恢复)。
      *
      * 合并策略:科目按名称匹配(不存在则新建),任务的 subjectId 重映射到本地科目;
@@ -717,10 +739,20 @@ class StudyRepository(private val db: YanZhongDatabase) {
      *
      * [builtin] = true 表示导入的是内置参考计划包:任务打上只读标记,生成 AI 计划前不进今日待办。
      * **builtin 导入不创建科目**:参考计划是考研 408 专属,选了考公/法考的用户不应该
-     * 因为 APK 自作主张建出一堆 408 科目(这正是「科目选项永远是 408」问题的源头之一);
-     * 本地没有同名科目时对应任务直接跳过,等用户问卷确认了匹配科目后再补导(幂等)。
+     * 因为 APK 自作主张建出一堆 408 科目(这正是「科目选项永远是 408」问题的源头之一)。
+     * 科目匹配按 [matchBuiltinSubject] 模糊对齐(模型/包里的"专业课 408"能挂到用户的
+     * "专业课"上),实在没有就跳过,等问卷确认了匹配科目后再补导(幂等)。
+     *
+     * [withNodes] = false 时跳过包内节点:内置节点是考研关键日期,启动期的版本补导
+     * 还不知道用户考什么,不能先把考研日期塞给考公用户 —— 节点只在问卷确认考研后的
+     * 补导(withNodes = true)才进入本地。
      */
-    suspend fun importJson(json: String, builtin: Boolean = false): ImportResult {
+    suspend fun importJson(
+        json: String,
+        builtin: Boolean = false,
+        withNodes: Boolean = true,
+        fuzzySubjects: Boolean = false,
+    ): ImportResult {
         val payload = Json { ignoreUnknownKeys = true }
             .decodeFromString<ExportPayload>(json)
         var subjectsAdded = 0
@@ -730,9 +762,11 @@ class StudyRepository(private val db: YanZhongDatabase) {
 
         db.withTransaction {
             val now = TimeUtils.now()
+            val localSubjects = db.subjectDao().getAll()
             val subjectIdMap = mutableMapOf<Long, Long>()
             payload.subjects.forEach { subject ->
-                val existing = db.subjectDao().getAll().firstOrNull { it.name == subject.name }
+                val existing = if (builtin) matchBuiltinSubject(subject.name, localSubjects, fuzzySubjects)
+                else localSubjects.firstOrNull { it.name == subject.name }
                 when {
                     existing != null -> subjectIdMap[subject.id] = existing.id
                     // 只有用户自己的数据(备份恢复/手动导入)才有资格建科目
@@ -744,17 +778,19 @@ class StudyRepository(private val db: YanZhongDatabase) {
                         subjectIdMap[subject.id] = newId
                         subjectsAdded++
                     }
-                    // builtin 且本地没有同名科目:不建科目,关联任务在下方按映射缺失跳过
+                    // builtin 且本地没有可对齐科目:不建科目,关联任务在下方按映射缺失跳过
                 }
             }
 
             val existingNodeNames = db.countdownNodeDao().getAll().map { it.name }.toSet()
             payload.nodes.forEach { node ->
-                if (node.name in existingNodeNames) {
-                    skipped++
-                } else {
-                    db.countdownNodeDao().insert(node.copy(id = 0, clientGuid = "").stamped(now))
-                    nodesAdded++
+                when {
+                    !withNodes -> skipped++ // 启动期补导不知道用户考什么,考研日期节点等问卷确认后再进
+                    node.name in existingNodeNames -> skipped++
+                    else -> {
+                        db.countdownNodeDao().insert(node.copy(id = 0, clientGuid = "").stamped(now))
+                        nodesAdded++
+                    }
                 }
             }
 
