@@ -80,55 +80,57 @@ export async function chatComplete(options: ChatOptions): Promise<string> {
   })
 
   try {
-    let res = await send(buildBody(options.json === true, wantedMaxTokens))
+    // 预算自适应阶梯:两个方向都会自动落到可用档 ——
+    // · 400/422(厂商 max_tokens 上限更低 / 不支持 json_object):预算减半 + 去 JSON 约束
+    // · 200 空 content 且是思考型模型(finish_reason=length + reasoning_content):
+    //   思考把预算花光了,预算翻倍给足再试(上限 65536,覆盖 deepseek-reasoner 的输出上限)
+    const HARD_CEILING = 65536
+    let budget = wantedMaxTokens
+    let useJson = options.json === true
 
-    // 400/422 多半是厂商配置差异而不是真的失败:有的不支持 response_format=json_object,
-    // 有的对 max_tokens 上限卡得更死。这种情况降级(去掉 json 约束、收紧 max_tokens)再试一次,
-    // 而不是把厂商的 400 原样透给用户。
-    if (!res.ok && (res.status === 400 || res.status === 422) && (options.json === true || wantedMaxTokens > 2048)) {
-      await res.text().catch(() => '')
-      res = await send(buildBody(false, Math.min(wantedMaxTokens, 2048)))
-    }
+    let res = await send(buildBody(useJson, budget))
+    let payload: any = null
+    let content: string | null = null
 
-    if (!res.ok) {
-      const detail = await res.text().catch(() => '')
-      throw new LlmError('HTTP_ERROR', `大模型接口返回 ${res.status}: ${detail.slice(0, 300)}`)
-    }
+    for (let attempt = 0; attempt < 5; attempt++) {
+      if (!res.ok) {
+        if (res.status === 400 || res.status === 422) {
+          await res.text().catch(() => '')
+          if (budget > 2048) budget = Math.max(2048, Math.floor(budget / 2))
+          if (useJson) useJson = false
+          res = await send(buildBody(useJson, budget))
+          continue
+        }
+        const detail = await res.text().catch(() => '')
+        throw new LlmError('HTTP_ERROR', `大模型接口返回 ${res.status}: ${detail.slice(0, 300)}`)
+      }
 
-    /** 读出 choices[0].message.content;为空/缺字段时返回 null,由调用方决定降级或报错 */
-    const readContent = async (response: Response): Promise<{ payload: any; content: string | null }> => {
-      const payload: any = await response.json().catch(() => null)
+      payload = await res.json().catch(() => null)
       const message = payload?.choices?.[0]?.message
       const text = message?.content
-      return { payload, content: typeof text === 'string' && text.trim() ? text : null }
-    }
+      content = typeof text === 'string' && text.trim() ? text : null
+      if (content !== null) break
 
-    /** 空响应的诊断:finish_reason 与 reasoning_content 是两种空响应的"验尸报告" */
-    const describeEmpty = (payload: any, note?: string): string => {
-      const choice = payload?.choices?.[0]
-      const parts = [`finish_reason=${choice?.finish_reason ?? 'unknown'}`]
-      const reasoning = choice?.message?.reasoning_content
-      if (typeof reasoning === 'string' && reasoning.trim()) {
-        parts.push(`检测到 reasoning_content ${reasoning.length} 字 —— 思考型模型把输出预算花在了推理上,请更换非推理模型或显著加大 max_tokens`)
+      // 200 空响应:先怀疑 json_object 空壳(去掉约束),再怀疑思考型模型吃满预算(翻倍)。
+      // 每次空响应都是一次完整计费调用,所以两档补救各只走一次,走完就带诊断报错。
+      const finishReason = payload?.choices?.[0]?.finish_reason ?? 'unknown'
+      const reasoning = typeof message?.reasoning_content === 'string' ? message.reasoning_content : ''
+      const describe = `finish_reason=${finishReason}` +
+        (reasoning.trim() ? `;reasoning_content ${reasoning.length} 字` : '')
+      if (attempt < 4 && useJson) {
+        useJson = false
+      } else if (attempt < 4 && reasoning.trim() && finishReason === 'length' && budget < HARD_CEILING) {
+        budget = Math.min(HARD_CEILING, budget * 2)
+      } else {
+        const hint = reasoning.trim()
+          ? `思考型模型(reasoning_content ${reasoning.length} 字)耗尽了输出预算,建议更换非推理模型或继续加大 max_tokens`
+          : '模型未输出任何内容'
+        throw new LlmError('BAD_RESPONSE', `大模型返回内容为空(${describe};${hint})`)
       }
-      if (note) parts.push(note)
-      return parts.join(';')
-    }
-
-    let { payload, content } = await readContent(res)
-    if (content === null && options.json === true) {
-      // 200 但内容为空,而请求带了 response_format=json_object:
-      // 部分厂商/中转对 json 模式返回 200 空壳而不是报 400(那种走不到上面的降级)。
-      // 去掉 json 约束原参数重试一次 —— extractJson 本就容忍 ```json 代码块,不依赖服务端强制。
-      res = await send(buildBody(false, wantedMaxTokens))
-      if (res.ok) {
-        const retry = await readContent(res)
-        if (retry.content !== null) return retry.content
-        payload = retry.payload
-      }
+      res = await send(buildBody(useJson, budget))
     }
     if (content === null) {
-      throw new LlmError('BAD_RESPONSE', `大模型返回内容为空(${describeEmpty(payload)})`)
+      throw new LlmError('BAD_RESPONSE', '大模型返回内容为空(连续多次尝试仍未得到输出)')
     }
     return content
   } catch (error) {
