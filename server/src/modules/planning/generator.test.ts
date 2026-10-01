@@ -266,12 +266,28 @@ test('pending backlog for a confirmed subject is not dropped when the model omit
   assert.deepEqual(items.map(item => [item.subject, item.title, item.minutes]), [['自命题 912', '旧大纲', 60]])
 })
 
-test('pending backlog and new work cannot silently exceed available capacity', () => {
+test('overflowing replay rounds are truncated instead of failing the whole plan', () => {
+  // 真实场景回归:expandStage 现在按「逐日填满+循环重放」生成新任务,
+  // 总量 ≈ 全程净空闲容量,叠加旧任务后必然超出 —— 超出的重放轮必须截断,
+  // 而不是把整份计划判死(否则只要有旧任务,重新生成 3 次重试全部必然失败)
   const monday = new Date('2026-09-28T00:00:00.000Z')
   const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
-  const generated = [{ stageOrder: 0, subject: '英语一', title: '新阅读', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 }]
-  assert.throws(() => scheduleBacklog(stages, generated,
-    [{ subject: '英语一', title: '旧阅读', minutes: 60 }], briefWith([1], '09:00', '10:00'), ['英语一']), AiUnavailable)
+  const generated = [
+    { stageOrder: 0, subject: '申论', title: '新范文', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 },
+    { stageOrder: 0, subject: '政治', title: '新选择题', planDate: monday, minutes: 60, priority: 0, sortOrder: 1 },
+  ]
+  const items = scheduleBacklog(stages, generated,
+    [{ subject: '政治', title: '旧带背', minutes: 60 }], briefWith([1], '09:00', '10:00'), ['申论', '政治'])
+  // 容量只有 60 分钟/天 × 1 天:旧任务必排,新任务整体截断
+  assert.deepEqual(items.map(item => [item.subject, item.title, item.minutes]), [['政治', '旧带背', 60]])
+})
+
+test('pending backlog that alone exceeds capacity still fails with the backlog subject', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
+  assert.throws(() => scheduleBacklog(stages, [],
+    [{ subject: '政治', title: '旧带背', minutes: 180 }], briefWith([1], '09:00', '10:00'), ['政治']),
+  (e: unknown) => e instanceof AiUnavailable && e.message.includes('旧任务无法在考前排完:政治'))
 })
 
 test('pending backlog does not pull an even-week task into an odd week', () => {

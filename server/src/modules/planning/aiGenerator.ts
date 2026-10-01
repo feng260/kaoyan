@@ -360,6 +360,7 @@ export function scheduleBacklog(
     ...backlog.map(item => ({ ...item, earliest: stages[0].startDate })),
     ...newWork.map(item => ({ ...item, earliest: item.planDate })),
   ]
+  const backlogCount = backlog.length
   const output: GeneratedItem[] = []
   let index = 0
   let remaining = demand[0]?.minutes ?? 0
@@ -381,7 +382,13 @@ export function scheduleBacklog(
       }
     }
   }
-  if (index < demand.length) throw new AiUnavailable(`旧任务与新任务无法在考前排完:${demand[index].subject}`)
+  // 旧任务是用户真实的未完成进度,排不完才是真容量不足(带 repairHint 重试才有意义)。
+  // 新任务在 expandStage 里按「逐日填满+循环重放」生成,总量天然 ≈ 全程净空闲容量,
+  // 叠加旧任务后必然超出 —— 超出的部分本来就该少排一轮复习,直接截断而不是抛错:
+  // 否则只要用户有旧任务,重新生成计划就 3 次重试全部必然失败。
+  if (index < backlogCount) {
+    throw new AiUnavailable(`旧任务无法在考前排完:${demand[index].subject},请压缩每日固定占用后重试`)
+  }
   return output
 }
 
