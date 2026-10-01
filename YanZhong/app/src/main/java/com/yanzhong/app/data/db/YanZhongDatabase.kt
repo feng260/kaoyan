@@ -174,7 +174,15 @@ abstract class YanZhongDatabase : RoomDatabase() {
             }
         }
 
-        /** 预置四科目 + 2028 考研初试置顶节点(PRD 3.1 / 3.3);clientGuid 内联生成,首启即可被云同步推送 */
+        /**
+         * 预置 2028 考研初试置顶节点(PRD 3.3);clientGuid 内联生成,首启即可被云同步推送。
+         *
+         * 刻意**不再种入预置科目**(原 PRD 3.1 的考研四科):科目是用户选了考公还是考研、
+         * 法考还是专升本的核心表达,替用户预置 408 四科曾导致问卷科目选项与
+         * 「我的」页科目标志永远是考研那几项。科目完全由问卷确认结果决定
+         * (OnboardingViewModel 保存时经 StudyRepository.syncLocalSubjects 创建)。
+         * 节点名与日期也会在问卷保存时被 syncExamCountdown 改成用户自己的目标与考期。
+         */
         private fun seed(db: SupportSQLiteDatabase) {
             val uuid =
                 "lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-4'||" +
@@ -182,18 +190,6 @@ abstract class YanZhongDatabase : RoomDatabase() {
                     "substr('89ab',1+abs(random())%4,1)||substr(hex(randomblob(2)),2)||'-'||" +
                     "hex(randomblob(6)))"
             val now = System.currentTimeMillis()
-            val subjects = listOf(
-                Triple("数学", 0xFF5865F2, 0),
-                Triple("专业课 408", 0xFF18A999, 1),
-                Triple("英语", 0xFFFF8A5C, 2),
-                Triple("政治", 0xFFE8618C, 3)
-            )
-            subjects.forEach { (name, color, sort) ->
-                db.execSQL(
-                    "INSERT INTO subject (name, colorArgb, sort, archived, clientGuid, updatedAt, dirty) " +
-                        "VALUES ('$name', $color, $sort, 0, $uuid, $now, 1)"
-                )
-            }
             val exam = ZonedDateTime.of(2027, 12, 18, 8, 30, 0, 0, ZoneId.systemDefault())
                 .toInstant().toEpochMilli()
             db.execSQL(

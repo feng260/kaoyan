@@ -182,6 +182,64 @@ class StudyRepository(private val db: YanZhongDatabase) {
 
     fun observeSubjects(): Flow<List<SubjectEntity>> = db.subjectDao().observeAll()
 
+    /**
+     * 历史版本首启种入的考研预置科目名(与旧 seed() 完全一致,含「专业课 408」的空格)。
+     * 问卷保存时,这些科目若没有被真实使用(无手动/计划任务、无专注记录),
+     * 就连同其内置参考任务一起清掉 —— 它们只是预置噪音,不是用户选的科目。
+     */
+    private val legacyPresetSubjects = setOf("数学", "专业课 408", "英语", "政治")
+
+    /**
+     * 让本地科目与问卷确认的考试科目对齐。
+     *
+     * 为什么需要:科目曾在新装时硬编码种入考研四科,导致选了考公的用户,
+     * 问卷科目选项和「我的」页头像下的科目标志永远是 408 那几项 ——
+     * 本地科目不是用户选的,而是 APK 替他选的。
+     *
+     * 规则:确认的科目缺了就建(颜色轮流分配避开已占用);
+     * 历史预置科目若从未被真实使用则连同其内置参考任务一并清掉。
+     * 有真实任务或专注记录的科目绝不动 —— 那是用户数据,不是预置噪音。
+     */
+    suspend fun syncLocalSubjects(confirmedNames: Collection<String>) {
+        val now = TimeUtils.now()
+        var created = 0
+        var removed = 0
+        db.withTransaction {
+            val existing = db.subjectDao().getAll().filter { !it.archived }
+            val confirmed = confirmedNames.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+            val existingNames = existing.map { it.name }.toSet()
+
+            // ① 确认的科目缺了就建
+            val usedColors = existing.map { it.colorArgb }.toMutableSet()
+            var sort = existing.maxOfOrNull { it.sort } ?: -1
+            confirmed.forEach { name ->
+                if (name in existingNames) return@forEach
+                val color = subjectPalette.firstOrNull { it !in usedColors }
+                    ?: subjectPalette[created % subjectPalette.size]
+                usedColors.add(color)
+                sort++
+                db.subjectDao().insert(
+                    SubjectEntity(name = name, colorArgb = color, sort = sort).stamped(now)
+                )
+                created++
+            }
+
+            // ② 清理历史预置科目:不在确认名单、无真实任务、无专注记录才可删
+            val tasks = db.taskDao().getAllTasks()
+            existing.forEach { subject ->
+                if (subject.name in confirmed) return@forEach
+                if (subject.name !in legacyPresetSubjects) return@forEach
+                if (tasks.any { it.subjectId == subject.id && !it.builtin }) return@forEach
+                if (db.sessionDao().existsBySubject(subject.id)) return@forEach
+                db.taskDao().deleteBySubject(subject.id) // 其内置参考任务一并移除
+                tombstone("subjects", subject.clientGuid, now)
+                db.subjectDao().delete(subject)
+                removed++
+            }
+        }
+        if (created > 0 || removed > 0) signalDirty()
+    }
+
     suspend fun addSubject(name: String, color: Long) {
         val now = TimeUtils.now()
         val maxSort = db.subjectDao().getAll().maxOfOrNull { it.sort } ?: -1
@@ -658,6 +716,9 @@ class StudyRepository(private val db: YanZhongDatabase) {
      * 节点与任务按「同名已存在即跳过」保证重复导入同一文件幂等,不产生脏数据。
      *
      * [builtin] = true 表示导入的是内置参考计划包:任务打上只读标记,生成 AI 计划前不进今日待办。
+     * **builtin 导入不创建科目**:参考计划是考研 408 专属,选了考公/法考的用户不应该
+     * 因为 APK 自作主张建出一堆 408 科目(这正是「科目选项永远是 408」问题的源头之一);
+     * 本地没有同名科目时对应任务直接跳过,等用户问卷确认了匹配科目后再补导(幂等)。
      */
     suspend fun importJson(json: String, builtin: Boolean = false): ImportResult {
         val payload = Json { ignoreUnknownKeys = true }
@@ -672,15 +733,18 @@ class StudyRepository(private val db: YanZhongDatabase) {
             val subjectIdMap = mutableMapOf<Long, Long>()
             payload.subjects.forEach { subject ->
                 val existing = db.subjectDao().getAll().firstOrNull { it.name == subject.name }
-                if (existing != null) {
-                    subjectIdMap[subject.id] = existing.id
-                } else {
-                    // 导入的行落新本地 guid(源 guid 可能与云端/本机存量冲突)
-                    val newId = db.subjectDao().insert(
-                        subject.copy(id = 0, clientGuid = "").stamped(now)
-                    )
-                    subjectIdMap[subject.id] = newId
-                    subjectsAdded++
+                when {
+                    existing != null -> subjectIdMap[subject.id] = existing.id
+                    // 只有用户自己的数据(备份恢复/手动导入)才有资格建科目
+                    !builtin -> {
+                        // 导入的行落新本地 guid(源 guid 可能与云端/本机存量冲突)
+                        val newId = db.subjectDao().insert(
+                            subject.copy(id = 0, clientGuid = "").stamped(now)
+                        )
+                        subjectIdMap[subject.id] = newId
+                        subjectsAdded++
+                    }
+                    // builtin 且本地没有同名科目:不建科目,关联任务在下方按映射缺失跳过
                 }
             }
 
@@ -702,6 +766,9 @@ class StudyRepository(private val db: YanZhongDatabase) {
                     taskIdMap[task.id] = existing.id
                     // 计划包升级补导:把已存在的同名任务补打内置参考标记(仅导入内置包时)
                     if (builtin && !existing.builtin) db.taskDao().markBuiltin(existing.id)
+                    skipped++
+                } else if (builtin && subjectIdMap[task.subjectId] == null) {
+                    // builtin 且科目本地不存在:跳过(不建科目),等问卷确认后再补导
                     skipped++
                 } else {
                     // 换机/备份恢复时保留原始完成状态与顺延次数,仅重映射科目引用

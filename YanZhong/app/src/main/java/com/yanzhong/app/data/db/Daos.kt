@@ -226,6 +226,10 @@ interface TaskDao {
     @Query("UPDATE task SET builtin = 1 WHERE id = :id")
     suspend fun markBuiltin(id: Long)
 
+    /** 删除某科目的全部任务(含内置参考任务):实体无外键,级联靠调用方显式处理 */
+    @Query("DELETE FROM task WHERE subjectId = :subjectId")
+    suspend fun deleteBySubject(subjectId: Long)
+
     @Query(
         "UPDATE task SET clientGuid = lower(hex(randomblob(4))||'-'||hex(randomblob(2))||'-4'||" +
             "substr(hex(randomblob(2)),2)||'-'||" +
@@ -248,6 +252,10 @@ interface SessionDao {
 
     @Query("DELETE FROM pomodoro_session")
     suspend fun deleteAll()
+
+    /** 某科目是否有过专注记录:清理预置科目前必须确认,有记录的科目绝不能动 */
+    @Query("SELECT EXISTS(SELECT 1 FROM pomodoro_session WHERE subjectId = :subjectId)")
+    suspend fun existsBySubject(subjectId: Long): Boolean
 
     @Query(
         "SELECT COALESCE(SUM(durationMin), 0) FROM pomodoro_session " +

@@ -70,13 +70,16 @@ class YanZhongApp : Application() {
     }
 
     /**
-     * 首启自动装载内置 468 天作战计划包(assets/plan/yanzhong-plan-import.json):
+     * 装载内置 468 天作战计划包(assets/plan/yanzhong-plan-import.json):
      * 周期任务模板 + 阶段里程碑任务 + 关键日期节点。导入逻辑按标题/名称幂等去重;
      * [PLAN_PACK_VERSION] 随计划包内容升级,老安装升级后自动补导新增条目,
      * 导入失败不记录版本,下次启动自动重试。
+     *
+     * [force] 绕过版本闸门:问卷保存后科目刚建好,首启那次导入因"科目不存在"而挂不上
+     * 的参考任务,靠这次幂等补导就位(只有已存在的同名科目会挂上,考公用户自然挂不上)。
      */
-    private suspend fun importBuiltinPlanPack() {
-        if (settingsRepo.current().planPackVersion >= PLAN_PACK_VERSION) return
+    suspend fun importBuiltinPlanPack(force: Boolean = false) {
+        if (!force && settingsRepo.current().planPackVersion >= PLAN_PACK_VERSION) return
         val json = runCatching {
             assets.open("plan/yanzhong-plan-import.json").use { input ->
                 input.readBytes().toString(Charsets.UTF_8)

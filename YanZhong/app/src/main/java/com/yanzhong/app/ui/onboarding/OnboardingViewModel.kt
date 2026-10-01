@@ -73,24 +73,32 @@ data class OnboardingUiState(
     val onlyPlanMissing: Boolean get() = profileSaved && plan == null
 }
 
-/** 考研兜底模板:本地没有任何科目时才用 */
+/** 考研兜底模板 */
 private val DEFAULT_WEAK_SUBJECTS = listOf("政治", "英语", "数学", "专业课")
 
 /**
  * 按 [TARGET_TYPES] 分型的科目预设(F3):选法考不该看到"数学"。
- * 本地已有科目永远优先;这里的清单只在本地为空时兜底,且用户仍可自由增删。
+ * 用户仍可自由增删,本地已有科目会追加在预设之后供选择。
  */
 private val SUBJECT_PRESETS: Map<String, List<String>> = mapOf(
-    "考研" to DEFAULT_WEAK_SUBJECTS,
+    // 与旧版首启种子、内置 468 计划包的科目名完全一致(「专业课 408」带空格),
+    // 这样考研用户保存问卷后,本地科目名能精确匹配,内置参考任务才能挂上
+    "考研" to listOf("政治", "英语", "数学", "专业课 408"),
     "法考" to listOf("民法", "刑法", "行政法", "理论法", "商经法", "三国法", "刑诉", "民诉"),
     "考公" to listOf("行测", "申论"),
     "专升本" to listOf("英语", "政治", "大学语文", "高等数学"),
     "其他" to DEFAULT_WEAK_SUBJECTS,
 )
 
-/** 科目候选清单:本地已有科目优先,没有则按备考类型给预设,最后才落通用模板 */
+/**
+ * 科目候选清单:**题型预设在前**,本地已有科目追加在后。
+ *
+ * 不能"本地优先、为空才用预设"——本地科目在老安装里是首启硬编码种入的考研四科,
+ * 本地永远不空,预设就永远轮不到,选了考公看到的还是 408(用户实测踩中)。
+ * 预设先行保证选项跟着备考类型走;本地科目去重后追加,用户自建的不丢。
+ */
 private fun subjectOptionsFor(targetType: String, localSubjects: List<String>): List<String> =
-    localSubjects.ifEmpty { SUBJECT_PRESETS[targetType] ?: DEFAULT_WEAK_SUBJECTS }
+    ((SUBJECT_PRESETS[targetType] ?: DEFAULT_WEAK_SUBJECTS) + localSubjects).distinct()
 
 /** 问卷总步数:目标与考期 → 节奏与短板 → 正式科目与真实空闲 */
 const val ONBOARDING_STEPS = 3
@@ -121,17 +129,18 @@ private const val MAX_COMMITMENTS = 20
 private const val MAX_EXAM_SUBJECTS = 12
 
 class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
-    private val repo = (app as YanZhongApp).repository
+    private val yanzhongApp = app as YanZhongApp
+    private val repo = yanzhongApp.repository
     private val _ui = MutableStateFlow(OnboardingUiState(examDate = suggestedExamDate(TARGET_TYPES.first())))
     val state: StateFlow<OnboardingUiState> = _ui
 
-    /** 本地已有科目名:科目候选的第一优先级,切换备考类型时也要以它为准 */
+    /** 本地已有科目名:追加在题型预设之后供选择(预设在前,见 subjectOptionsFor) */
     private var localSubjectNames: List<String> = emptyList()
 
     init {
         viewModelScope.launch {
-            // 科目清单跟着本地已有科目走,用户看到的就是自己那几门课,
-            // 而不是一份通用的"数学/英语/政治"模板——问卷里出现陌生名词最容易劝退
+            // 本地科目只是候选的"补充项"而不是主体:选项主体永远跟着备考类型的预设走,
+            // 本地的(可能是历史预置的考研四科)去重后追加在后
             val names = runCatching {
                 repo.observeSubjects().first().map { it.name.trim() }.filter { it.isNotEmpty() }
             }.getOrDefault(emptyList())
@@ -298,6 +307,17 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 // 档案落库即完成:计划由「AI 面谈 → 生成」这条独立的路去产生
                 // 考期同时落到本地倒计时节点,首页显示的是用户自己填的日子
                 runCatching { repo.syncExamCountdown(s.targetType, s.examDate) }
+                // 本地科目与确认结果对齐:确认的建出来,历史预置的考研科目(未被真实使用)清掉。
+                // 「我的」页头像下的科目标志、问卷的科目候选,读的都是本地科目 —— 必须对齐。
+                runCatching { repo.syncLocalSubjects(s.examSubjects) }
+                    .onSuccess {
+                        localSubjectNames = runCatching {
+                            repo.observeSubjects().first().map { it.name.trim() }.filter { it.isNotEmpty() }
+                        }.getOrDefault(localSubjectNames)
+                        // 科目就位后补导一次内置参考计划包:首启时科目还不存在,参考任务挂不上;
+                        // 导入按标题幂等,考研用户的 468 参考计划此刻才真正就位(考公用户则自然挂不上)
+                        yanzhongApp.importBuiltinPlanPack(force = true)
+                    }
                 _ui.update {
                     it.copy(
                         phase = OnboardingPhase.SUCCESS,
