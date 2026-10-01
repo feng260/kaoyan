@@ -95,10 +95,40 @@ export async function chatComplete(options: ChatOptions): Promise<string> {
       throw new LlmError('HTTP_ERROR', `大模型接口返回 ${res.status}: ${detail.slice(0, 300)}`)
     }
 
-    const data: any = await res.json()
-    const content = data?.choices?.[0]?.message?.content
-    if (typeof content !== 'string' || !content.trim()) {
-      throw new LlmError('BAD_RESPONSE', '大模型返回内容为空')
+    /** 读出 choices[0].message.content;为空/缺字段时返回 null,由调用方决定降级或报错 */
+    const readContent = async (response: Response): Promise<{ payload: any; content: string | null }> => {
+      const payload: any = await response.json().catch(() => null)
+      const message = payload?.choices?.[0]?.message
+      const text = message?.content
+      return { payload, content: typeof text === 'string' && text.trim() ? text : null }
+    }
+
+    /** 空响应的诊断:finish_reason 与 reasoning_content 是两种空响应的"验尸报告" */
+    const describeEmpty = (payload: any, note?: string): string => {
+      const choice = payload?.choices?.[0]
+      const parts = [`finish_reason=${choice?.finish_reason ?? 'unknown'}`]
+      const reasoning = choice?.message?.reasoning_content
+      if (typeof reasoning === 'string' && reasoning.trim()) {
+        parts.push(`检测到 reasoning_content ${reasoning.length} 字 —— 思考型模型把输出预算花在了推理上,请更换非推理模型或显著加大 max_tokens`)
+      }
+      if (note) parts.push(note)
+      return parts.join(';')
+    }
+
+    let { payload, content } = await readContent(res)
+    if (content === null && options.json === true) {
+      // 200 但内容为空,而请求带了 response_format=json_object:
+      // 部分厂商/中转对 json 模式返回 200 空壳而不是报 400(那种走不到上面的降级)。
+      // 去掉 json 约束原参数重试一次 —— extractJson 本就容忍 ```json 代码块,不依赖服务端强制。
+      res = await send(buildBody(false, wantedMaxTokens))
+      if (res.ok) {
+        const retry = await readContent(res)
+        if (retry.content !== null) return retry.content
+        payload = retry.payload
+      }
+    }
+    if (content === null) {
+      throw new LlmError('BAD_RESPONSE', `大模型返回内容为空(${describeEmpty(payload)})`)
     }
     return content
   } catch (error) {
