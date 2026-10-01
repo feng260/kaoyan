@@ -252,9 +252,9 @@ fun HomeScreen(
                                     total = state.totalCount,
                                     timerRunning = state.timerRunning,
                                     weekMinutes = state.weekMinutes,
-                                    weekGoalMin = state.weekGoalMin,
+                                    weekGoalMin = derivedWeekGoalMin(state),
                                     todayPomodoros = state.todayPomodoros,
-                                    dailyPomodoroGoal = state.dailyPomodoroGoal
+                                    dailyPomodoroGoal = derivedDailyGoal(state)
                                 )
                             }
                         }
@@ -428,9 +428,9 @@ fun HomeScreen(
                         total = state.totalCount,
                         timerRunning = state.timerRunning,
                         weekMinutes = state.weekMinutes,
-                        weekGoalMin = state.weekGoalMin,
+                        weekGoalMin = derivedWeekGoalMin(state),
                         todayPomodoros = state.todayPomodoros,
-                        dailyPomodoroGoal = state.dailyPomodoroGoal
+                        dailyPomodoroGoal = derivedDailyGoal(state)
                     )
                 }
             }
@@ -871,6 +871,14 @@ private fun formatStudyMinutes(min: Int): String {
         else -> "${m}m"
     }
 }
+
+/** 今日番茄目标:今天有计划任务就按计划的预计番茄合计,否则回退设置里的手动目标 */
+private fun derivedDailyGoal(state: HomeUiState): Int =
+    state.todayPlan.totalPomodoros.takeIf { it > 0 } ?: state.dailyPomodoroGoal
+
+/** 周净学习目标:本周有计划任务就按计划合计 × focusMinutes,否则回退设置里的手动目标 */
+private fun derivedWeekGoalMin(state: HomeUiState): Int =
+    (state.weekPlanPomodoros * state.focusMinutes).takeIf { it > 0 } ?: state.weekGoalMin
 
 /** 标签 → 学科色(与计划页保持一致) */
 private fun rhythmTagColor(tag: String): Color = when (tag) {

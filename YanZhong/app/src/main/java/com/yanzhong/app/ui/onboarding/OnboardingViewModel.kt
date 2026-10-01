@@ -46,8 +46,8 @@ data class OnboardingUiState(
     val subjectOptions: List<String> = emptyList(),
     /** 正式考试科目名;逐科的进度与里程碑留给面谈 */
     val examSubjects: Set<String> = emptySet(),
-    /** 按星期记的真实空闲:weekday(1=周一) → 时段名(STUDY_WINDOWS 之一) */
-    val availability: Map<Int, Set<String>> = emptyMap(),
+    /** 按星期记的真实空闲:weekday(1=周一) → 自定义钟点窗口列表(参考真实课表,支持任意 HH:mm) */
+    val availability: Map<Int, List<TimeWindow>> = emptyMap(),
     /** 固定占用(上课/上班/通勤),可由课表图片识别得到,也可手动补 */
     val commitments: List<BriefCommitmentDto> = emptyList(),
     /** 课表识别的进行中/结果提示,和表单校验提示分开,免得互相覆盖 */
@@ -109,9 +109,9 @@ const val ONBOARDING_STEPS = 3
 internal val WEEKDAY_LABELS = listOf("一", "二", "三", "四", "五", "六", "日")
 
 /**
- * 时段名 → 钟点。
- * 问卷里让人点「晚上」比让人填 19:00-22:00 省事得多,但排容量必须落到钟点上,
- * 所以这里做一次翻译:点选可以是粗的,落库必须是 HH:mm。
+ * 时段名 → 钟点(快捷模板)。
+ * 排容量必须落到钟点上;钟点课表支持自定义编辑,这组预设只是"一键起步"的快捷方式,
+ * 点了之后仍可在生成的窗口上自行增删改。
  */
 internal val WINDOW_CLOCK: Map<String, Pair<String, String>> = linkedMapOf(
     "早晨" to ("06:30" to "08:00"),
@@ -120,6 +120,11 @@ internal val WINDOW_CLOCK: Map<String, Pair<String, String>> = linkedMapOf(
     "晚上" to ("19:00" to "22:00"),
     "深夜" to ("22:30" to "23:59")
 )
+
+/** 一段空闲窗口(HH:mm 24 小时制);问卷课表的原子单位,直接对应服务端 BriefWindowDto */
+data class TimeWindow(val start: String, val end: String) {
+    override fun toString(): String = "$start-$end"
+}
 
 /** 课表截图最长边压到 1600 像素:再大也只是让上传变慢,小字照样认得出 */
 private const val TIMETABLE_MAX_SIDE = 1600
@@ -447,12 +452,30 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 点一下格子里的时段:来回切换「这天这个时段我空着」 */
-    fun toggleAvailability(weekday: Int, window: String) {
+    /**
+     * 给某天加一段自定义钟点空闲(如 07:00-11:30)。
+     * [start]/[end] 是用户敲的钟点,这里只做格式与先后校验,不猜。
+     * 返回是否真的记下,好让对话框只在成功时关闭 —— 校验没过就留着让用户改。
+     */
+    fun addAvailability(weekday: Int, start: String, end: String): Boolean {
+        val from = normalizeClock(start) ?: return false
+        val to = normalizeClock(end) ?: return false
+        if (from >= to) return false
+        var added = false
         _ui.update { s ->
             val day = s.availability[weekday].orEmpty()
-            val next = if (window in day) day - window else day + window
-            val grid = if (next.isEmpty()) s.availability - weekday else s.availability + (weekday to next)
+            if (TimeWindow(from, to) in day) return@update s
+            added = true
+            val next = (day + TimeWindow(from, to)).sortedBy { it.start }
+            s.copy(availability = s.availability + (weekday to next), message = "", messageIsError = false)
+        }
+        return added
+    }
+
+    fun removeAvailability(weekday: Int, window: TimeWindow) {
+        _ui.update { s ->
+            val day = s.availability[weekday].orEmpty() - window
+            val grid = if (day.isEmpty()) s.availability - weekday else s.availability + (weekday to day)
             s.copy(availability = grid, message = "", messageIsError = false)
         }
     }
@@ -579,7 +602,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         }
         if (step >= 2) {
             if (s.examSubjects.isEmpty()) return "把要考的科目写全,一门也算"
-            if (s.availability.isEmpty()) return "七天里至少标出一天真能坐下学的时段,点一下那一格就行"
+            if (s.availability.isEmpty()) return "七天里至少给一天加一段空闲时段,点那天的「+」就行"
         }
         return validateExamDate(s.examDate)
     }
@@ -611,12 +634,11 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
 
     // ---------------- 载荷与图片 ----------------
 
-    /** 格子 → 服务端要的按星期窗口表;一天都没选中的星期不出现在载荷里 */
-    private fun availabilityPayload(grid: Map<Int, Set<String>>): List<BriefAvailabilityDto> =
+    /** 课表 → 服务端要的按星期窗口表;一天都没加窗口的星期不出现在载荷里 */
+    private fun availabilityPayload(grid: Map<Int, List<TimeWindow>>): List<BriefAvailabilityDto> =
         (1..7).mapNotNull { weekday ->
-            val windows = WINDOW_CLOCK.filterKeys { it in grid[weekday].orEmpty() }
-                .values
-                .map { BriefWindowDto(start = it.first, end = it.second) }
+            val windows = grid[weekday].orEmpty()
+                .map { BriefWindowDto(start = it.start, end = it.end) }
             if (windows.isEmpty()) null else BriefAvailabilityDto(weekday = weekday, windows = windows)
         }
 
@@ -652,13 +674,18 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     }
 }
 
-/** 把落库的钟点窗口翻回问卷里的粗时段;对不上的自定义窗口不还原(问卷才是空闲的唯一入口) */
-internal fun briefToGrid(availability: List<BriefAvailabilityDto>): Map<Int, Set<String>> =
-    availability.associate { slot ->
-        slot.weekday to slot.windows.mapNotNull { w ->
-            WINDOW_CLOCK.entries.firstOrNull { it.value.first == w.start && it.value.second == w.end }?.key
-        }.toSet()
-    }.filterValues { it.isNotEmpty() }
+/** 把落库的钟点窗口翻回编辑器列表;逐条原样还原(课表支持任意 HH:mm,不再丢弃预设之外的窗口) */
+internal fun briefToGrid(availability: List<BriefAvailabilityDto>): Map<Int, List<TimeWindow>> =
+    availability.mapNotNull { slot ->
+        val windows = slot.windows
+            .mapNotNull { w ->
+                val start = normalizeClock(w.start) ?: return@mapNotNull null
+                val end = normalizeClock(w.end) ?: return@mapNotNull null
+                if (start < end) TimeWindow(start, end) else null
+            }
+            .sortedBy { it.start }
+        if (windows.isEmpty()) null else slot.weekday to windows
+    }.toMap()
 
 /** "8:00" / "08:00" / "8：00" → "08:00";认不出来给 null */
 internal fun normalizeClock(raw: String): String? {

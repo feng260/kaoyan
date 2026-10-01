@@ -164,7 +164,8 @@ function profileContext(profile: ProfileInput | null, brief: PlanBrief | null): 
     lines.push(`- 正式考试科目(已确认,不要再问有哪些科):${brief.examSubjects.map(s => s.name).join('、')}`)
   }
   if (brief && brief.availabilityConfirmed && brief.availability.length) {
-    lines.push(`- 真实空闲时段(已确认,不要再问作息):${JSON.stringify(brief.availability)}`)
+    lines.push(`- 真实空闲时段(已确认,不要再问作息):${JSON.stringify(brief.availability)}`,
+      '- 注意:已确认的课表不会因为面谈而改动;考生说作息变了,让他去「备考档案」里改课表,不要在本轮输出里写 availability')
   }
   if (brief && brief.commitmentsConfirmed) {
     lines.push(`- 固定占用(已确认,空数组表示考生确认没有):${JSON.stringify(brief.fixedCommitments)}`)

@@ -161,13 +161,17 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
     private val weekReport = combine(
         repo.observeSessions(),
         container.settingsRepo.settings,
+        repo.observeWeekPlanPomodoros(),
         flow {
             while (true) {
                 emit(TimeUtils.now())
                 delay(3600_000L)
             }
         }
-    ) { sessions, settings, now ->
+    ) { sessions, settings, planWeekPomodoros, now ->
+        // 周目标:本周有计划任务就按计划合计 × focusMinutes 推导,否则回退设置里的手动周目标(与首页同口径)
+        val derivedGoalMin = (planWeekPomodoros * settings.currentPlan.focusMin).takeIf { it > 0 }
+            ?: settings.weeklyGoalHours * 60
         // 口径与首页/统计页统一:startedAt BETWEEN 本周;中断数仅统计本周(而非全部历史)
         val weekStart = TimeUtils.weekStartOf(now)
         val weekEnd = weekStart + 7L * 24 * 3600 * 1000 - 1
@@ -183,7 +187,7 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
         val weeklyReport = buildWeeklyReport(
             sessions = sessions,
             weekStart = Instant.ofEpochMilli(weekStart).atZone(zone).toLocalDate(),
-            goalMinutes = settings.weeklyGoalHours * 60,
+            goalMinutes = derivedGoalMin,
             zone = zone,
         )
         val valid = sessions.filter { it.valid }
@@ -191,7 +195,7 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
             .mapValues { (_, list) -> list.sumOf { it.durationMin } }
         val bestDay = daySums.maxByOrNull { it.value }
         WeekReport(
-            goalMin = settings.weeklyGoalHours * 60,
+            goalMin = derivedGoalMin,
             lastWeekMin = sessions
                 .filter { it.valid && it.startedAt in lastWeekStart until weekStart }
                 .sumOf { it.durationMin },

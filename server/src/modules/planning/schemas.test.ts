@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { profileInputSchema, SUPPORTED_TARGET_TYPES } from './schemas'
-import { normalizeBrief, briefIsEmpty, assessPlanningFacts, documentMatchesSubjects } from './document'
+import { normalizeBrief, briefIsEmpty, assessPlanningFacts, documentMatchesSubjects, mergeBrief } from './document'
 import { KAOYAN_KNOWN_SUBJECT_NAMES } from './planExemplar'
 
 test('rejects a generated document that mentions unconfirmed exam subjects', () => {
@@ -20,6 +20,36 @@ test('a civil-service document mentioning 政治 passes because the guard list i
     chapters: [{ no: '01', title: '科目规划', blocks: [{ type: 'text' as const, text: '政治理论学习与申论范文精读交替安排' }] }],
   }
   assert.equal(documentMatchesSubjects(document, ['申论', '行政职业能力测验'], []), true)
+})
+
+test('a confirmed timetable is locked: interview patches cannot shrink it', () => {
+  // 面谈模型某轮把某天窗口写少,曾按 weekday 整日替换,静默收窄确认过的净空闲
+  // (计划从每天 3 小时缩到 50 分钟) —— 课表一经确认必须锁定,改作息走备考档案
+  const base = normalizeBrief({
+    availability: [
+      { weekday: 1, windows: [{ start: '08:30', end: '11:30' }] },
+      { weekday: 2, windows: [{ start: '08:30', end: '11:30' }, { start: '19:00', end: '21:00' }] },
+    ],
+    availabilityConfirmed: true,
+  })
+  const patch = normalizeBrief({
+    availability: [{ weekday: 1, windows: [{ start: '08:00', end: '08:50' }] }],
+    availabilityConfirmed: true,
+  })
+  const merged = mergeBrief(base, patch)
+  assert.deepEqual(merged.availability, base.availability)
+  assert.equal(merged.availabilityConfirmed, true)
+})
+
+test('an unconfirmed timetable still merges interview windows in', () => {
+  const base = normalizeBrief({
+    availability: [{ weekday: 1, windows: [{ start: '08:30', end: '11:30' }] }],
+  })
+  const patch = normalizeBrief({
+    availability: [{ weekday: 2, windows: [{ start: '19:00', end: '21:00' }] }],
+  })
+  const merged = mergeBrief(base, patch)
+  assert.deepEqual(merged.availability.map(day => day.weekday).sort(), [1, 2])
 })
 
 /** 用相对今天的日期构造,避免写死日期导致测试随时间失效 */

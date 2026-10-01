@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,6 +24,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -54,7 +54,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yanzhong.app.data.remote.FOUNDATION_LEVELS
@@ -353,12 +352,14 @@ internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
     CustomAddRow(label = "没有你的科目就自己加", placeholder = "比如 数据结构") { vm.addExamSubject(it) }
 
     Spacer(Modifier.height(20.dp))
-    FieldLabel("每周哪几天、哪些时段真坐得下来", "点格子就行。这天没空就不点,排课不会往空格子里塞任务")
+    FieldLabel(
+        "每周课表:哪天几点到几点真坐得下来",
+        "点「+」给那天加空闲时段,任意钟点都行;这天没空就空着,排课不会往里塞任务"
+    )
     Spacer(Modifier.height(10.dp))
+    var editorDay by remember { mutableStateOf<Int?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         (1..7).forEach { day ->
-            // 每周固定一行、五格等宽(A7):FlowRow 放不下五个时段会换行,
-            // 星期标签和格子就错开了,选没选对自己都看不出来。等宽压进一行后标签永远对齐。
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "周${WEEKDAY_LABELS[day - 1]}",
@@ -366,21 +367,29 @@ internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
                     modifier = Modifier.width(40.dp)
                 )
                 Spacer(Modifier.width(6.dp))
-                val selected = state.availability[day].orEmpty()
-                STUDY_WINDOWS.forEach { window ->
-                    WeekWindowChip(
-                        label = window,
-                        selected = window in selected,
-                        onClick = { vm.toggleAvailability(day, window) },
-                        modifier = Modifier.weight(1f)
-                    )
+                FlowRow(
+                    Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    state.availability[day].orEmpty().forEach { window ->
+                        WindowChip(window = window, onRemove = { vm.removeAvailability(day, window) })
+                    }
+                    AddWindowChip(onClick = { editorDay = day })
                 }
             }
         }
     }
+    if (editorDay != null) {
+        WindowEditorDialog(
+            weekday = editorDay!!,
+            onDismiss = { editorDay = null },
+            onAdd = { start, end -> vm.addAvailability(editorDay!!, start, end) }
+        )
+    }
     Spacer(Modifier.height(8.dp))
     Text(
-        "上一屏选的是「平时固定学得进去」的时段,这里标的是这一周具体哪天有空——不完全一样是正常的。",
+        "想更快:加窗口时点「早晨/上午/下午/晚上」一键填好常见钟点,再自己改数字。这份课表就是排课的依据,填得越真,计划越贴身。",
         style = MaterialTheme.typography.bodySmall,
         color = colors.onSurfaceVariant
     )
@@ -432,33 +441,128 @@ internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
     ManualCommitmentRow { weekday, start, end, label -> vm.addCommitment(weekday, start, end, label) }
 }
 
-/** 周空闲格子(等宽):选中显主题容器色,未选中细描边;固定单行高度,七行始终对齐 */
+/** 课表里的一个钟点窗口胶囊:显示 "08:30-11:30",点一下删除 */
 @Composable
-private fun RowScope.WeekWindowChip(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
+private fun WindowChip(window: TimeWindow, onRemove: () -> Unit) {
+    Surface(
+        onClick = onRemove,
+        shape = RoundedCornerShape(999.dp),
+        color = MaterialTheme.colorScheme.secondaryContainer
+    ) {
+        Row(
+            Modifier.padding(start = 10.dp, end = 8.dp, top = 5.dp, bottom = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "${window.start}-${window.end}",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            )
+            Spacer(Modifier.width(4.dp))
+            Icon(
+                AppIcons.Close,
+                contentDescription = "删掉这段",
+                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.size(12.dp)
+            )
+        }
+    }
+}
+
+/** 行尾的「+」:弹出钟点编辑对话框给这天加一段空闲 */
+@Composable
+private fun AddWindowChip(onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         shape = RoundedCornerShape(999.dp),
-        color = if (selected) MaterialTheme.colorScheme.secondaryContainer
-        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = if (selected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)),
-        modifier = modifier
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
     ) {
-        Text(
-            label,
-            textAlign = TextAlign.Center,
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) MaterialTheme.colorScheme.onSecondaryContainer
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1,
-            modifier = Modifier.padding(horizontal = 2.dp, vertical = 7.dp)
+        Icon(
+            AppIcons.Add,
+            contentDescription = "加一段空闲时段",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+                .padding(6.dp)
+                .size(14.dp)
         )
     }
+}
+
+/**
+ * 空闲时段编辑对话框:起止两个 HH:mm 输入框 + 快捷模板一键填充。
+ * 校验在本地做完(格式/先后/重复),只有真记下才关对话框,报错留在原地让用户改。
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun WindowEditorDialog(weekday: Int, onDismiss: () -> Unit, onAdd: (String, String) -> Boolean) {
+    var start by remember { mutableStateOf("") }
+    var end by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf<String?>(null) }
+
+    fun submit() {
+        val from = normalizeClock(start)
+        val to = normalizeClock(end)
+        error = when {
+            from == null || to == null -> "时间写成 08:00 这样,冒号别忘"
+            from >= to -> "结束要比开始晚"
+            !onAdd(from, to) -> "这段时段已经加过了"
+            else -> null
+        }
+        if (error == null) onDismiss()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("周${WEEKDAY_LABELS[weekday - 1]} · 加一段空闲") },
+        text = {
+            Column {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    WINDOW_CLOCK.forEach { (name, clock) ->
+                        FilterChip(
+                            selected = start == clock.first && end == clock.second,
+                            onClick = {
+                                start = clock.first
+                                end = clock.second
+                                error = null
+                            },
+                            label = { Text(name) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = start,
+                        onValueChange = { start = it.take(5); error = null },
+                        label = { Text("开始") },
+                        placeholder = { Text("08:00") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    OutlinedTextField(
+                        value = end,
+                        onValueChange = { end = it.take(5); error = null },
+                        label = { Text("结束") },
+                        placeholder = { Text("11:30") },
+                        singleLine = true,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                val currentError = error
+                if (currentError != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(currentError, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = ::submit) { Text("加上") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+    )
 }
 
 @OptIn(ExperimentalLayoutApi::class)

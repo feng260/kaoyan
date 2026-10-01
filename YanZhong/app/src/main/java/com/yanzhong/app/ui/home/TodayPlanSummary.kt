@@ -12,6 +12,8 @@ data class TodayPlanSummary(
     val totalMinutes: Int = 0,
     val completedMinutes: Int = 0,
     val remainingMinutes: Int = 0,
+    /** 今日计划任务的预计番茄合计:有计划时它就是「今日番茄目标」,取代设置里的固定值 */
+    val totalPomodoros: Int = 0,
 ) {
     val completedCount: Int
         get() = tasks.count { it.status == TaskStatus.DONE }
@@ -43,5 +45,6 @@ fun summarizeTodayPlanTasks(
         totalMinutes = total,
         completedMinutes = completed,
         remainingMinutes = (total - completed).coerceAtLeast(0),
+        totalPomodoros = todayPlanTasks.sumOf { it.pomodoroEstimate.coerceAtLeast(0) },
     )
 }

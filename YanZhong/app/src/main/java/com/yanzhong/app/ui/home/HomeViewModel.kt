@@ -53,6 +53,8 @@ data class HomeUiState(
     val hasActivePlan: Boolean = false,
     val weekMinutes: Int = 0,
     val weekGoalMin: Int = 37 * 60,
+    /** 本周计划任务预计番茄合计:>0 时周目标 = 它 × focusMinutes,否则回退 weekGoalMin(设置值) */
+    val weekPlanPomodoros: Int = 0,
     val todayPomodoros: Int = 0,
     val dailyPomodoroGoal: Int = 8,
     val focusMinutes: Int = 25,
@@ -113,7 +115,13 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         val focusMinutes: Int = 25
     )
 
-    private data class FocusStats(val weekMinutes: Int, val todayPomodoros: Int, val monthMinutes: Int = 0)
+    private data class FocusStats(
+        val weekMinutes: Int,
+        val todayPomodoros: Int,
+        val monthMinutes: Int = 0,
+        /** 本周计划任务预计番茄合计:有任务时周净学习目标由它 ×focusMinutes 推导 */
+        val planWeekPomodoros: Int = 0
+    )
 
     private data class ReviewSlice(
         val today: DailyReviewEntity? = null,
@@ -191,7 +199,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         NodeSlice(nodes, if (index in nodes.indices) index else pinnedIdx, now)
     }
 
-    /** 周净学习分钟 + 今日番茄数 + 月度净学习:SQL 聚合 + 跨天自动重订阅(口径与统计页一致:startedAt BETWEEN) */
+    /** 周净学习分钟 + 今日番茄数 + 月度净学习 + 本周计划番茄目标:SQL 聚合 + 跨天自动重订阅(口径与统计页一致:startedAt BETWEEN) */
     @OptIn(ExperimentalCoroutinesApi::class)
     private val focusStats = combine(
         weekKey.flatMapLatest { weekStartDay ->
@@ -211,9 +219,10 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                 from,
                 monthStart.plusMonths(1).atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli() - 1
             )
-        }
-    ) { weekMinutes, todayPomodoros, monthMinutes ->
-        FocusStats(weekMinutes, todayPomodoros, monthMinutes)
+        },
+        repo.observeWeekPlanPomodoros()
+    ) { weekMinutes, todayPomodoros, monthMinutes, planWeekPomodoros ->
+        FocusStats(weekMinutes, todayPomodoros, monthMinutes, planWeekPomodoros)
     }
 
     /** 引擎状态只取 isRunning(低频),避免 remainingMs 的秒级更新每秒触发 uiState 重算 */
@@ -253,6 +262,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             hasActivePlan = hasActivePlan,
             weekMinutes = stats.weekMinutes,
             weekGoalMin = settings.weeklyGoalMin,
+            weekPlanPomodoros = stats.planWeekPomodoros,
             todayPomodoros = stats.todayPomodoros,
             dailyPomodoroGoal = settings.dailyPomodoroGoal,
             focusMinutes = settings.focusMinutes,

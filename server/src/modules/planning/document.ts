@@ -336,7 +336,9 @@ export function mergeBrief(base: PlanBrief, patch: PlanBrief): PlanBrief {
     materials: mergeList(base.materials, patch.materials),
     notes: mergeList(base.notes, patch.notes),
     examSubjects: [...subjects.values()],
-    availability: mergeByKey(base.availability, patch.availability, item => String(item.weekday)),
+    // 课表一经考生确认就锁定:面谈模型某轮少写一个窗口会静默收窄确认过的净空闲,
+    // 直接让整份计划变薄。要改作息去「备考档案」改 —— 那条路径(applyProfileFacts)问卷优先。
+    availability: base.availabilityConfirmed ? base.availability : mergeByKey(base.availability, patch.availability, item => String(item.weekday)),
     fixedCommitments: [...base.fixedCommitments, ...patch.fixedCommitments.filter(item =>
       !base.fixedCommitments.some(existing => existing.weekday === item.weekday
         && existing.start === item.start && existing.end === item.end && existing.label === item.label))],

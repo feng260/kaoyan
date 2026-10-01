@@ -50,6 +50,21 @@ private val subjectPalette = longArrayOf(
     0xFFFFA726, 0xFF66BB6A, 0xFFEC407A, 0xFF5C6BC0
 )
 
+/** 本周预计番茄合计:dated 任务落在本周计 1 次(含已完成),每日周期 ×7,按周重复 ×repeatDays 置位数 */
+internal fun weekPlanPomodorosOf(tasks: List<TaskEntity>, now: Long): Int {
+    val weekStart = TimeUtils.weekStartOf(now)
+    val weekEnd = weekStart + 7L * 24 * 3600_000 - 1
+    return tasks.sumOf { task ->
+        val occurrences = when (task.repeatRule) {
+            RepeatRule.DAILY -> 7
+            RepeatRule.WEEKLY -> task.repeatDays.countOneBits()
+            // NONE 与未知规则一律按 dated 处理:dueAt 落在本周才计入
+            else -> if (task.dueAt != null && task.dueAt in weekStart..weekEnd) 1 else 0
+        }
+        task.pomodoroEstimate.coerceAtLeast(0) * occurrences
+    }
+}
+
 /** 批量节点缺省目标:30 天后 08:00 */
 private fun defaultNodeTarget(): Long =
     TimeUtils.dayStartOf() + 30L * 24 * 3600 * 1000 + 8 * 3600_000L
@@ -592,6 +607,18 @@ class StudyRepository(private val db: YanZhongDatabase) {
         }
     }
 
+    /**
+     * 本周「该学多少」的推导目标(预计番茄数,不含 focusMinutes 乘法):
+     * dated 任务(计划投影/手工)按 dueAt 落在本周计 1 次 —— open 与已完成都算,
+     * 已完成的同样是本周承诺的一部分;每日周期任务按 7 次、按周重复任务按 repeatDays
+     * 置位数计入。没有任何任务时返回 0,调用方回退设置里的手动周目标。
+     */
+    fun observeWeekPlanPomodoros(): Flow<Int> = combine(
+        db.taskDao().observeOpenTasks(),
+        db.taskDao().observeDoneTasks(),
+        tickingNow(),
+    ) { open, done, now -> weekPlanPomodorosOf(open + done, now) }
+
     /** 分钟级心跳(今日/周视图跨日自动刷新用),按需 map 成日键可避免高频重组 */
     fun tickingNow(): Flow<Long> = flow {
         while (true) {
@@ -604,7 +631,6 @@ class StudyRepository(private val db: YanZhongDatabase) {
     fun observeOpenTasks(): Flow<List<TaskEntity>> = db.taskDao().observeOpenTasks()
 
     // ---------- 统计 ----------
-
     fun observeDurationMin(from: Long, to: Long) = db.sessionDao().observeDurationMin(from, to)
     fun observeCount(from: Long, to: Long) = db.sessionDao().observeCount(from, to)
     fun observePerSubject(from: Long, to: Long) = db.sessionDao().observePerSubject(from, to)
