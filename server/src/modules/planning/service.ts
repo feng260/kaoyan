@@ -1080,7 +1080,6 @@ export function createPlanningService(
       const brief = briefRaw ? normalizeBrief(briefRaw) : null
       const initialProgress = await progressSnapshot(db, userGuid)
       const active = await db.plan.findFirst({ where: { userGuid, status: 'active' }, orderBy: { version: 'desc' } })
-      const activeItems = active ? await db.planItem.findMany({ where: { planId: active.id }, orderBy: [{ planDate: 'asc' }, { sortOrder: 'asc' }] }) : []
       const completed = new Map<string, number>()
       const history = active && active.profileSnapshotJson === initialSnapshot
         ? await db.plan.findMany({ where: { userGuid, status: { in: ['active', 'archived'] } } })
@@ -1100,8 +1099,9 @@ export function createPlanningService(
           milestoneMinutes: Math.max(0, subject.milestoneMinutes - (completed.get(subject.name) ?? 0)),
         })),
       } : brief
-      const backlog = activeItems.filter(item => item.status !== 'done')
-        .map(item => ({ subject: String(item.subject), title: String(item.title), minutes: Number(item.minutes) }))
+      // 刻意不再把旧计划的未完成任务作为 backlog 带进新计划:用户反馈"每生成一次,
+      // 每日任务就累积一轮旧任务"——重新生成就是全新计划,进度语义由 remainingBrief
+      // 的逐科剩余量承载(已完成分钟数已从 brief 扣除),不需要任务级搬运。
       requirePlanningFacts(brief, dayStart(new Date()), examDate)
       if (active && brief) requirePlanningFacts(remainingBrief, dayStart(new Date()), examDate, true)
 
@@ -1119,7 +1119,6 @@ export function createPlanningService(
             ...parsedProfile.data,
             startDate: dayStart(new Date()),
             brief: remainingBrief,
-            backlog,
             ...(lastFailure ? { repairHint: lastFailure.message } : {}),
           })
           assertGeneratedPlanValid(result.plan, examDate, brief)

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateRulePlan, PlanGenerationError, type PlanningInput } from './generator'
-import { AiUnavailable, expandStage, scheduleBacklog } from './aiGenerator'
+import { expandStage } from './aiGenerator'
 
 const DAY = 24 * 3600_000
 
@@ -247,70 +247,4 @@ test('AI stage alternates odd and even week queues and keeps the other days cove
     byDay.set(key, (byDay.get(key) ?? 0) + item.minutes)
   })
   assert.equal(byDay.size, 29)
-})
-
-test('pending backlog is not duplicated when AI repeats the same subject and title', () => {
-  const monday = new Date('2026-09-28T00:00:00.000Z')
-  const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
-  const generated = [{ stageOrder: 0, subject: '英语一', title: '旧阅读', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 }]
-  const items = scheduleBacklog(stages, generated, [{ subject: '英语一', title: '旧阅读', minutes: 60 }], FULL_BRIEF,
-    ['英语一'])
-  assert.deepEqual(items.map(item => [item.title, item.minutes]), [['旧阅读', 60]])
-})
-
-test('pending backlog for a confirmed subject is not dropped when the model omits that subject', () => {
-  const monday = new Date('2026-09-28T00:00:00.000Z')
-  const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
-  const items = scheduleBacklog(stages, [], [{ subject: '自命题 912', title: '旧大纲', minutes: 60 }], FULL_BRIEF,
-    ['自命题 912'])
-  assert.deepEqual(items.map(item => [item.subject, item.title, item.minutes]), [['自命题 912', '旧大纲', 60]])
-})
-
-test('overflowing replay rounds are truncated instead of failing the whole plan', () => {
-  // 真实场景回归:expandStage 现在按「逐日填满+循环重放」生成新任务,
-  // 总量 ≈ 全程净空闲容量,叠加旧任务后必然超出 —— 超出的重放轮必须截断,
-  // 而不是把整份计划判死(否则只要有旧任务,重新生成 3 次重试全部必然失败)
-  const monday = new Date('2026-09-28T00:00:00.000Z')
-  const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
-  const generated = [
-    { stageOrder: 0, subject: '申论', title: '新范文', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 },
-    { stageOrder: 0, subject: '政治', title: '新选择题', planDate: monday, minutes: 60, priority: 0, sortOrder: 1 },
-  ]
-  const items = scheduleBacklog(stages, generated,
-    [{ subject: '政治', title: '旧带背', minutes: 60 }], briefWith([1], '09:00', '10:00'), ['申论', '政治'])
-  // 容量只有 60 分钟/天 × 1 天:旧任务必排,新任务整体截断
-  assert.deepEqual(items.map(item => [item.subject, item.title, item.minutes]), [['政治', '旧带背', 60]])
-})
-
-test('pending backlog that alone exceeds capacity still fails with the backlog subject', () => {
-  const monday = new Date('2026-09-28T00:00:00.000Z')
-  const stages = [{ name: '基础', startDate: monday, endDate: monday, sortOrder: 0 }]
-  assert.throws(() => scheduleBacklog(stages, [],
-    [{ subject: '政治', title: '旧带背', minutes: 180 }], briefWith([1], '09:00', '10:00'), ['政治']),
-  (e: unknown) => e instanceof AiUnavailable && e.message.includes('旧任务无法在考前排完:政治'))
-})
-
-test('pending backlog does not pull an even-week task into an odd week', () => {
-  const monday = new Date('2026-09-28T00:00:00.000Z')
-  const nextMonday = new Date('2026-10-05T00:00:00.000Z')
-  const stages = [{ name: '基础', startDate: monday, endDate: nextMonday, sortOrder: 0 }]
-  const generated = [{ stageOrder: 0, subject: '英语一', title: '偶周阅读', planDate: nextMonday, minutes: 60, priority: 0, sortOrder: 0 }]
-  const items = scheduleBacklog(stages, generated, [{ subject: '英语一', title: '旧阅读', minutes: 60 }], FULL_BRIEF, ['英语一'])
-  assert.deepEqual(items.map(item => [item.planDate.toISOString().slice(0, 10), item.title]), [
-    ['2026-09-28', '旧阅读'], ['2026-10-05', '偶周阅读'],
-  ])
-})
-
-test('pending backlog is scheduled before new work and carries across a stage boundary', () => {
-  const monday = new Date('2026-09-28T00:00:00.000Z')
-  const stages = [
-    { name: '基础', startDate: monday, endDate: monday, sortOrder: 0 },
-    { name: '强化', startDate: new Date('2026-09-29T00:00:00.000Z'), endDate: new Date('2026-09-30T00:00:00.000Z'), sortOrder: 1 },
-  ]
-  const backlog = [{ subject: '英语一', title: '旧阅读', minutes: 90 }]
-  const newItems = [{ stageOrder: 0, subject: '英语一', title: '新阅读', planDate: monday, minutes: 60, priority: 0, sortOrder: 0 }]
-  const items = scheduleBacklog(stages, newItems, backlog, briefWith([1, 2, 3], '09:00', '10:00'))
-  assert.deepEqual(items.map(item => [item.stageOrder, item.title, item.minutes]), [
-    [0, '旧阅读', 60], [1, '旧阅读', 30], [1, '新阅读', 30], [1, '新阅读', 30],
-  ])
 })

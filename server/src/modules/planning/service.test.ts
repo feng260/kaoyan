@@ -952,7 +952,7 @@ test('interview cannot finish on force or turn count without structured facts', 
   assert.equal(fake.state.profiles[0].briefJson, undefined)
 })
 
-test('a replacement draft subtracts completed task estimates and exposes pending backlog to AI', async () => {
+test('a replacement draft subtracts completed estimates and never carries the old backlog', async () => {
   const fake = createFakeDb()
   let captured: AiPlanningInput | undefined
   const service = createPlanningService(fake.db, { configured: () => true, generate: async input => {
@@ -971,7 +971,9 @@ test('a replacement draft subtracts completed task estimates and exposes pending
   assert.equal(draft.status, 'draft')
   assert.equal(captured!.brief!.examSubjects[0].remainingMinutes, Math.max(0, 120 - first.minutes))
   assert.equal(captured!.brief!.examSubjects[0].milestoneMinutes, Math.max(0, 60 - first.minutes))
-  assert.equal(captured!.backlog?.[0]?.title, active.items[1].title)
+  // 用户反馈"每生成一次每日任务就累积一轮旧任务":重新生成绝不携带旧计划的未完成任务,
+  // 进度只通过 remainingMinutes/milestoneMinutes 的扣除进入 brief
+  assert.equal(captured!.backlog, undefined)
   assert.equal((await service.getActivePlan(USER))!.id, active.id)
 })
 

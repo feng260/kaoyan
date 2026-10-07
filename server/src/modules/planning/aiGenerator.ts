@@ -25,7 +25,6 @@ export type AiPlanningInput = ProfileInput & {
   startDate: Date
   /** 面谈得到的考生画像;没聊过就是 null,生成器退化为只看问卷 */
   brief?: PlanBrief | null
-  backlog?: Array<{ subject: string; title: string; minutes: number }>
   /**
    * 上一轮输出未通过服务端校验的原因。service 层重试时把原因喂回来,
    * 让模型带着「哪里被拦了」重新出骨架,而不是盲掷骰子。
@@ -123,9 +122,6 @@ function buildUserPrompt(input: AiPlanningInput): string {
   ]
   if (input.brief && !briefIsEmpty(input.brief)) {
     lines.push('', '面谈得到的补充信息(必须体现在阶段与任务安排里):', briefToPrompt(input.brief))
-  }
-  if (input.backlog?.length) {
-    lines.push('', '上一版未完成任务(按原顺序优先安排;不要在新模板中重复生成同一任务):', JSON.stringify(input.backlog))
   }
   if (input.repairHint) {
     lines.push('', `上一轮输出被服务端校验拦下,原因:${input.repairHint}`,
@@ -336,64 +332,6 @@ export function expandStage(stage: AiStage, range: GeneratedStage, brief: Pick<P
   return items
 }
 
-export function scheduleBacklog(
-  stages: GeneratedStage[],
-  generated: GeneratedItem[],
-  backlog: NonNullable<AiPlanningInput['backlog']>,
-  brief: Pick<PlanBrief, 'availability' | 'fixedCommitments'>,
-  confirmedSubjects?: string[],
-): GeneratedItem[] {
-  if (backlog.length === 0) return generated
-  const allowed = new Set(confirmedSubjects ?? generated.map(item => item.subject))
-  const invalid = backlog.find(item => !allowed.has(item.subject))
-  if (invalid) throw new AiUnavailable(`旧任务不属于已确认的考试科目:${invalid.subject}`)
-  const overlap = new Map<string, number>()
-  for (const item of backlog) {
-    const key = `${item.subject}\u0000${item.title.trim()}`
-    overlap.set(key, (overlap.get(key) ?? 0) + item.minutes)
-  }
-  const newWork = generated.flatMap(item => {
-    const key = `${item.subject}\u0000${item.title.trim()}`
-    const duplicate = Math.min(item.minutes, overlap.get(key) ?? 0)
-    overlap.set(key, (overlap.get(key) ?? 0) - duplicate)
-    return item.minutes > duplicate ? [{ ...item, minutes: item.minutes - duplicate }] : []
-  })
-  const demand = [
-    ...backlog.map(item => ({ ...item, earliest: stages[0].startDate })),
-    ...newWork.map(item => ({ ...item, earliest: item.planDate })),
-  ]
-  const backlogCount = backlog.length
-  const output: GeneratedItem[] = []
-  let index = 0
-  let remaining = demand[0]?.minutes ?? 0
-  for (const stage of stages) {
-    for (let date = stage.startDate; date <= stage.endDate; date = addDays(date, 1)) {
-      let budget = netAvailableMinutes(brief, date)
-      let sortOrder = 0
-      while (budget > 0 && index < demand.length && demand[index].earliest <= date) {
-        const item = demand[index]
-        const minutes = Math.min(remaining, budget)
-        output.push({ stageOrder: stage.sortOrder, subject: item.subject, title: item.title,
-          planDate: date, minutes, priority: stage.sortOrder, sortOrder: sortOrder++ })
-        budget -= minutes
-        remaining -= minutes
-        if (remaining === 0) {
-          index++
-          remaining = demand[index]?.minutes ?? 0
-        }
-      }
-    }
-  }
-  // 旧任务是用户真实的未完成进度,排不完才是真容量不足(带 repairHint 重试才有意义)。
-  // 新任务在 expandStage 里按「逐日填满+循环重放」生成,总量天然 ≈ 全程净空闲容量,
-  // 叠加旧任务后必然超出 —— 超出的部分本来就该少排一轮复习,直接截断而不是抛错:
-  // 否则只要用户有旧任务,重新生成计划就 3 次重试全部必然失败。
-  if (index < backlogCount) {
-    throw new AiUnavailable(`旧任务无法在考前排完:${demand[index].subject},请压缩每日固定占用后重试`)
-  }
-  return output
-}
-
 /**
  * 调用大模型生成计划。模型侧的问题统一抛 AiUnavailable,
  * 由 service 层转成计划生成失败响应。
@@ -449,8 +387,10 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
   usable.forEach((stage, index) => {
     items.push(...expandStage(stage, ranges[index], brief))
   })
-  const scheduledItems = scheduleBacklog(ranges, items, input.backlog ?? [],
-    brief, brief.examSubjects.map(subject => subject.name))
+  // 刻意不做旧任务搬运(用户反馈:每生成一次每日任务就累积一轮旧任务)。
+  // 重新生成就是全新计划;旧计划的未完成任务随投影切换被 stalePlanTaskIds 清掉,
+  // 进度语义由 brief 的逐科剩余量承载,不在任务级携带。
+  const scheduledItems = items
 
   if (scheduledItems.length === 0) {
     throw new AiUnavailable('模型给出的模板无法展开出任何计划项')
