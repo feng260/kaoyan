@@ -325,7 +325,7 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
                 val plan = ApiClient.api().patchPlanItem(task.planItemId!!, PlanItemStatusReq(status)).plan
                     ?: return@withLock false
                 if (TokenStore.currentAccountGuid() != account) return@withLock false
-                repo.applyPlanProjection(plan, account)
+                repo.applyPlanProjection(plan, account, settingsRepo.current().currentPlan.focusMin)
                 true
             }
         } catch (e: CancellationException) {

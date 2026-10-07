@@ -26,6 +26,7 @@ fun projectPlanTasks(
     subjectIds: Map<String, Long>,
     now: Long,
     zone: ZoneId = ZoneId.systemDefault(),
+    focusMinutes: Int = 25,
 ): List<TaskEntity> {
     val staleIds = stalePlanTaskIds(existing, accountGuid, plan).toSet()
     val result = mutableListOf<TaskEntity>()
@@ -38,14 +39,14 @@ fun projectPlanTasks(
         if (item == null) {
             result += task
         } else {
-            result += projectedTask(item, task, plan, accountGuid, subjectIds, now, zone)
+            result += projectedTask(item, task, plan, accountGuid, subjectIds, now, zone, focusMinutes)
             projected += item.id
         }
     }
 
     plan.items.forEach { item ->
         if (item.id !in projected) {
-            result += projectedTask(item, null, plan, accountGuid, subjectIds, now, zone)
+            result += projectedTask(item, null, plan, accountGuid, subjectIds, now, zone, focusMinutes)
         }
     }
 
@@ -70,6 +71,15 @@ fun stalePlanTaskIds(
         .map { it.id }
 }
 
+/**
+ * 计划项分钟 → 预计番茄数(向上取整,至少 1)。
+ * 必须换算:此前投影从不设置该字段,所有计划任务恒为默认的 1 番茄 ——
+ * 90 分钟的计划项在首页只显示 25 分钟/1🍅,每日目标与净学习时长全部失真。
+ */
+private fun pomodoroEstimateFor(itemMinutes: Int, focusMinutes: Int): Int =
+    if (focusMinutes <= 0) 1
+    else maxOf(1, (itemMinutes.coerceAtLeast(0) + focusMinutes - 1) / focusMinutes)
+
 private fun projectedTask(
     item: PlanItemDto,
     previous: TaskEntity?,
@@ -78,12 +88,15 @@ private fun projectedTask(
     subjectIds: Map<String, Long>,
     now: Long,
     zone: ZoneId,
+    focusMinutes: Int,
 ): TaskEntity {
     val dueAt = parsePlanDate(item.planDate, zone)
+    val estimate = pomodoroEstimateFor(item.minutes, focusMinutes)
     val base = previous ?: TaskEntity(
         subjectId = subjectIds[item.subject] ?: 0L,
         title = item.title,
         priority = item.priority,
+        pomodoroEstimate = estimate,
         dueAt = dueAt,
         accountGuid = accountGuid,
         planId = plan.id,
@@ -94,6 +107,7 @@ private fun projectedTask(
         subjectId = subjectIds[item.subject] ?: base.subjectId,
         title = item.title,
         priority = item.priority,
+        pomodoroEstimate = estimate,
         dueAt = dueAt,
         accountGuid = accountGuid,
         planId = plan.id,

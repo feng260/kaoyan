@@ -180,7 +180,7 @@ class DataSyncer(private val app: YanZhongApp) {
             val plan = ApiClient.api().getActivePlan().plan
             if (!started || TokenStore.currentAccountGuid() != account) return
             if (plan == null) app.repository.clearPlanProjections(account)
-            else app.repository.applyPlanProjection(plan, account)
+            else app.repository.applyPlanProjection(plan, account, app.settingsRepo.current().currentPlan.focusMin)
         }
     }
 

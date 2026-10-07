@@ -547,8 +547,8 @@ class StudyRepository(private val db: YanZhongDatabase) {
 
     suspend fun getTask(id: Long): TaskEntity? = db.taskDao().getById(id)
 
-    /** 将服务端 active plan 幂等投影为本地任务,不改写手工任务。 */
-    suspend fun applyPlanProjection(plan: PlanDto, accountGuid: String): Int {
+    /** 将服务端 active plan 幂等投影为本地任务,不改写手工任务。[focusMinutes] 用于把计划项分钟换算成预计番茄数。 */
+    suspend fun applyPlanProjection(plan: PlanDto, accountGuid: String, focusMinutes: Int = 25): Int {
         val now = TimeUtils.now()
         var count = 0
         db.withTransaction {
@@ -564,6 +564,7 @@ class StudyRepository(private val db: YanZhongDatabase) {
                 subjectIds = subjectIds,
                 now = now,
                 zone = zone,
+                focusMinutes = focusMinutes,
             )
             val staleIds = stalePlanTaskIds(existing, accountGuid, plan)
             if (staleIds.isNotEmpty()) db.taskDao().deleteByIds(staleIds)

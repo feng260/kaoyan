@@ -72,6 +72,7 @@ internal fun selectPlanDisplayState(
 class PlanViewModel(app: Application) : AndroidViewModel(app) {
     private val yanZhongApp = app as YanZhongApp
     private val repo = yanZhongApp.repository
+    private val settingsRepo = yanZhongApp.settingsRepo
     private val requestLock = Mutex()
     private val _serverPlan = MutableStateFlow<PlanDto?>(null)
     val serverPlan: StateFlow<PlanDto?> = _serverPlan
@@ -116,7 +117,7 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     val plan = ApiClient.api().getActivePlan().plan
                     if (plan == null) repo.clearPlanProjections(account!!)
-                    else repo.applyPlanProjection(plan, account!!)
+                    else repo.applyPlanProjection(plan, account!!, settingsRepo.current().currentPlan.focusMin)
                     _serverPlan.value = plan
                     _planUnavailable.value = plan == null
                     _latestAdjustment.value = runCatching { ApiClient.api().getLatestAdjustment().adjustment }.getOrNull()
@@ -147,7 +148,7 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                     val status = if (current.status == "done") "pending" else "done"
                     val plan = ApiClient.api().patchPlanItem(item.id, PlanItemStatusReq(status)).plan
                         ?: throw IllegalStateException("服务端未返回计划")
-                    repo.applyPlanProjection(plan, account)
+                    repo.applyPlanProjection(plan, account, settingsRepo.current().currentPlan.focusMin)
                     _serverPlan.value = plan
                     _planError.value = null
                 }
@@ -173,7 +174,7 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                     if (TokenStore.currentAccess() == null || account.isNullOrBlank()) return@withLock
                     val plan = ApiClient.api().undoAdjustment(latest.id).plan
                         ?: throw IllegalStateException("服务端未返回计划")
-                    repo.applyPlanProjection(plan, account)
+                    repo.applyPlanProjection(plan, account, settingsRepo.current().currentPlan.focusMin)
                     _serverPlan.value = plan
                     _planError.value = null
                 }
