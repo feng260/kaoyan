@@ -227,7 +227,13 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
     /** 调整模式的一轮:这句话交给 POST /plans/adjust,回来的是追问、闲聊或一张待确认调整单 */
     private suspend fun adjust(message: String) {
         _ui.update { it.copy(sending = true, error = null) }
-        runCatching { ApiClient.aiApi().adjustPlan(AdjustReq(message = message)) }.fold({ resp ->
+        // 带上最近几轮对话:上一轮刚问「是今天下午吗」,考生答「对」——
+        // 没有历史的话服务端只能回「抱歉没接住上下文」再问一遍
+        val history = _ui.value.messages
+            .dropLast(1) // 最后一条就是本次要发的 message 本身
+            .filter { it.content.isNotBlank() }
+            .takeLast(8)
+        runCatching { ApiClient.aiApi().adjustPlan(AdjustReq(message = message, history = history)) }.fold({ resp ->
             _ui.update {
                 it.copy(messages = it.messages + InterviewMessageDto("assistant", resp.reply.orEmpty()),
                     adjustment = resp.adjustment ?: it.adjustment, sending = false)

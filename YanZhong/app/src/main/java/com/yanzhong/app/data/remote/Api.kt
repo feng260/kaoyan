@@ -469,8 +469,15 @@ data class AdjustmentDto(
     val appliedAt: Long? = null
 )
 
+/**
+ * 行程调整请求。[history] 携带本次消息之前的最近几轮对话(旧到新,不含 message 本身):
+ * 「对」「嗯」这类对上一轮追问的简短确认,没有历史服务端就无从理解。旧服务端会忽略未知字段。
+ */
 @Serializable
-data class AdjustReq(val message: String)
+data class AdjustReq(
+    val message: String,
+    val history: List<InterviewMessageDto> = emptyList()
+)
 
 @Serializable
 data class AdjustResp(

@@ -131,6 +131,12 @@ router.post('/plans/timetable', requireAuth, apiLimit(), async ctx => {
 /** 行程调整:一句话描述突发情况;长度口径与面谈消息一致 */
 const adjustSchema = z.object({
   message: z.string().min(1).max(1000),
+  // 本次消息之前的最近几轮对话(旧到新):「对」「嗯」这类简短确认要对着上一轮追问才读得懂;
+  // 旧客户端不带此字段,可选,服务端按没有历史处理
+  history: z.array(z.object({
+    role: z.enum(['user', 'assistant']),
+    content: z.string().min(1).max(8000),
+  })).max(12).optional(),
 })
 
 /**
@@ -141,7 +147,10 @@ const adjustSchema = z.object({
 router.post('/plans/adjust', requireAuth, apiLimit(), async ctx => {
   const parsed = adjustSchema.safeParse(ctx.request.body)
   if (!parsed.success) throw parsed.error
-  const result = await planningService.adjust(ctx.state.auth!.userGuid, { message: parsed.data.message })
+  const result = await planningService.adjust(ctx.state.auth!.userGuid, {
+    message: parsed.data.message,
+    history: parsed.data.history,
+  })
   ctx.body = { ...result, serverTime: Date.now() }
 })
 

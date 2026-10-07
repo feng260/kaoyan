@@ -948,10 +948,17 @@ export function createPlanningService(
      * 行程调整入口:一句话描述突发情况 → 模型解析意图 → 服务端硬规则定档(L1 顺延/L2 重排)→ 产出待确认调整单。
      * 确认前零副作用(唯一例外:change_commitment 把新固定占用并进档案,那是用户陈述的事实本身)。
      */
-    async adjust(userGuid: string, input: { message: string }):
+    async adjust(userGuid: string, input: { message: string; history?: Array<{ role: 'user' | 'assistant'; content: string }> }):
       Promise<{ adjustment: PublicAdjustment | null; reply: string; plan: PublicPlan | null }> {
       const message = String(input?.message ?? '').trim()
       if (!message) throw new ApiError(400, 'INVALID_PARAMS', '请说一说发生了什么')
+      // 简短确认(「对」「嗯」)只有对着上一轮追问才读得懂;历史由客户端全量携带,这里只做形状清洗
+      const history = Array.isArray(input?.history)
+        ? input.history
+            .filter(item => item && (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string')
+            .map(item => ({ role: item.role, content: item.content.slice(0, 800) }))
+            .slice(-8)
+        : undefined
       const planRow = await db.plan.findFirst({ where: { userGuid, status: 'active' }, orderBy: { version: 'desc' } })
       if (!planRow) throw new ApiError(404, 'PLAN_NOT_FOUND', '当前没有生效中的计划')
       if (!ai.adjustIntent || !ai.configured()) {
@@ -968,7 +975,7 @@ export function createPlanningService(
       try {
         const subjects = [...new Set((await db.planItem.findMany({ where: { planId: planRow.id } }))
           .map(row => String(row.subject)).filter(Boolean))]
-        intent = await ai.adjustIntent({ message, today, windowTo: to, subjects, brief })
+        intent = await ai.adjustIntent({ message, history, today, windowTo: to, subjects, brief })
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
         console.warn(`[planning] 调整意图解析失败:${reason}`)
