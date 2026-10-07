@@ -669,7 +669,9 @@ object ApiClient {
     fun aiApi(): YanzhongApi {
         val server = runBlocking { effectiveServerUrl() }
         cachedAi?.let { (s, api) -> if (s == server) return api }
-        val api = build(server, callSeconds = 200, connectSeconds = 10, readSeconds = 180, writeSeconds = 60)
+        // 多轮生成流水线(骨架重试 + 逐阶段细化并行)典型 2-3 分钟,最坏 ~10 分钟:
+        // call 7 分钟 / read 6.5 分钟,确保客户端不会先于服务端掐断
+        val api = build(server, callSeconds = 420, connectSeconds = 10, readSeconds = 390, writeSeconds = 60)
         cachedAi = server to api
         return api
     }

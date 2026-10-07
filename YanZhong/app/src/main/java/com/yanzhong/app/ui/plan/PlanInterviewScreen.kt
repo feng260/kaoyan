@@ -197,7 +197,7 @@ fun PlanInterviewScreen(
                             }
                             Spacer(Modifier.height(8.dp))
                             Button(onClick = vm::generate, enabled = state.canGenerate, modifier = Modifier.fillMaxWidth()) {
-                                Text(if (state.generating) "正在生成草稿…" else "生成计划草稿")
+                                Text(if (state.generating) "正在多轮生成草稿…约需 1-3 分钟" else "生成计划草稿")
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
