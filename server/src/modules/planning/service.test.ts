@@ -987,8 +987,7 @@ test('a replacement draft subtracts completed estimates and never carries the ol
   assert.equal(captured!.brief!.examSubjects[0].remainingMinutes, Math.max(0, 120 - first.minutes))
   assert.equal(captured!.brief!.examSubjects[0].milestoneMinutes, Math.max(0, 60 - first.minutes))
   // 用户反馈"每生成一次每日任务就累积一轮旧任务":重新生成绝不携带旧计划的未完成任务,
-  // 进度只通过 remainingMinutes/milestoneMinutes 的扣除进入 brief
-  assert.equal(captured!.backlog, undefined)
+  // 进度只通过 remainingMinutes/milestoneMinutes 的扣除进入 brief(backlog 字段已整体移除)
   assert.equal((await service.getActivePlan(USER))!.id, active.id)
 })
 

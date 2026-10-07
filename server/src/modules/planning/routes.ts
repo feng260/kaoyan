@@ -192,6 +192,17 @@ router.get('/plans/active/document', requireAuth, async ctx => {
 })
 
 /**
+ * 长文档补生成:生成计划时文档部分失败(加分项不连累主计划)后,用当前生效计划重出一份。
+ * 每日清单不动,只重写 documentJson。服务端要跑 5 段并发的文档生成,耗时约 1-2 分钟。
+ * 必须注册在 `/plans/:id` 之前。
+ */
+router.post('/plans/active/document', requireAuth, apiLimit(), async ctx => {
+  const document = await planningService.regenerateActiveDocument(ctx.state.auth!.userGuid)
+  ctx.body = { document, serverTime: Date.now() }
+})
+
+
+/**
  * 历史计划列表(含当前生效计划),按版本倒序。
  * 重新生成会归档旧计划,这里是用户回看旧版本的唯一入口。
  * 必须注册在 `/plans/:id` 之前,否则 "history" 会被当成 id 匹配掉。

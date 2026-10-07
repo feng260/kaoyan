@@ -41,6 +41,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +60,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavHostController
 import com.yanzhong.app.data.remote.ApiClient
+import kotlinx.coroutines.launch
+import retrofit2.HttpException
 import com.yanzhong.app.data.remote.DocBlockDto
 import com.yanzhong.app.data.remote.DocCardDto
 import com.yanzhong.app.data.remote.DocChapterDto
@@ -84,21 +87,69 @@ import com.yanzhong.app.ui.theme.Spacing
 @Composable
 fun PlanDocumentScreen(padding: PaddingValues, navController: NavHostController) {
     var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf<String?>(null) }
+    // 「网络失败」与「文档根本没生成」必须分开:前者的重试有意义,后者重试永远失败,
+    // 得走服务端的补生成端点。混在一个 error 里正是"已生效却让我回去聊几句"事故的根源。
+    var loadError by remember { mutableStateOf<String?>(null) }
+    var missing by remember { mutableStateOf(false) }
     var document by remember { mutableStateOf<PlanDocumentDto?>(null) }
     var reloadKey by remember { mutableStateOf(0) }
+    var regenerating by remember { mutableStateOf(false) }
+    var regenError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    fun regenerate() {
+        if (regenerating) return
+        regenerating = true
+        regenError = null
+        scope.launch {
+            runCatching { ApiClient.aiApi().regeneratePlanDocument().document }.fold(
+                { doc ->
+                    if (doc == null || doc.chapters.isEmpty()) {
+                        regenError = "这次生成的文档不完整，已放弃保存，请重试"
+                    } else {
+                        document = doc
+                        missing = false
+                    }
+                    regenerating = false
+                },
+                { e ->
+                    regenError = when {
+                        e is HttpException && e.code() == 404 -> "当前服务端版本较旧，不支持补生成文档"
+                        e is HttpException -> "文档生成失败(${e.code()})，请稍后重试"
+                        else -> "文档生成失败，请检查网络后重试"
+                    }
+                    regenerating = false
+                },
+            )
+        }
+    }
 
     LaunchedEffect(reloadKey) {
         loading = true
-        error = null
-        // 优先走轻量端点(只回 document,不拉全量 items);旧服务端没有该路由时回退全量拉取
-        val doc = runCatching { ApiClient.aiApi().getActivePlanDocument().document }
-            .recoverCatching { ApiClient.api().getActivePlan().plan?.document }
-            .getOrNull()
-        if (doc == null || doc.chapters.isEmpty()) {
-            error = "这份计划还没有生成规划文档,先回计划页和 AI 聊几句"
+        loadError = null
+        missing = false
+        regenError = null
+        // 优先走轻量端点(只回 document,不拉全量 items);仅当旧服务端没有该路由(404)时
+        // 才回退全量拉取——其它异常是网络/服务端故障,必须如实报错而不是谎报"没生成"
+        val light = runCatching { ApiClient.aiApi().getActivePlanDocument().document }
+        var doc: PlanDocumentDto? = null
+        if (light.isSuccess) {
+            doc = light.getOrNull()
         } else {
-            document = doc
+            val e = light.exceptionOrNull()
+            if (e is HttpException && e.code() == 404) {
+                doc = runCatching { ApiClient.api().getActivePlan().plan?.document }.getOrNull()
+                if (doc == null) loadError = "文档加载失败，请检查网络后重试"
+            } else {
+                loadError = "文档加载失败，请检查网络后重试"
+            }
+        }
+        if (loadError == null) {
+            if (doc == null || doc.chapters.isEmpty()) {
+                missing = true
+            } else {
+                document = doc
+            }
         }
         loading = false
     }
@@ -137,8 +188,12 @@ fun PlanDocumentScreen(padding: PaddingValues, navController: NavHostController)
                     contentAlignment = Alignment.Center
                 ) {
                     ErrorCard(
-                        message = error ?: "文档暂时打不开",
-                        onRetry = { reloadKey++ },
+                        message = if (missing) "这份计划还没有全程规划文档\n（生成计划时文档部分失败了，每日计划不受影响）"
+                        else loadError ?: "文档暂时打不开",
+                        detail = regenError,
+                        busy = regenerating,
+                        primaryLabel = if (missing) "重新生成文档（约 1-2 分钟）" else "重试",
+                        onPrimary = if (missing) ({ regenerate() }) else ({ reloadKey++ }),
                         onBack = { navController.popBackStack() }
                     )
                 }
@@ -545,7 +600,14 @@ private fun TableCell(text: String, width: Dp, header: Boolean) {
 // ---------- 状态 ----------
 
 @Composable
-private fun ErrorCard(message: String, onRetry: () -> Unit, onBack: () -> Unit) {
+private fun ErrorCard(
+    message: String,
+    primaryLabel: String,
+    onPrimary: () -> Unit,
+    onBack: () -> Unit,
+    detail: String? = null,
+    busy: Boolean = false,
+) {
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -570,14 +632,33 @@ private fun ErrorCard(message: String, onRetry: () -> Unit, onBack: () -> Unit) 
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
+            detail?.let {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                    textAlign = TextAlign.Center
+                )
+            }
             Spacer(Modifier.height(18.dp))
-            Button(
-                onClick = onRetry,
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = PlanAccent),
-                modifier = Modifier.fillMaxWidth().height(48.dp)
-            ) {
-                Text("重试", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+            if (busy) {
+                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                Text(
+                    "正在重写这份规划文档…",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 10.dp)
+                )
+            } else {
+                Button(
+                    onClick = onPrimary,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = PlanAccent),
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) {
+                    Text(primaryLabel, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                }
             }
             TextButton(onClick = onBack) { Text("返回", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }

@@ -1,12 +1,14 @@
 import { prisma } from '../../shared/prisma'
 import { ApiError } from '../../middlewares/error'
 import { llmConfigured, visionConfigured } from '../../config/env'
-import { dayStart, diffDays, profileInputSchema, MIN_DAILY_MINUTES, MAX_DAILY_MINUTES, type ProfileInput } from './schemas'
-import type { GeneratedPlan } from './generator'
+import { addDays, dayStart, diffDays, profileInputSchema, MIN_DAILY_MINUTES, MAX_DAILY_MINUTES, type ProfileInput } from './schemas'
+import type { GeneratedPlan, GeneratedStage } from './generator'
 import { AiUnavailable, generateAiPlan, type AiPlanningInput } from './aiGenerator'
+import { generatePlanDocument } from './aiDocument'
 import { runPlanInterview, type InterviewInput, type InterviewResult } from './aiCoach'
 import { parseTimetableImage, type TimetableImage, type TimetableResult } from './timetable'
-import { briefIsEmpty, normalizeBrief, assessPlanningFacts, netAvailableMinutes, type PlanBrief, type PlanDocument } from './document'
+import { briefIsEmpty, normalizeBrief, assessPlanningFacts, netAvailableMinutes, documentMatchesSubjects, type PlanBrief, type PlanDocument } from './document'
+import { KAOYAN_KNOWN_SUBJECT_NAMES } from './planExemplar'
 import {
   affectedDays, dailyCapacity, datesBetween, diffSnapshots, planL1Shuffle, shiftDate,
   windowFingerprint, L1_MAX_AFFECTED_DAYS,
@@ -211,6 +213,12 @@ function jsonObject(raw: unknown): Record<string, any> | null {
 function toDay(value: unknown): Date {
   const d = value instanceof Date ? value : new Date(Number(value))
   return dayStart(d)
+}
+
+/** ISO 星期:周一=1 至 周日=7(补生成文档时把计划项日期映射成首周示例的 weekday) */
+function isoWeekdayOf(d: Date): number {
+  const js = d.getUTCDay()
+  return js === 0 ? 7 : js
 }
 
 function profileSnapshot(row: any): string {
@@ -667,6 +675,90 @@ export function createPlanningService(
         select: { documentJson: true },
       })
       return row ? (jsonObject(row.documentJson) as PlanDocument | null) : null
+    },
+
+    /**
+     * 补生成长文档:生成计划时文档部分失败(加分项不连累主计划)后,用当前生效计划
+     * 已落库的阶段/任务重出一份文档。每日清单原样不动,只改写 documentJson。
+     * 文档生成 prompt 需要 weekVariants 里的首周任务示例,而细化轮产物没有落库 ——
+     * 这里直接从已排的计划项里取每阶段前 7 天的真实任务,比模型当时编的更贴近执行。
+     */
+    regenerateActiveDocument: async (userGuid: string): Promise<PlanDocument> => {
+      if (!ai.configured()) {
+        throw new ApiError(503, 'AI_NOT_CONFIGURED', 'AI 计划生成服务尚未配置,请稍后再试')
+      }
+      const row = await db.plan.findFirst({ where: { userGuid, status: 'active' }, orderBy: { version: 'desc' } })
+      if (!row) throw new ApiError(404, 'PLAN_NOT_FOUND', '没有生效中的计划')
+      const [profileRow, stages, items] = await Promise.all([
+        db.userProfile.findUnique({ where: { userGuid } }),
+        db.planStage.findMany({ where: { planId: row.id }, orderBy: { sortOrder: 'asc' } }),
+        db.planItem.findMany({ where: { planId: row.id }, orderBy: [{ planDate: 'asc' }, { sortOrder: 'asc' }] }),
+      ])
+      if (!profileRow) throw new ApiError(400, 'PROFILE_INCOMPLETE', '备考档案缺失,无法生成文档')
+
+      const parsedProfile = profileInputSchema.safeParse({
+        targetType: profileRow.targetType,
+        examDate: toDay(profileRow.examDate),
+        studyWindows: jsonArray(profileRow.studyWindowsJson),
+        foundation: profileRow.foundation ?? '一般',
+        weakSubjects: jsonArray(profileRow.weakSubjectsJson),
+      })
+      if (!parsedProfile.success) {
+        throw new ApiError(400, 'INVALID_PARAMS', '备考档案不完整,请重新填写后再生成文档')
+      }
+
+      const briefRaw = jsonObject(profileRow.briefJson)
+      const brief: PlanBrief | null = briefRaw ? normalizeBrief(briefRaw) : null
+      const generatedStages: GeneratedStage[] = stages.map(stage => {
+        const startDate = toDay(stage.startDate)
+        const stageItems = items.filter(item => {
+          const day = toDay(item.planDate)
+          return day >= startDate && day < addDays(startDate, 7)
+        })
+        return {
+          name: stage.name,
+          strategy: stage.strategy ?? undefined,
+          milestones: parseMilestones(stage.milestonesJson),
+          startDate,
+          endDate: toDay(stage.endDate),
+          sortOrder: Number(stage.sortOrder ?? 0),
+          // 首周任务示例取自真实计划项,文档第 2/3 章写作时据此对齐
+          weekVariants: stageItems.length ? [stageItems.slice(0, 8).map(item => ({
+            weekday: isoWeekdayOf(toDay(item.planDate)),
+            subject: item.subject,
+            title: item.title,
+            minutes: Number(item.minutes ?? 0),
+          }))] : undefined,
+        }
+      })
+
+      let document: PlanDocument | null = null
+      try {
+        const generated = await generatePlanDocument({
+          title: row.title,
+          profile: parsedProfile.data as ProfileInput,
+          brief,
+          stages: generatedStages,
+          startDate: toDay(row.startDate),
+        })
+        if (generated && documentMatchesSubjects(
+          generated,
+          (brief?.examSubjects ?? []).map(subject => subject.name),
+          row.targetType === '考研' ? KAOYAN_KNOWN_SUBJECT_NAMES : [],
+        )) {
+          document = generated
+        }
+      } catch (error) {
+        throw new ApiError(502, 'PLAN_DOCUMENT_FAILED', `文档生成失败:${(error as Error)?.message ?? '未知错误'}`)
+      }
+      if (!document) {
+        throw new ApiError(502, 'PLAN_DOCUMENT_FAILED', '这次生成的文档不完整,已放弃保存,请重试')
+      }
+      await db.plan.updateMany({
+        where: { id: row.id, status: 'active' },
+        data: { documentJson: JSON.stringify(document), updatedAt: new Date() },
+      })
+      return document
     },
 
     /**

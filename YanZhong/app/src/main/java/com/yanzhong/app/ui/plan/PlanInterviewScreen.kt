@@ -231,16 +231,15 @@ fun PlanInterviewScreen(
                         canConfirm = state.canConfirm, error = state.error, bottom = padding.calculateBottomPadding())
                 }
             }
-            InterviewPhase.SUCCESS -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
-                Text("计划已生效", style = MaterialTheme.typography.headlineSmall)
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = {
+            InterviewPhase.SUCCESS -> SuccessContent(
+                plan = state.plan,
+                onOpenDocument = {
                     navController.navigate(Routes.PLAN_DOCUMENT) {
                         popUpTo(Routes.PLAN_INTERVIEW) { inclusive = true }
                     }
-                }) { Text("查看生效文档") }
-                TextButton(onClick = { navController.popBackStack() }) { Text("返回计划页") }
-            }
+                },
+                onBack = { navController.popBackStack() },
+            )
         }
     }
 }
@@ -251,6 +250,70 @@ private fun parseModeIntent(raw: String): InterviewMode? = when (raw) {
     "adjust" -> InterviewMode.ADJUST
     else -> null
 }
+
+/**
+ * 计划生效确认页。confirm 响应里就带着 document——文档没生成成功时(服务端设计上
+ * 文档失败不连累每日清单)不再把考生推向一个必然报错的文档页,而是如实说明,
+ * 并指向文档页的「重新生成文档」入口。
+ */
+@Composable
+private fun SuccessContent(plan: PlanDto?, onOpenDocument: () -> Unit, onBack: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize().padding(horizontal = 32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Box(
+            Modifier.size(72.dp).background(
+                MaterialTheme.colorScheme.primaryContainer, CircleShape
+            ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(AppIcons.CheckCircle, contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("计划已生效", style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold)
+        if (!plan?.title.isNullOrBlank()) {
+            Spacer(Modifier.height(6.dp))
+            Text(plan!!.title, style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
+        Spacer(Modifier.height(4.dp))
+        Text("每日任务从今天开始执行，完成情况会自动同步。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        Spacer(Modifier.height(32.dp))
+        val documentMissing = plan != null && plan.document == null
+        if (!documentMissing) {
+            Button(onClick = onOpenDocument, modifier = Modifier.fillMaxWidth()) {
+                Text("查看全程规划文档")
+            }
+        } else {
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+                    Text("全程规划文档这次没有生成成功，不影响每日任务的执行。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(4.dp))
+                    Text("需要的话，可到「全程规划」页点「重新生成文档」补一份。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        TextButton(onClick = onBack) { Text("返回计划页") }
+    }
+}
+
 
 /** 聊天区副标题：把「AI 现在在做什么/已经确认了什么」显式说出来，减少人机感 */
 private fun chatterSubtitle(state: InterviewUiState): String {

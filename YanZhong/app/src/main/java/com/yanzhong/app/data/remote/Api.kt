@@ -614,6 +614,14 @@ interface YanzhongApi {
     @GET("api/v1/plans/active/document")
     suspend fun getActivePlanDocument(): PlanDocumentResp
 
+    /**
+     * 长文档补生成:生成计划时文档部分失败(服务端设计上文档失败不连累每日清单),
+     * 用当前生效计划已落库的阶段/任务重出一份,耗时约 1-2 分钟,走 [ApiClient.aiApi]。
+     * 旧服务端无此路由时返回 404,调用方据此降级提示。
+     */
+    @POST("api/v1/plans/active/document")
+    suspend fun regeneratePlanDocument(): PlanDocumentResp
+
     /** 行程调整:一句话描述突发情况,服务端产出待确认调整单(adjustment 为 null 时 reply 是追问/闲聊) */
     @POST("api/v1/plans/adjust")
     suspend fun adjustPlan(@Body body: AdjustReq): AdjustResp
