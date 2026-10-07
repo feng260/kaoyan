@@ -6,9 +6,11 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -27,12 +29,12 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,6 +48,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -57,10 +60,19 @@ import com.yanzhong.app.data.remote.AdjustmentDto
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
+import com.yanzhong.app.ui.theme.CoralRed
+import com.yanzhong.app.ui.theme.EnglishColor
+import com.yanzhong.app.ui.theme.MathColor
+import com.yanzhong.app.ui.theme.MintGreen
+import com.yanzhong.app.ui.theme.PlanAccent
+import com.yanzhong.app.ui.theme.PlanAccent2
+import com.yanzhong.app.ui.theme.PoliticsColor
+import com.yanzhong.app.ui.theme.SubjectCsColor
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.ZoneId
+import kotlin.math.abs
 
 /** 计划页:云端 AI 计划的主卡与状态机(登录 / 无计划 / 网络错误 / 加载) */
 @Composable
@@ -189,10 +201,10 @@ private fun PlanActionCard(
         shadowElevation = 3.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(icon, contentDescription = null, tint = colors.primary, modifier = Modifier.size(30.dp))
-            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(desc, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(icon, contentDescription = null, tint = colors.primary, modifier = Modifier.size(28.dp))
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(desc, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
             Spacer(Modifier.height(2.dp))
             Button(
                 onClick = onPrimary,
@@ -287,8 +299,17 @@ private fun ServerPlanSummary(
                 TextButton(onClick = { showDatePicker = false }) { Text("取消") }
             }) { DatePicker(state = picker) }
     }
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text(plan.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        // 概览卡:计划名 + 关键元信息,一行一项对齐阅读
+        PlanCard {
+            Column(Modifier.padding(16.dp)) {
+                Text(plan.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(8.dp))
+                PlanMetaRow("考期", plan.examDate)
+                PlanMetaRow("总进度", "${plan.progress.doneItems}/${plan.progress.totalItems} 项已完成")
+                PlanMetaRow("当前阶段", current?.name ?: "当前日期不在计划阶段内")
+            }
+        }
 
         // 档案改过但计划还没重建:用醒目横幅说明"为什么内容和档案对不上",按钮直奔重新生成
         if (plan.stale) {
@@ -298,10 +319,10 @@ private fun ServerPlanSummary(
                 contentColor = MaterialTheme.colorScheme.onErrorContainer,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                     Text(
                         "备考档案改过了,这份计划还是按老档案排的",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
@@ -317,7 +338,7 @@ private fun ServerPlanSummary(
             onClick = onOpenSetup,
             enabled = !busy,
             shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().height(48.dp)
+            modifier = Modifier.fillMaxWidth().height(46.dp)
         ) {
             Icon(AppIcons.Sparkles, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
@@ -328,39 +349,30 @@ private fun ServerPlanSummary(
             )
         }
 
-        // 行程小助手:同一份生效计划上的「临时有事」入口。和上面「改档案重建」是两件事,
-        // 分开两个按钮,考生一眼就知道点哪个会进哪个模式,不用再靠猜
-        OutlinedButton(
-            onClick = onOpenAssistant,
-            enabled = !busy,
-            shape = RoundedCornerShape(12.dp),
-            modifier = Modifier.fillMaxWidth().height(48.dp)
-        ) {
-            Icon(AppIcons.Chat, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "有事？让 AI 调整近期计划",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold
+        // 二级入口收进行卡(Mine 页同款):三个全宽大按钮改成三行入口,页面立刻轻下来
+        PlanCard {
+            PlanEntryRow(
+                icon = AppIcons.Chat,
+                title = "AI 调整近期计划",
+                subtitle = "临时有事、生病、换课表,说一句就重排",
+                onClick = onOpenAssistant
             )
-        }
-
-        // AI 排出来的那份 8 章规划书:目标、阶段、各科、作息、启动周、资料、军规、时间线
-        if (plan.document != null) {
-            OutlinedButton(
-                onClick = onOpenDocument,
-                enabled = !busy,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().height(48.dp)
-            ) {
-                Icon(AppIcons.Doc, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "查看全程规划文档",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold
+            HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), modifier = Modifier.padding(start = 46.dp))
+            if (plan.document != null) {
+                PlanEntryRow(
+                    icon = AppIcons.Doc,
+                    title = "全程规划文档",
+                    subtitle = "目标 · 阶段 · 作息 · 军规,8 章作战计划书",
+                    onClick = onOpenDocument
                 )
+                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), modifier = Modifier.padding(start = 46.dp))
             }
+            PlanEntryRow(
+                icon = AppIcons.ClipboardList,
+                title = "历史计划",
+                subtitle = "回看已归档的旧版本",
+                onClick = onOpenHistory
+            )
         }
 
         // 撤销最近一次已生效的行程调整(spec §2 可撤销):无新打卡时才可用,服务端会再校验一次
@@ -369,45 +381,137 @@ private fun ServerPlanSummary(
                 Icon(AppIcons.RotateCcw, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(if (undoing) "正在撤销…"
-                    else "撤销上次调整${latestAdjustment?.summary?.let { " · $it" }.orEmpty()}")
+                    else "撤销上次调整${latestAdjustment?.summary?.let { " · $it" }.orEmpty()}",
+                    style = MaterialTheme.typography.bodySmall)
             }
         }
 
-        Text("考期 ${plan.examDate} · 总进度 ${plan.progress.doneItems}/${plan.progress.totalItems}",
-            style = MaterialTheme.typography.bodyMedium)
-        Text("当前阶段：${current?.name ?: "当前日期不在计划阶段内"}",
-            style = MaterialTheme.typography.titleSmall)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("${if (selectedDate == today) "今日" else "日期"} · $selectedDate",
-                style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            TextButton(onClick = { selectedDateText = today.toString() }, enabled = selectedDate != today) {
-                Text("回到今天")
-            }
-            TextButton(onClick = { showDatePicker = true }) { Text("选日期") }
-        }
-        Text("当日完成 $done / $total", style = MaterialTheme.typography.bodyMedium)
-        LinearProgressIndicator(progress = { if (total == 0) 0f else done.toFloat() / total },
-            modifier = Modifier.fillMaxWidth())
-        if (total == 0) Text("这一天暂无计划项", style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        plan.dailyItems(selectedDate).forEach { item ->
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = item.status == "done", onCheckedChange = { onToggle(item) },
-                    enabled = !busy)
-                Column(Modifier.weight(1f)) {
-                    Text(item.title, style = MaterialTheme.typography.bodyMedium)
-                    Text("${item.subject} · ${item.minutes} 分钟", style = MaterialTheme.typography.bodySmall,
+        // 当日卡:日期切换 + 当日进度 + 计划项勾选列表
+        PlanCard {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        if (selectedDate == today) "今日 · $selectedDate" else "当日 · $selectedDate",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(onClick = { selectedDateText = today.toString() }, enabled = selectedDate != today) {
+                        Text("回到今天", style = MaterialTheme.typography.labelMedium)
+                    }
+                    TextButton(onClick = { showDatePicker = true }) {
+                        Text("选日期", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "当日完成 $done / $total",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+                LinearProgressIndicator(progress = { if (total == 0) 0f else done.toFloat() / total },
+                    modifier = Modifier.fillMaxWidth())
+                Spacer(Modifier.height(8.dp))
+                if (total == 0) {
+                    Text("这一天暂无计划项", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                plan.dailyItems(selectedDate).forEachIndexed { index, item ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = item.status == "done", onCheckedChange = { onToggle(item) },
+                            enabled = !busy)
+                        Box(
+                            Modifier
+                                .size(8.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(planSubjectColor(item.subject))
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(item.title, style = MaterialTheme.typography.bodyMedium)
+                            Text("${item.subject} · ${item.minutes} 分钟", style = MaterialTheme.typography.labelSmall,
+                                color = planSubjectColor(item.subject))
+                        }
+                    }
+                    if (index < plan.dailyItems(selectedDate).size - 1) {
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                            modifier = Modifier.padding(start = 52.dp)
+                        )
+                    }
                 }
             }
         }
-
-        TextButton(onClick = onOpenHistory, modifier = Modifier.fillMaxWidth()) {
-            Icon(AppIcons.ClipboardList, contentDescription = null, modifier = Modifier.size(16.dp))
-            Spacer(Modifier.width(6.dp))
-            Text("历史计划")
-        }
     }
+}
+
+// ---------- 计划页卡片基元(与我的页分组卡同语言) ----------
+
+/** 计划页分组卡:浅色 surface + 1dp tonal,不再让内容裸排在页面背景上 */
+@Composable
+private fun PlanCard(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(content = content)
+    }
+}
+
+/** 元信息行:固定宽度标签 + 值,概览卡里对齐阅读 */
+@Composable
+private fun PlanMetaRow(label: String, value: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(64.dp)
+        )
+        Text(value, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** 入口行:图标 chip + 标题/说明 + 右箭头(与我的页 NavRow 同构) */
+@Composable
+private fun PlanEntryRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(17.dp))
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Icon(AppIcons.ChevronRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+    }
+}
+
+/** 科目名 → 稳定配色(哈希取色,同科目恒同色) */
+private fun planSubjectColor(subject: String): Color {
+    val palette = listOf(MathColor, SubjectCsColor, EnglishColor, PoliticsColor, MintGreen, CoralRed, PlanAccent, PlanAccent2)
+    return palette[abs(subject.hashCode()) % palette.size]
 }
 
 

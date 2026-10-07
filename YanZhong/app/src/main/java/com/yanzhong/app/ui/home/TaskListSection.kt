@@ -37,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -76,7 +77,7 @@ fun LazyListScope.taskListSection(
             Row(
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("今日待办", style = MaterialTheme.typography.headlineMedium)
+                Text("今日待办", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.width(10.dp))
                 Surface(
                     shape = RoundedCornerShape(999.dp),
@@ -497,7 +498,7 @@ private fun EmptyTaskHint() {
                 }
             }
             Spacer(Modifier.height(12.dp))
-            Text("今天没有安排?", style = MaterialTheme.typography.headlineMedium)
+            Text("今天没有安排?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(4.dp))
             Text(
                 "从添加一个任务开始,或者点下方新番茄直接专注",

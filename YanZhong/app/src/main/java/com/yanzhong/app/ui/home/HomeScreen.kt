@@ -652,7 +652,7 @@ private fun PhaseStrip(info: StageInfo) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text(info.stageName, style = MaterialTheme.typography.headlineMedium)
+                    Text(info.stageName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text(
                         listOfNotNull(info.slogan, info.strategy).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
@@ -661,7 +661,7 @@ private fun PhaseStrip(info: StageInfo) {
                 }
                 Text(
                     "第 ${info.dayIdx} / ${info.totalDays} 天",
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.primary
                 )
             }

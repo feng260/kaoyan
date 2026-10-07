@@ -60,10 +60,10 @@ fun StatsScreen(padding: PaddingValues) {
     ) {
         item {
             Column {
-                Text("统计", style = MaterialTheme.typography.headlineLarge)
+                Text("统计", style = MaterialTheme.typography.headlineSmall)
                 Text(
                     "数据全部来自本地,逐条可对账",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -73,7 +73,7 @@ fun StatsScreen(padding: PaddingValues) {
             Column {
                 Text(
                     "小结范围",
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(8.dp))
@@ -138,7 +138,8 @@ fun StatsScreen(padding: PaddingValues) {
         item(key = "trend-heading") {
             Text(
                 "长期趋势（不随小结范围变化）",
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
             )
         }
@@ -174,7 +175,7 @@ fun StatsScreen(padding: PaddingValues) {
     }
 }
 
-/** 渐变 KPI 横幅(参考番茄ToDo 统计页顶部累计卡):白字大数字 */
+/** 渐变 KPI 横幅(参考番茄ToDo 统计页累计卡):四项一行,数字克制、单位/标签小字 */
 @Composable
 private fun KpiBanner(state: StatsUiState) {
     StatBanner(title = "${state.range.label}概览") {
@@ -182,14 +183,21 @@ private fun KpiBanner(state: StatsUiState) {
             val (focusNum, focusUnit) = splitValueUnit(TimeUtils.formatHours(state.focusMin))
             StatBannerCell(focusNum, focusUnit, "净专注", Modifier.weight(1f))
             StatBannerCell("${state.pomodoroCount}", "个", "番茄", Modifier.weight(1f))
-        }
-        Spacer(Modifier.height(16.dp))
-        Row(Modifier.fillMaxWidth()) {
-            val (rateNum, rateUnit) = splitValueUnit(state.taskRateLabel)
-            StatBannerCell(rateNum, rateUnit, "任务完成率", Modifier.weight(1f))
+            StatBannerCell(rateNumFirst(state.taskRateLabel), rateUnitRest(state.taskRateLabel), "任务完成率", Modifier.weight(1f))
             StatBannerCell("${state.streak}", "天", "连续打卡", Modifier.weight(1f))
         }
     }
+}
+
+/** 「83%」→(「83」,「%」);无数字时原样返回,避免空数值列 */
+private fun rateNumFirst(raw: String): String {
+    val idx = raw.indexOfFirst { !it.isDigit() && it != '.' }
+    return if (idx <= 0) raw else raw.substring(0, idx)
+}
+
+private fun rateUnitRest(raw: String): String {
+    val idx = raw.indexOfFirst { !it.isDigit() && it != '.' }
+    return if (idx <= 0) "" else raw.substring(idx).trim()
 }
 
 /** KPI 口径说明 + 中断分析(横幅下方的普通卡) */
@@ -201,10 +209,10 @@ private fun KpiNotes(state: StatsUiState) {
         tonalElevation = 1.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Text(
                 "任务完成率 = ${state.tasksDone} 已完成 / ${state.tasksDone + state.tasksOpen} 计划",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             // 全 0 时先解释规则(F6):不说明会被当成"数据丢了"
@@ -212,7 +220,7 @@ private fun KpiNotes(state: StatsUiState) {
                 Spacer(Modifier.height(6.dp))
                 Text(
                     "这个范围里还没有满 1 分钟的专注记录——少于 1 分钟的番茄不计入统计。去专注页开始一个番茄，数据就会出现在这里。",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -222,7 +230,7 @@ private fun KpiNotes(state: StatsUiState) {
                 Text(
                     "累计中断 ${state.abandoned} 次 · " +
                         state.abandonReasons.joinToString(" / ") { "${it.first}×${it.second}" },
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -260,13 +268,13 @@ private fun WeekReportCard(
         tonalElevation = 1.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
-                Text("周目标达成", style = MaterialTheme.typography.headlineMedium)
+                Text("周目标达成", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Surface(
                     shape = RoundedCornerShape(999.dp),
                     color = if (reached) SuccessGreen.copy(alpha = 0.15f)
@@ -296,19 +304,19 @@ private fun WeekReportCard(
             ) {
                 Text(
                     diffLabel,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = if (diff >= 0) com.yanzhong.app.ui.theme.SuccessGreen
                     else MaterialTheme.colorScheme.error
                 )
                 Text(
                     "本周专注 $focusDays 天 · 连续打卡 $streak 天",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             Text(
                 "净学习 ${TimeUtils.formatHours(focusMin)} / 目标 ${goalMin / 60}h",
-                style = MaterialTheme.typography.bodyMedium,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -336,13 +344,13 @@ private fun MonthReportCard(
         tonalElevation = 1.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = androidx.compose.ui.Alignment.CenterVertically
             ) {
-                Text("本月复盘", style = MaterialTheme.typography.headlineMedium)
+                Text("本月复盘", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Surface(
                     shape = RoundedCornerShape(999.dp),
                     color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
@@ -358,7 +366,7 @@ private fun MonthReportCard(
             Spacer(Modifier.height(10.dp))
             Text(
                 "净学习 ${TimeUtils.formatHours(focusMin)} · ${pomodoroCount} 个番茄",
-                style = MaterialTheme.typography.titleMedium
+                style = MaterialTheme.typography.titleSmall
             )
             Spacer(Modifier.height(6.dp))
             Row(
@@ -367,13 +375,13 @@ private fun MonthReportCard(
             ) {
                 Text(
                     diffLabel,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = if (diff >= 0) com.yanzhong.app.ui.theme.SuccessGreen
                     else MaterialTheme.colorScheme.error
                 )
                 Text(
                     "本月专注 $focusDays 天 · 连续打卡 $streak 天",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -438,7 +446,7 @@ private fun RecordCell(value: String, label: String, modifier: Modifier = Modifi
         Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Text(
                 value,
-                style = MaterialTheme.typography.titleLarge,
+                style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1

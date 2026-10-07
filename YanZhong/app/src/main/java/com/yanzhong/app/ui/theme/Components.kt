@@ -48,14 +48,14 @@ fun PageHeader(
         Column(Modifier.weight(1f)) {
             Text(
                 title,
-                style = MaterialTheme.typography.headlineLarge,
+                style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold
             )
             if (subtitle != null) {
                 Spacer(Modifier.height(2.dp))
                 Text(
                     subtitle,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -142,20 +142,24 @@ fun StatBanner(
                 .clip(androidx.compose.foundation.shape.CircleShape)
                 .background(Color.White.copy(alpha = 0.08f))
         )
-        Column(Modifier.padding(20.dp)) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
             Text(
                 title,
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = Color.White
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             content()
         }
     }
 }
 
-/** 横幅内指标单元格:白字大数字 + 小标签 */
+/**
+ * 横幅内指标单元格:数字醒目但克制(参考番茄ToDo 统计页:大数字+小单位+小标签)。
+ * 曾经用 displayLarge 40sp,实测在统计页压得整页全是数字;降到 headlineMedium 22sp,
+ * 单位与标签用 labelSmall 缀在旁边——层级拉开了,密度也上来了。
+ */
 @Composable
 fun StatBannerCell(
     value: String,
@@ -167,22 +171,22 @@ fun StatBannerCell(
         Row(verticalAlignment = Alignment.Bottom) {
             Text(
                 value,
-                style = MaterialTheme.typography.displayLarge,
+                style = MaterialTheme.typography.headlineMedium,
                 color = Color.White
             )
             if (unit.isNotEmpty()) {
                 Spacer(Modifier.width(2.dp))
                 Text(
                     unit,
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelSmall,
                     color = Color.White.copy(alpha = 0.85f),
-                    modifier = Modifier.padding(bottom = 6.dp)
+                    modifier = Modifier.padding(bottom = 3.dp)
                 )
             }
         }
         Text(
             label,
-            style = MaterialTheme.typography.bodySmall,
+            style = MaterialTheme.typography.labelSmall,
             color = Color.White.copy(alpha = 0.8f)
         )
     }
@@ -311,7 +315,7 @@ fun SectionCard(
                     Spacer(Modifier.width(10.dp))
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(title, style = MaterialTheme.typography.headlineMedium)
+                    Text(title, style = MaterialTheme.typography.titleMedium)
                     if (subtitle != null) {
                         Text(
                             subtitle,

@@ -98,11 +98,11 @@ fun SubjectRingChart(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                     TimeUtils.formatHours(total),
-                    style = MaterialTheme.typography.headlineMedium
+                    style = MaterialTheme.typography.titleMedium
                 )
                 Text(
                     "净专注",
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
