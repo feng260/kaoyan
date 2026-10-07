@@ -14,7 +14,7 @@ import {
   windowFingerprint, L1_MAX_AFFECTED_DAYS,
   type AdjustmentTier, type AdjustableItem, type WindowSnapshotItem,
 } from './adjust'
-import { buildLedger, expandL2, normalizeL2Tasks, runAdjustL2, validateL2, type L2Input, type L2Task } from './adjustL2'
+import { buildLedger, compressPendingToFit, expandL2, normalizeL2Tasks, runAdjustL2, validateL2, type L2Input, type L2Task } from './adjustL2'
 import { runAdjustIntent, type AdjustIntent, type AdjustIntentInput } from './adjustIntent'
 
 /**
@@ -1020,7 +1020,6 @@ export function createPlanningService(
 
       const pending = inWindow.filter(row => row.status !== 'done').map(row => toAdjustable(row))
       const before = toSnapshot(inWindow)
-
       if (intent.kind === 'unavailable') {
         for (const day of intent.days) {
           if (capacity.has(day)) capacity.set(day, 0)
@@ -1054,16 +1053,28 @@ export function createPlanningService(
           return nextDay && item.status !== 'done' ? { ...item, planDate: nextDay } : item
         })
       } else {
-        // L2 预检:窗口总量塞不下直接报缺口,不浪费一次模型调用
+        // L2 预检:窗口总量塞不下的第一反应不是把用户顶回去,而是弹性收缩——
+        // 请一天假缺口往往只有几百分钟,摊到整个窗口每项任务缩个百分之几就能塞下。
+        // 15 分钟下限托不住(真排不下)才报缺口。
         const totalPending = pending.reduce((sum, item) => sum + item.minutes, 0)
         const totalCapacity = [...capacity.values()].reduce((sum, value) => sum + value, 0)
+        let effectivePending = pending
+        let compressedNote = ''
         if (totalPending > totalCapacity) {
-          throw new ApiError(400, 'PLAN_CAPACITY_INSUFFICIENT',
-            `这个阶段到 ${to} 之前只剩 ${totalCapacity} 分钟,排不下 ${totalPending} 分钟的任务。要么把休息日让出来,要么等下一阶段再补`)
+          const compressed = compressPendingToFit(pending, totalCapacity)
+          if (!compressed) {
+            throw new ApiError(400, 'PLAN_CAPACITY_INSUFFICIENT',
+              `这个阶段到 ${to} 之前只剩 ${totalCapacity} 分钟,排不下 ${totalPending} 分钟的任务。要么把休息日让出来,要么等下一阶段再补`)
+          }
+          effectivePending = compressed.items
+          compressedNote = '（已按剩余容量微调各任务时长）'
         }
-        const target = await runAdjustL2Plan(ai, { message, pending, capacity, from, to, brief })
+        const target = await runAdjustL2Plan(ai, { message, pending: effectivePending, capacity, from, to, brief })
         // L2 的 after 必须带上窗口内的 done 项,否则 diff 会把打卡项误判成 removed
         after = [...before.filter(item => item.status === 'done'), ...target]
+        if (compressedNote) {
+          intent.summary = `${intent.summary}${compressedNote}`
+        }
       }
       const changes = diffSnapshots(before, after)
       if (changes.length === 0) {

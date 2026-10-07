@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildLedger, expandL2, normalizeL2Tasks, validateL2, type L2Task } from './adjustL2'
+import { buildLedger, compressPendingToFit, expandL2, normalizeL2Tasks, validateL2, type L2Task } from './adjustL2'
 import type { AdjustableItem, WindowSnapshotItem } from './adjust'
 
 const DAYS = ['2026-09-29', '2026-09-30', '2026-10-01']
@@ -10,6 +10,35 @@ const PENDING: AdjustableItem[] = [
   { id: 2, subject: '英语', title: '阅读真题', planDate: '2026-09-30', minutes: 60, priority: 0, sortOrder: 1 },
 ]
 const SUBJECTS = ['数学', '英语', '政治']
+
+test('compressPendingToFit:小缺口按比例收缩,总量恰好塞进容量', () => {
+  // 待排 180,容量 168(缺口 12,6.7%)→ 每项缩到 112/120*原值
+  const result = compressPendingToFit([
+    { id: 1, subject: '数学', title: '线性代数', planDate: '2026-09-29', minutes: 120, priority: 0, sortOrder: 0 },
+    { id: 2, subject: '英语', title: '阅读真题', planDate: '2026-09-30', minutes: 60, priority: 0, sortOrder: 1 },
+  ], 168)
+  assert.ok(result)
+  assert.equal(result.total, 168)
+  // 120*0.9333≈112、60*0.9333≈56
+  assert.deepEqual(result.items.map(item => item.minutes), [112, 56])
+  // 用户截图场景:缺口 112/18515≈0.6%,压缩后必然塞得下,不再报"排不下"
+})
+
+test('compressPendingToFit:15 分钟下限托不住缺口时返回 null', () => {
+  const result = compressPendingToFit([
+    { id: 1, subject: '数学', title: '线性代数', planDate: '2026-09-29', minutes: 15, priority: 0, sortOrder: 0 },
+    { id: 2, subject: '英语', title: '阅读真题', planDate: '2026-09-30', minutes: 15, priority: 0, sortOrder: 1 },
+  ], 10)
+  assert.equal(result, null)
+})
+
+test('compressPendingToFit:没有缺口时返回 null(调用方原样通过)', () => {
+  const items: AdjustableItem[] = [
+    { id: 1, subject: '数学', title: '线性代数', planDate: '2026-09-29', minutes: 45, priority: 0, sortOrder: 0 },
+  ]
+  assert.equal(compressPendingToFit(items, 180), null)
+  assert.equal(compressPendingToFit([], 180), null)
+})
 
 test('buildLedger:总量/每日容量/白名单/里程碑裁剪', () => {
   const ledger = buildLedger(PENDING, CAPACITY, DAYS, SUBJECTS,

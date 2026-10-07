@@ -129,6 +129,30 @@ export function normalizeL2Tasks(raw: unknown, ledger: L2Ledger): L2Task[] {
   return tasks
 }
 
+/** 弹性收缩的单项下限:再紧也不能把任务压成低于 15 分钟的碎片 */
+const COMPRESS_MIN_MINUTES = 15
+
+/**
+ * 弹性收缩:窗口塞不下时按比例压缩每个任务的分钟数,而不是把用户顶回去。
+ * 用户请一天假缺口往往只有几百分钟,摊到几十天上每项任务缩个百分之几——
+ * 硬报"排不下"是最蠢的出路。压缩后每项不低于 15 分钟;托不住缺口返回 null,
+ * 由调用方继续走"容量不足"报错(那是真排不下的场景)。
+ */
+export function compressPendingToFit(
+  pending: AdjustableItem[], totalCapacity: number,
+): { items: AdjustableItem[]; total: number } | null {
+  const totalPending = pending.reduce((sum, item) => sum + item.minutes, 0)
+  if (totalPending <= 0 || totalCapacity <= 0 || totalCapacity >= totalPending) return null
+  const scale = totalCapacity / totalPending
+  const items = pending.map(item => ({
+    ...item,
+    minutes: Math.max(COMPRESS_MIN_MINUTES, Math.round(item.minutes * scale)),
+  }))
+  const total = items.reduce((sum, item) => sum + item.minutes, 0)
+  if (total > totalCapacity) return null
+  return { items, total }
+}
+
 /**
  * 把模型的任务序列展开成窗口快照,尽量复用既有 pending 项:
  * 同科同题 → 原项改日期/分钟;同科不同题 → 原项改标题/分钟;找不到同科 → 新增(id=0)。
