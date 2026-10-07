@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createPlanningService, overdueSuggestion, PlanningDb } from './service'
+import { createPlanningService, overdueSuggestion, slimToggleResponse, PlanningDb } from './service'
 import { dayStart, addDays, profileInputSchema } from './schemas'
 import { generateRulePlan as generateRulePlanRaw } from './generator'
 import { normalizeBrief } from './document'
@@ -950,6 +950,21 @@ test('interview cannot finish on force or turn count without structured facts', 
   const result = await service.interview(USER, { force: true, messages: Array.from({ length: 9 }, () => ({ role: 'user', content: '直接开始' })) })
   assert.equal(result.done, false)
   assert.equal(fake.state.profiles[0].briefJson, undefined)
+})
+
+test('slim toggle response exposes only the toggled item and progress', () => {
+  const plan = {
+    items: [
+      { id: 1, subject: '申论', title: '任务甲', planDate: '2026-10-07', minutes: 45, status: 'pending' },
+      { id: 2, subject: '行测', title: '任务乙', planDate: '2026-10-07', minutes: 45, status: 'done' },
+    ],
+    progress: { totalItems: 2, pendingItems: 1, doneItems: 1, totalMinutes: 90, totalDays: 1 },
+  } as any
+  const slim = slimToggleResponse(plan, 1)
+  assert.ok(slim)
+  assert.equal(slim.item.id, 1)
+  assert.equal(slim.progress.totalItems, 2)
+  assert.equal(slimToggleResponse(plan, 99), null)
 })
 
 test('a replacement draft subtracts completed estimates and never carries the old backlog', async () => {

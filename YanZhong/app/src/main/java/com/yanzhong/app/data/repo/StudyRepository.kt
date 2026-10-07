@@ -20,6 +20,11 @@ import com.yanzhong.app.data.remote.*
 import com.yanzhong.app.util.RhythmEngine
 import com.yanzhong.app.util.TimeUtils
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -28,6 +33,9 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -594,6 +602,25 @@ class StudyRepository(private val db: YanZhongDatabase) {
      * 冷启动到首次计划同步之间为 null —— 阶段条隐藏,其余 UI 以 Room 投影为准正常展示。
      */
     val activePlan = MutableStateFlow<PlanDto?>(null)
+
+    /**
+     * 拉取生效计划(带 in-flight 去重):冷启动 DataSyncer 首拉与计划页刷新会并发触发
+     * 同一份全量拉取(一份几百天的计划可达数百 KB),这里让同刻的并发调用共享同一个请求。
+     * 共享请求跑在独立的 SupervisorJob scope —— 某个调用方退出不会打断对方的等待。
+     * 不写投影,由调用方各自 applyPlanProjection。
+     */
+    suspend fun fetchActivePlan(): PlanDto? {
+        val deferred: Deferred<PlanDto?> = fetchPlanMutex.withLock {
+            fetchInFlight?.takeIf { it.isActive }
+                ?: fetchPlanScope.async { ApiClient.api().getActivePlan().plan }
+                    .also { fetchInFlight = it }
+        }
+        return deferred.await()
+    }
+
+    private val fetchPlanScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val fetchPlanMutex = Mutex()
+    private var fetchInFlight: Deferred<PlanDto?>? = null
 
     /** 本周(周一始)任务视图 */
     fun observeWeekView(): Flow<List<TaskEntity>> {

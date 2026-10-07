@@ -115,7 +115,7 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                         _latestAdjustment.value = null
                         return@withLock
                     }
-                    val plan = ApiClient.api().getActivePlan().plan
+                    val plan = repo.fetchActivePlan()
                     if (plan == null) repo.clearPlanProjections(account!!)
                     else repo.applyPlanProjection(plan, account!!, settingsRepo.current().currentPlan.focusMin)
                     _serverPlan.value = plan
@@ -146,8 +146,13 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     val current = _serverPlan.value?.items?.firstOrNull { it.id == item.id } ?: return@withLock
                     val status = if (current.status == "done") "pending" else "done"
-                    val plan = ApiClient.api().patchPlanItem(item.id, PlanItemStatusReq(status)).plan
-                        ?: throw IllegalStateException("服务端未返回计划")
+                    // slim:服务端只回被改的那一项与进度(~1KB),本地合并进缓存的 plan 得到完整新计划
+                    val slim = ApiClient.aiApi().patchPlanItemSlim(item.id, slim = true, body = PlanItemStatusReq(status))
+                    val basePlan = _serverPlan.value ?: throw IllegalStateException("本地计划缓存丢失")
+                    val plan = basePlan.copy(
+                        items = basePlan.items.map { if (it.id == slim.item.id) slim.item else it },
+                        progress = slim.progress,
+                    )
                     repo.applyPlanProjection(plan, account, settingsRepo.current().currentPlan.focusMin)
                     _serverPlan.value = plan
                     _planError.value = null

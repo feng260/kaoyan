@@ -177,7 +177,7 @@ class DataSyncer(private val app: YanZhongApp) {
     private suspend fun pullPlanOnce() {
         runCatching {
             val account = TokenStore.currentAccountGuid() ?: return
-            val plan = ApiClient.api().getActivePlan().plan
+            val plan = app.repository.fetchActivePlan()
             if (!started || TokenStore.currentAccountGuid() != account) return
             if (plan == null) app.repository.clearPlanProjections(account)
             else app.repository.applyPlanProjection(plan, account, app.settingsRepo.current().currentPlan.focusMin)

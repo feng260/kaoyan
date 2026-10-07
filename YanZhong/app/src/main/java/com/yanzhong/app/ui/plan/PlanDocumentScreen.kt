@@ -91,20 +91,16 @@ fun PlanDocumentScreen(padding: PaddingValues, navController: NavHostController)
     LaunchedEffect(reloadKey) {
         loading = true
         error = null
-        runCatching { ApiClient.api().getActivePlan() }
-            .onSuccess { resp ->
-                val doc = resp.plan?.document
-                if (doc == null || doc.chapters.isEmpty()) {
-                    error = "这份计划还没有生成规划文档,先回计划页和 AI 聊几句"
-                } else {
-                    document = doc
-                }
-                loading = false
-            }
-            .onFailure { e ->
-                error = "加载失败:${e.message ?: "网络异常"}"
-                loading = false
-            }
+        // 优先走轻量端点(只回 document,不拉全量 items);旧服务端没有该路由时回退全量拉取
+        val doc = runCatching { ApiClient.aiApi().getActivePlanDocument().document }
+            .recoverCatching { ApiClient.api().getActivePlan().plan?.document }
+            .getOrNull()
+        if (doc == null || doc.chapters.isEmpty()) {
+            error = "这份计划还没有生成规划文档,先回计划页和 AI 聊几句"
+        } else {
+            document = doc
+        }
+        loading = false
     }
 
     Box(

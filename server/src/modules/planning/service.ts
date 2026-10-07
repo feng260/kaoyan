@@ -171,6 +171,19 @@ function ms(value: unknown): number | null {
   return Number.isFinite(n) ? n : null
 }
 
+/**
+ * slim 勾选响应:只回被改的那一项与进度。全量 plan 单份可达数百 KB,
+ * 而勾选是高频操作 —— 客户端用本地缓存的 plan 合并这一项即可得到完整新计划。
+ */
+export function slimToggleResponse(
+  plan: PublicPlan,
+  itemId: number,
+): { item: PublicPlanItem; progress: PublicPlan['progress'] } | null {
+  const item = plan.items.find(i => i.id === itemId)
+  if (!item) return null
+  return { item, progress: plan.progress }
+}
+
 /** 数据库列是 Text:能是数组就直接用,是字符串就尝试解析,坏的当空数组 */
 function jsonArray(raw: unknown): string[] {
   if (Array.isArray(raw)) return raw.map(String)
@@ -644,6 +657,16 @@ export function createPlanningService(
         orderBy: { version: 'desc' },
       })
       return row ? loadPlan(userGuid, row) : null
+    },
+
+    /** 长文档轻量读取:文档页只需要 document,不值得把全量 items(数百 KB)一起拉下来 */
+    getActiveDocument: async (userGuid: string): Promise<PlanDocument | null> => {
+      const row = await db.plan.findFirst({
+        where: { userGuid, status: 'active' },
+        orderBy: { version: 'desc' },
+        select: { documentJson: true },
+      })
+      return row ? (jsonObject(row.documentJson) as PlanDocument | null) : null
     },
 
     /**

@@ -238,6 +238,18 @@ data class PlanDto(
 @Serializable
 data class PlanResp(val plan: PlanDto? = null, val serverTime: Long = 0)
 
+/** 勾选计划项的 slim 响应:只回被改的那一项与进度(全量 plan 数百 KB,勾选是高频操作) */
+@Serializable
+data class SlimToggleResp(
+    val item: PlanItemDto,
+    val progress: PlanProgressDto = PlanProgressDto(),
+    val serverTime: Long = 0
+)
+
+/** 长文档轻量响应:文档页只需要这份 8 章文档,不拉全量 items */
+@Serializable
+data class PlanDocumentResp(val document: PlanDocumentDto? = null, val serverTime: Long = 0)
+
 /**
  * 历史计划列表里的一条摘要。服务端刻意不带 stages/items 明细——
  * 一份计划动辄上千条计划项，列表页只需要"哪一版、多少天、完成多少"，
@@ -586,6 +598,21 @@ interface YanzhongApi {
         @Path("id") id: Long,
         @Body body: PlanItemStatusReq
     ): PlanResp
+
+    /**
+     * 同 [patchPlanItem],但 slim=1 时服务端只回被改的那一项与进度 ——
+     * 全量 plan 数百 KB 而勾选是高频操作,客户端用本地 plan 合并即可。走 [ApiClient.aiApi]。
+     */
+    @retrofit2.http.PATCH("api/v1/plans/items/{id}")
+    suspend fun patchPlanItemSlim(
+        @Path("id") id: Long,
+        @retrofit2.http.Query("slim") slim: Boolean = true,
+        @Body body: PlanItemStatusReq
+    ): SlimToggleResp
+
+    /** 长文档轻量读取:只回 document 不回全量 items;旧服务端无此路由时由调用方 fallback */
+    @GET("api/v1/plans/active/document")
+    suspend fun getActivePlanDocument(): PlanDocumentResp
 
     /** 行程调整:一句话描述突发情况,服务端产出待确认调整单(adjustment 为 null 时 reply 是追问/闲聊) */
     @POST("api/v1/plans/adjust")

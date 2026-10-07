@@ -5,7 +5,7 @@ import { requireAuth } from '../../middlewares/auth'
 import { apiLimit } from '../../middlewares/ratelimit'
 import { hub } from '../../shared/ws/Hub'
 import { profileInputSchema, type ProfileInput } from './schemas'
-import { PLAN_ITEM_STATUSES, planningService } from './service'
+import { PLAN_ITEM_STATUSES, planningService, slimToggleResponse } from './service'
 import { maybeNotifyPlanReminder } from './planReminder'
 
 const router = new Router({ prefix: '/api/v1' })
@@ -183,6 +183,15 @@ router.get('/plans/active', requireAuth, async ctx => {
 })
 
 /**
+ * 长文档轻量端点:只回 document 不回全量 items(一份几百天的计划 items 达数百 KB,
+ * 文档页只需要这份 8 章文档)。必须注册在 `/plans/:id` 之前。
+ */
+router.get('/plans/active/document', requireAuth, async ctx => {
+  const document = await planningService.getActiveDocument(ctx.state.auth!.userGuid)
+  ctx.body = { document, serverTime: Date.now() }
+})
+
+/**
  * 历史计划列表(含当前生效计划),按版本倒序。
  * 重新生成会归档旧计划,这里是用户回看旧版本的唯一入口。
  * 必须注册在 `/plans/:id` 之前,否则 "history" 会被当成 id 匹配掉。
@@ -219,7 +228,14 @@ router.patch('/plans/items/:id', requireAuth, apiLimit(), async ctx => {
     throw new ApiError(400, 'INVALID_PARAMS', 'status 只能是 pending 或 done')
   }
   const plan = await planningService.setItemStatus(ctx.state.auth!.userGuid, itemId, parsed.data.status)
-  ctx.body = { plan, serverTime: Date.now() }
+  // slim=1 时只回被改的那一项与进度:全量 plan 数百 KB,而勾选是高频操作;
+  // 客户端用本地缓存的 plan 合并该项即可,省掉 ~99% 的下行体积。默认仍回全量(兼容旧客户端)
+  if (ctx.query.slim === '1') {
+    const slim = slimToggleResponse(plan, itemId) ?? { item: plan.items.find(i => i.id === itemId)!, progress: plan.progress }
+    ctx.body = { ...slim, serverTime: Date.now() }
+  } else {
+    ctx.body = { plan, serverTime: Date.now() }
+  }
   notifyPlanChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)
 })
 
