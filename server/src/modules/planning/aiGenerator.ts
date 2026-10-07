@@ -1,7 +1,8 @@
 import { addDays, dayStart, diffDays, type ProfileInput } from './schemas'
 import { chatComplete, extractJson, LlmError } from '../../shared/llm/client'
-import type { GeneratedItem, GeneratedPlan, GeneratedStage } from './generator'
+import type { AiWeekVariant, GeneratedItem, GeneratedPlan, GeneratedStage } from './generator'
 import { generatePlanDocument } from './aiDocument'
+import { refineStageToWeeks } from './refineStage'
 import { KAOYAN_KNOWN_SUBJECT_NAMES, PLAN_STRUCTURE_EXEMPLAR } from './planExemplar'
 import { briefIsEmpty, briefToPrompt, documentMatchesSubjects, netAvailableMinutes, type PlanBrief, type PlanDocument } from './document'
 
@@ -45,6 +46,10 @@ type AiStage = {
   focus?: string
   startDate?: string
   endDate?: string
+  /** L1 策略轮新增:本阶段主线一句话(喂细化轮与计划书) */
+  strategy?: string
+  /** L1 策略轮新增:本阶段可验收里程碑 */
+  milestones?: string[]
   weeklySlots: AiWeeklySlot[]
 }
 
@@ -75,7 +80,7 @@ const DEFAULT_MINUTES = 45
  */
 const SKELETON_MAX_TOKENS = 32768
 
-const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,只根据考生已确认的事实制定计划。
+const SYSTEM_PROMPT = `你是一位资深的中国备考全程规划师,只根据考生已确认的事实制定计划。
 你的任务:根据考生的备考档案,输出一份分阶段、可执行的备考计划骨架。
 严格只输出一个 JSON 对象,不要任何解释文字、不要 Markdown 代码块。JSON 结构:
 {
@@ -84,10 +89,12 @@ const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,只根�
     {
       "name": "阶段名称,如「基础唤醒期」",
       "focus": "本阶段一句话核心任务,不超过 40 字",
+      "strategy": "本阶段主线:为「这个阶段成什么事」给出有判断的答案,如「计网跟学校课白捡一科,期末复习就是一轮」,不超过 60 字",
+      "milestones": ["阶段结束时可验收的里程碑,如「行测五大模块理论课全部过完」,2-4 条,每条不超过 40 字,必须可验证"],
       "startDate": "YYYY-MM-DD",
       "endDate": "YYYY-MM-DD",
       "weeklySlots": [
-        { "weekdays": [1,2,3,4,5], "weekParity": "odd", "subject": "已确认的正式考试科目名称", "title": "已确认范围内的具体任务", "minutes": 90 }
+        { "weekdays": [1,2,3,4,5], "weekParity": "odd", "subject": "已确认的正式考试科目名称", "title": "已确认范围内的具体任务", "minutes": 45 }
       ]
     }
   ]
@@ -184,6 +191,10 @@ function normalizeStages(parsed: AiPlanJson, weakSubjects: string[]): AiStage[] 
     stages.push({
       name: raw.name.trim().slice(0, 24),
       focus: typeof raw.focus === 'string' ? raw.focus.trim().slice(0, 80) : undefined,
+      strategy: typeof raw.strategy === 'string' && raw.strategy.trim() ? raw.strategy.trim().slice(0, 60) : undefined,
+      milestones: Array.isArray(raw.milestones)
+        ? raw.milestones.map(m => String(m ?? '').trim()).filter(Boolean).slice(0, 4).map(m => m.slice(0, 40))
+        : undefined,
       startDate: typeof raw.startDate === 'string' ? raw.startDate : undefined,
       endDate: typeof raw.endDate === 'string' ? raw.endDate : undefined,
       weeklySlots: slots,
@@ -230,7 +241,14 @@ function layoutStages(stages: AiStage[], today: Date, exam: Date): GeneratedStag
   let cursor = today
   for (const [index, stage] of stages.entries()) {
     const endDate = addDays(cursor, counts[index] - 1)
-    out.push({ name: stage.name, startDate: cursor, endDate, sortOrder: index })
+    out.push({
+      name: stage.name,
+      startDate: cursor,
+      endDate,
+      sortOrder: index,
+      strategy: stage.strategy,
+      milestones: stage.milestones,
+    })
     cursor = addDays(endDate, 1)
   }
   return out
@@ -278,13 +296,17 @@ export function alignSubjectsToConfirmed(
 
 /**
  * 把阶段模板铺满整个阶段:
- * - 每天按当天净空闲预算逐条安排,直到用满预算或该阶段的任务队列耗尽 ——
- *   "一天只排一条、其余空闲全空着"曾让整份计划稀得没法看;
- * - 当天没有 weekday 命中的条目时,取该阶段任一未消费条目兜底,保证每天都有安排;
- * - 队列全部消费完则清空标记进入新一轮复习轮(备考本就多轮刷同类任务),
- *   避免 394 天的长周期计划在头一个月耗尽队列后大面积空天。
+ * - 阶段带周变体(L2 细化轮产物)时走变体展开 —— 每周用不同的任务序列,密度接近人工规划;
+ * - 否则走 weeklySlots 模板循环(骨架降级路径):
+ *   - 每天按当天净空闲预算逐条安排,直到用满预算或该阶段的任务队列耗尽 ——
+ *     "一天只排一条、其余空闲全空着"曾让整份计划稀得没法看;
+ *   - 当天没有 weekday 命中的条目时,取该阶段任一未消费条目兜底,保证每天都有安排;
+ *   - 队列全部消费完则清空标记进入新一轮复习轮(备考本就多轮刷同类任务),
+ *     避免 394 天的长周期计划在头一个月耗尽队列后大面积空天。
  */
 export function expandStage(stage: AiStage, range: GeneratedStage, brief: Pick<PlanBrief, 'availability' | 'fixedCommitments'>): GeneratedItem[] {
+  const variants = (range.weekVariants ?? []).filter(v => v.length > 0)
+  if (variants.length > 0) return expandStageFromVariants(range, brief, variants)
   const items: GeneratedItem[] = []
   const stageLength = diffDays(range.endDate, range.startDate) + 1
   const subjects = [...new Set(stage.weeklySlots.map(slot => slot.subject))]
@@ -322,6 +344,53 @@ export function expandStage(stage: AiStage, range: GeneratedStage, brief: Pick<P
         stageOrder: range.sortOrder,
         subject: slot.subject,
         title: slot.title,
+        planDate,
+        minutes,
+        priority: range.sortOrder,
+        sortOrder: sortOrder++,
+      })
+      dayBudget -= minutes
+    }
+  }
+  return items
+}
+
+/**
+ * 周变体展开(L2 细化轮产物 → 逐日计划项):
+ * - 阶段内第 N 周使用变体 N % 变体数(4-8 个变体轮换,周与周之间任务递进不重复);
+ * - 变体内按 weekday 匹配装入当天,日容量(netAvailableMinutes)逐条扣减,guard≤12;
+ * - 变体漏排某天时从变体其它条目按周序轮转兜底,继承"每天都有安排"的承诺。
+ */
+function expandStageFromVariants(
+  range: GeneratedStage,
+  brief: Pick<PlanBrief, 'availability' | 'fixedCommitments'>,
+  variants: AiWeekVariant[],
+): GeneratedItem[] {
+  const items: GeneratedItem[] = []
+  const stageLength = diffDays(range.endDate, range.startDate) + 1
+  for (let offset = 0; offset < stageLength; offset++) {
+    const planDate = addDays(range.startDate, offset)
+    let dayBudget = netAvailableMinutes(brief, planDate)
+    if (dayBudget < MIN_SLOT_MINUTES) continue
+    const dow = isoWeekday(planDate)
+    const weekIdx = Math.floor(offset / 7)
+    const variant = variants[weekIdx % variants.length]
+    // 当天命中的条目优先;漏排时轮转兜底(起点随周序前移,避免每周兜底都补同一条)
+    let pool = variant.filter(task => task.weekday === dow)
+    if (pool.length === 0) {
+      const start = (weekIdx * 2) % variant.length
+      for (let i = 0; i < variant.length; i++) pool.push(variant[(start + i) % variant.length])
+    }
+    let sortOrder = 0
+    let guard = 0
+    for (const task of pool) {
+      if (dayBudget < MIN_SLOT_MINUTES || guard++ >= 12) break
+      const minutes = Math.min(task.minutes, dayBudget)
+      if (minutes < MIN_SLOT_MINUTES) break
+      items.push({
+        stageOrder: range.sortOrder,
+        subject: task.subject,
+        title: task.title,
         planDate,
         minutes,
         priority: range.sortOrder,
@@ -383,6 +452,26 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
   // 临考时冲刺/模考的模板比基础段的更有用,也避免「每段至少 1 天」把计划推到考后。
   const usable = stages.slice(-Math.max(1, diffDays(exam, today)))
   const ranges = layoutStages(usable, today, exam)
+
+  // L2 阶段细化轮:每个阶段并行调一次模型,产出 4-8 个周变体任务序列(累计数万字的
+  // 生成预算主要花在这里)——这是追平人工规划密度的关键一步。任一阶段失败只降级为
+  // 该阶段的 weeklySlots 模板展开,绝不阻塞整份计划。
+  const confirmedSubjects = brief.examSubjects.map(subject => subject.name)
+  const refineResults = await Promise.allSettled(ranges.map(stage => refineStageToWeeks({
+    stage,
+    brief,
+    confirmedSubjects,
+    weakSubjects: input.weakSubjects.filter(Boolean),
+    targetType: input.targetType,
+  })))
+  refineResults.forEach((result, index) => {
+    if (result.status === 'fulfilled' && result.value.length > 0) {
+      ranges[index].weekVariants = result.value
+    } else {
+      const reason = result.status === 'rejected' ? (result.reason as Error)?.message : '细化结果为空'
+      console.warn(`[planning] 阶段「${ranges[index].name}」细化失败,回退模板展开:`, reason)
+    }
+  })
 
   const items: GeneratedItem[] = []
   usable.forEach((stage, index) => {

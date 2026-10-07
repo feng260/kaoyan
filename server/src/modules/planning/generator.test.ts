@@ -248,3 +248,63 @@ test('AI stage alternates odd and even week queues and keeps the other days cove
   })
   assert.equal(byDay.size, 29)
 })
+
+// ---------- 周变体展开(L2 细化轮) ----------
+
+test('week variants rotate so week N uses variant N modulo the variant count', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z') // 周一开始,3 周
+  const range = {
+    name: '基础', startDate: monday, endDate: new Date('2026-10-18T00:00:00.000Z'), sortOrder: 0,
+    weekVariants: [
+      [{ weekday: 1, subject: '申论', title: '归纳概括:审题与要点定位方法笔记', minutes: 60 }],
+      [{ weekday: 1, subject: '申论', title: '归纳概括:单一题限时训练(20 分钟一题)', minutes: 60 }],
+    ],
+  } as any
+  const items = expandStage({ name: '基础', weeklySlots: [] }, range, FULL_BRIEF)
+  const titleAt = (iso: string) => items
+    .filter(item => item.planDate.toISOString().slice(0, 10) === iso)
+    .map(item => item.title)
+    .join('|')
+  // 第 1/3 周用变体 0,第 2 周用变体 1:周与周之间内容递进,不再每周重放同一标题
+  assert.equal(titleAt('2026-09-28'), '归纳概括:审题与要点定位方法笔记')
+  assert.equal(titleAt('2026-10-05'), '归纳概括:单一题限时训练(20 分钟一题)')
+  assert.equal(titleAt('2026-10-12'), '归纳概括:审题与要点定位方法笔记')
+})
+
+test('variant tasks fill the day only up to net availability', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const range = {
+    name: '基础', startDate: monday, endDate: new Date('2026-09-29T00:00:00.000Z'), sortOrder: 0,
+    weekVariants: [[
+      { weekday: 1, subject: '申论', title: '任务甲', minutes: 60 },
+      { weekday: 1, subject: '行测', title: '任务乙', minutes: 60 },
+      { weekday: 2, subject: '申论', title: '超长任务按容量截断', minutes: 300 },
+    ]],
+  } as any
+  const items = expandStage({ name: '基础', weeklySlots: [] }, range, FULL_BRIEF)
+  const at = (iso: string) => items.filter(item => item.planDate.toISOString().slice(0, 10) === iso)
+  // 周一:两条命中 60+60=120,剩余 60 分钟预算因变体耗尽而空着(模型意图,不硬补)
+  assert.deepEqual(at('2026-09-28').map(item => [item.title, item.minutes]), [['任务甲', 60], ['任务乙', 60]])
+  // 周二:300 分钟任务被日容量截成 180
+  assert.deepEqual(at('2026-09-29').map(item => item.minutes), [180])
+})
+
+test('days the variant forgot are backfilled by rotating through the variant', () => {
+  const monday = new Date('2026-09-28T00:00:00.000Z')
+  const range = {
+    name: '基础', startDate: monday, endDate: new Date('2026-10-04T00:00:00.000Z'), sortOrder: 0,
+    weekVariants: [[
+      { weekday: 1, subject: '申论', title: '唯一的周一任务', minutes: 60 },
+      { weekday: 2, subject: '行测', title: '唯一的周二任务', minutes: 60 },
+    ]],
+  } as any
+  const items = expandStage({ name: '基础', weeklySlots: [] }, range, FULL_BRIEF)
+  // 7 天每天都有安排:周一/周二各命中 1 条(60),漏排的 5 天从变体轮转兜底(每天装下整个变体 120 分钟,容量 180 内)
+  const byDay = new Map<string, number>()
+  items.forEach(item => {
+    const key = item.planDate.toISOString().slice(0, 10)
+    byDay.set(key, (byDay.get(key) ?? 0) + item.minutes)
+  })
+  assert.equal(byDay.size, 7)
+  assert.equal(items.reduce((sum, item) => sum + item.minutes, 0), 60 + 60 + 120 * 5)
+})

@@ -88,9 +88,18 @@ function buildContext(input: AiDocumentInput): string {
     lines.push('', PLAN_STRUCTURE_EXEMPLAR,
       '(写作时参照以上范例的结构理念与表达标准;但阶段划分、名称与日期一律以服务端排定的阶段为准,禁止照抄范例中的科目、书目或阶段名。)')
   }
-  lines.push('', '阶段划分(服务端已排定,严禁改动日期与阶段数量):')
+  lines.push('', '阶段划分(服务端已排定,严禁改动日期与阶段数量;主线与首周任务来自细化轮,写各科规划时对齐):')
   input.stages.forEach((stage, index) => {
     lines.push(`  第 ${index + 1} 阶段:${stage.name},${iso(stage.startDate)} ~ ${iso(stage.endDate)}(共 ${diffDays(stage.endDate, stage.startDate) + 1} 天)`)
+    if (stage.strategy) lines.push(`    主线:${stage.strategy}`)
+    if (stage.milestones?.length) lines.push(`    里程碑:${stage.milestones.join('；')}`)
+    const firstWeek = stage.weekVariants?.[0]
+    if (firstWeek?.length) {
+      const sample = firstWeek.slice(0, 6)
+        .map(task => `周${'一二三四五六日'[task.weekday - 1]} ${task.subject}·${task.title}(${task.minutes}m)`)
+        .join(' / ')
+      lines.push(`    首周任务示例:${sample}`)
+    }
   })
   return lines.join('\n')
 }

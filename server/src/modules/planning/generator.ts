@@ -40,7 +40,17 @@ export type GeneratedStage = {
   startDate: Date
   endDate: Date
   sortOrder: number
+  /** L1 策略轮产物:本阶段主线一句话(细化轮与计划书共用) */
+  strategy?: string
+  /** L1 策略轮产物:本阶段可验收里程碑 */
+  milestones?: string[]
+  /** L2 细化轮产物:本阶段的周变体任务序列;缺省时回退 weeklySlots 模板展开 */
+  weekVariants?: AiWeekVariant[]
 }
+
+/** 一个周变体 = 一周的任务序列(weekday 1-7),由细化轮产出,展开层按周轮换铺满阶段 */
+export type AiWeekTask = { weekday: number; subject: string; title: string; minutes: number }
+export type AiWeekVariant = AiWeekTask[]
 
 export type GeneratedItem = {
   stageOrder: number
