@@ -261,6 +261,8 @@ model PlanStage {
   id        Int      @id @default(autoincrement())
   planId    Int
   name      String   @db.VarChar(32)
+  strategy  String?  @db.VarChar(80)
+  milestonesJson String? @db.VarChar(400)
   startDate DateTime
   endDate   DateTime
   sortOrder Int

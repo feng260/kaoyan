@@ -91,7 +91,9 @@ internal fun renderDraftHtml(draft: PlanDto, diff: TodayItemDiff, today: LocalDa
     }
     append("<section><h2>阶段安排</h2>")
     draft.stages.sortedBy { it.sortOrder }.forEach { stage ->
-        append("<div class='stage'><span>"); text(stage.name); append("</span><small>")
+        append("<div class='stage'><div><span>"); text(stage.name)
+        stage.strategy?.let { append("<p class='meta'>"); text(it); append("</p>") }
+        append("</div><small>")
         text("${stage.startDate} — ${stage.endDate}"); append("</small></div>")
     }
     append("</section><section><h2>今日草稿清单</h2>")

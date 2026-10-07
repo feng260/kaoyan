@@ -183,7 +183,11 @@ data class PlanStageDto(
     val name: String,
     val startDate: String,
     val endDate: String,
-    val sortOrder: Int = 0
+    val sortOrder: Int = 0,
+    /** 阶段主线(多轮生成的策略轮产出);旧计划/生成失败降级时为 null */
+    val strategy: String? = null,
+    /** 阶段可验收里程碑 */
+    val milestones: List<String> = emptyList()
 )
 
 /** 计划里的一天一件事 */

@@ -98,7 +98,7 @@ export interface PublicPlan {
   stale: boolean
   /** 长文档(对标 468 天全程作战计划);生成失败时为 null,客户端回退到只显示每日清单 */
   document: PlanDocument | null
-  stages: Array<{ id: number; name: string; startDate: string; endDate: string; sortOrder: number }>
+  stages: Array<{ id: number; name: string; strategy?: string; milestones?: string[]; startDate: string; endDate: string; sortOrder: number }>
   items: PublicPlanItem[]
   progress: { totalItems: number; pendingItems: number; doneItems: number; totalMinutes: number; totalDays: number }
   createdAt: number | null
@@ -150,6 +150,17 @@ export type PlanItemStatus = (typeof PLAN_ITEM_STATUSES)[number]
 function dateOnly(value: unknown): string {
   const d = value instanceof Date ? value : new Date(Number(value))
   return Number.isNaN(d.getTime()) ? '' : dayStart(d).toISOString().slice(0, 10)
+}
+
+/** milestonesJson → 字符串数组;坏数据静默为空数组,不让一条脏 JSON 拖垮整个计划响应 */
+function parseMilestones(raw: unknown): string[] {
+  if (typeof raw !== 'string' || !raw.trim()) return []
+  try {
+    const parsed = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed.map(item => String(item)).filter(Boolean) : []
+  } catch {
+    return []
+  }
 }
 
 /** DateTime / BigInt / number 三种存放形态统一转毫秒时间戳 */
@@ -244,6 +255,8 @@ function serializePlan(row: any, stages: any[], items: any[], stale: boolean): P
     stages: stages.map(s => ({
       id: s.id,
       name: s.name,
+      strategy: s.strategy ?? undefined,
+      milestones: parseMilestones(s.milestonesJson),
       startDate: dateOnly(s.startDate),
       endDate: dateOnly(s.endDate),
       sortOrder: Number(s.sortOrder ?? 0),
@@ -1210,6 +1223,8 @@ export function createPlanningService(
             data: {
               planId: planRow.id,
               name: stage.name,
+              strategy: stage.strategy ?? null,
+              milestonesJson: stage.milestones?.length ? JSON.stringify(stage.milestones) : null,
               startDate: stage.startDate,
               endDate: stage.endDate,
               sortOrder: stage.sortOrder,

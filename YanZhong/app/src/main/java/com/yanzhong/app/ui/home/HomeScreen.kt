@@ -654,7 +654,7 @@ private fun PhaseStrip(info: StageInfo) {
                 Column {
                     Text(info.stageName, style = MaterialTheme.typography.headlineMedium)
                     Text(
-                        info.slogan,
+                        listOfNotNull(info.slogan, info.strategy).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

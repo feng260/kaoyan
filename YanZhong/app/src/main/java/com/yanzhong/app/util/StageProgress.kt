@@ -23,6 +23,8 @@ data class StageInfo(
     val daysToEnd: Long,
     /** 下一阶段名;当前已是末段时为 null */
     val nextStageName: String?,
+    /** 当前阶段主线(L1 策略轮产出,如「行测五大模块分块入门,申论先立材料意识」);无则 null */
+    val strategy: String?,
     /** 各阶段天数(顺序同计划),供比例条按占比渲染 */
     val stageDays: List<Long>,
     /** 当前阶段下标 */
@@ -61,6 +63,7 @@ fun PlanDto.stageInfo(now: Long): StageInfo? {
         totalDays = stageTotal,
         daysToEnd = ChronoUnit.DAYS.between(today, end).coerceAtLeast(0),
         nextStageName = sorted.getOrNull(index + 1)?.name,
+        strategy = sorted[index].strategy,
         stageDays = valid.map { (s, e) -> ChronoUnit.DAYS.between(s, e) + 1 },
         currentIndex = index
     )
