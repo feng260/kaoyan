@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -33,6 +34,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -105,21 +107,30 @@ fun MetricTile(
     }
 }
 
-/** 行内小胶囊按钮：32dp 高，primaryContainer 底；只用于任务行“开始” */
+/** 行内小胶囊按钮：视觉 32dp、触达 48dp，primaryContainer 底；只用于任务行“开始” */
 @Composable
 fun PillButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(999.dp),
-        color = MaterialTheme.colorScheme.primaryContainer,
-        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-        modifier = modifier.height(32.dp)
+    val shape = RoundedCornerShape(999.dp)
+    Box(
+        modifier = modifier
+            .heightIn(min = 48.dp)
+            .widthIn(min = 48.dp)
+            .clip(shape)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
     ) {
-        Box(
-            Modifier.fillMaxHeight().padding(horizontal = 12.dp),
-            contentAlignment = Alignment.Center
+        Surface(
+            shape = shape,
+            color = MaterialTheme.colorScheme.primaryContainer,
+            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            modifier = Modifier.height(32.dp)
         ) {
-            Text(text, style = MaterialTheme.typography.labelMedium)
+            Box(
+                Modifier.fillMaxHeight().padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(text, style = MaterialTheme.typography.labelMedium)
+            }
         }
     }
 }
@@ -272,22 +283,21 @@ fun SecondaryButton(
     icon: ImageVector? = null
 ) {
     val color = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
+    val borderColor = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outlineVariant
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
         shape = MaterialTheme.shapes.medium,
-        border = BorderStroke(
-            1.dp,
-            if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.outlineVariant
-        ),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = color),
+        border = BorderStroke(1.dp, if (enabled) borderColor else borderColor.copy(alpha = 0.38f)),
         contentPadding = PaddingValues(horizontal = 20.dp),
         modifier = modifier.fillMaxWidth().heightIn(min = 48.dp)
     ) {
         if (icon != null) {
-            Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(18.dp))
+            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
         }
-        Text(text, style = MaterialTheme.typography.labelLarge, color = color)
+        Text(text, style = MaterialTheme.typography.labelLarge)
     }
 }
 
@@ -303,20 +313,21 @@ fun TextAction(
     TextButton(
         onClick = onClick,
         enabled = enabled,
+        colors = ButtonDefaults.textButtonColors(
+            contentColor = if (danger) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+        ),
         contentPadding = PaddingValues(horizontal = 8.dp),
         modifier = modifier.heightIn(min = 48.dp)
     ) {
-        val color = if (danger) MaterialTheme.colorScheme.error else Color.Unspecified
         if (icon != null) {
             Icon(
                 icon,
                 contentDescription = null,
-                tint = if (danger) color else LocalContentColor.current,
                 modifier = Modifier.size(16.dp)
             )
             Spacer(Modifier.width(6.dp))
         }
-        Text(text, style = MaterialTheme.typography.labelLarge, color = color)
+        Text(text, style = MaterialTheme.typography.labelLarge)
     }
 }
 
@@ -369,7 +380,7 @@ fun InfoAction(
     tint: Color = MaterialTheme.colorScheme.onSurfaceVariant
 ) {
     var open by remember { mutableStateOf(false) }
-    IconButton(onClick = { open = true }, modifier = Modifier.size(40.dp)) {
+    IconButton(onClick = { open = true }) {
         Icon(
             AppIcons.Info,
             contentDescription = title,
