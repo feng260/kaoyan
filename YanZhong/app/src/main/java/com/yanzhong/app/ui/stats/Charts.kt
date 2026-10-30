@@ -34,10 +34,12 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.EmptyState
+import com.yanzhong.app.ui.theme.ProgressLine
 import com.yanzhong.app.data.db.DayDuration
 import com.yanzhong.app.data.db.HourDuration
 import com.yanzhong.app.data.db.SubjectDuration
@@ -108,7 +110,7 @@ fun SubjectRingChart(
             }
         }
         Spacer(Modifier.width(20.dp))
-        Column {
+        Column(Modifier.weight(1f)) {
             if (entries.isEmpty()) {
                 Text(
                     "暂无数据,先完成一个番茄吧",
@@ -127,11 +129,23 @@ fun SubjectRingChart(
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
-                            "$name  $pct% · ${TimeUtils.formatHours(minutes)}",
-                            style = MaterialTheme.typography.bodyMedium
+                            name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "$pct% · ${TimeUtils.formatHours(minutes)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
                         )
                     }
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(4.dp))
+                    ProgressLine(progress = pct / 100f, color = color, height = 4.dp)
+                    Spacer(Modifier.height(10.dp))
                 }
             }
         }
@@ -155,7 +169,8 @@ fun TrendLineChart(
             EmptyState(
                 icon = AppIcons.TrendingUp,
                 title = "暂无专注数据",
-                hint = "完成第一个番茄后,这里会出现近 14 天趋势"
+                hint = "完成第一个番茄后,这里会出现近 14 天趋势",
+                compact = true
             )
             return@Column
         }
@@ -290,7 +305,8 @@ fun HourlyBarChart(
             EmptyState(
                 icon = AppIcons.Timer,
                 title = "暂无时段数据",
-                hint = "完成后可以看到你的黄金专注时段"
+                hint = "完成后可以看到你的黄金专注时段",
+                compact = true
             )
             return@Column
         }
@@ -375,7 +391,8 @@ fun HeatmapChart(days: List<DayDuration>, modifier: Modifier = Modifier) {
         EmptyState(
             icon = AppIcons.Flame,
             title = "暂无打卡数据",
-            hint = "完成番茄后,这里会出现每日专注热力"
+            hint = "完成番茄后,这里会出现每日专注热力",
+            compact = true
         )
         return
     }
@@ -483,7 +500,8 @@ fun WeekdayBarChart(stats: List<WeekdayStat>, modifier: Modifier = Modifier) {
         EmptyState(
             icon = AppIcons.Activity,
             title = "暂无周几数据",
-            hint = "积累一段时间后,可以看到一周里哪天最能学"
+            hint = "积累一段时间后,可以看到一周里哪天最能学",
+            compact = true
         )
         return
     }
