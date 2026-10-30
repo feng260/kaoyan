@@ -1,33 +1,32 @@
 package com.yanzhong.app.ui.auth
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -41,16 +40,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
+import com.yanzhong.app.ui.theme.BrandGradient
+import com.yanzhong.app.ui.theme.PrimaryButton
+import com.yanzhong.app.ui.theme.SegmentedChips
 import com.yanzhong.app.ui.theme.SuccessGreen
 
 /** 未登录时的账号入口。登录和注册共用同一页面，避免用户找不到注册入口。 */
@@ -65,163 +66,144 @@ fun LoginScreen() {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(colors.primaryContainer.copy(alpha = 0.72f), colors.background, colors.background)
-                )
-            )
+            .background(Brush.verticalGradient(BrandGradient))
             .imePadding()
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 28.dp),
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .padding(horizontal = 20.dp, vertical = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Column(modifier = Modifier.fillMaxWidth().widthIn(max = 440.dp)) {
                 BrandHeader(registerMode = state.registerMode)
-                Spacer(Modifier.height(28.dp))
+                Spacer(Modifier.height(24.dp))
 
-                Surface(
-                    shape = MaterialTheme.shapes.large,
-                    color = colors.surface,
-                    tonalElevation = 2.dp,
-                    shadowElevation = 4.dp,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(Modifier.padding(20.dp)) {
-                        AuthModeSwitch(
-                            registerMode = state.registerMode,
-                            onLogin = { vm.switchMode(false) },
-                            onRegister = { vm.switchMode(true) }
-                        )
-                        Spacer(Modifier.height(24.dp))
+                AppCard(contentPadding = PaddingValues(20.dp)) {
+                    SegmentedChips(
+                        options = listOf("登录", "注册"),
+                        selectedIndex = if (state.registerMode) 1 else 0,
+                        onSelect = { vm.switchMode(it == 1) }
+                    )
+                    Spacer(Modifier.height(20.dp))
 
-                        Text(
-                            if (state.registerMode) "创建你的账号" else "欢迎回来",
-                            style = MaterialTheme.typography.headlineLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(Modifier.height(5.dp))
-                        Text(
-                            if (state.registerMode) "注册后可在多台设备同步学习进度"
-                            else "登录后继续今天的备考计划",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = colors.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(22.dp))
+                    Text(
+                        if (state.registerMode) "创建你的账号" else "欢迎回来",
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        if (state.registerMode) "注册后可在多台设备同步学习进度"
+                        else "登录后继续今天的备考计划",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(18.dp))
 
-                        AuthTextField(
-                            value = state.username,
-                            onValueChange = { value -> vm.update { it.copy(username = value) } },
-                            label = "用户名",
-                            placeholder = "3-32 位，中英文、数字或下划线",
-                            icon = AppIcons.TabMine,
-                            imeAction = ImeAction.Next
-                        )
-                        Spacer(Modifier.height(14.dp))
+                    AuthTextField(
+                        value = state.username,
+                        onValueChange = { value -> vm.update { it.copy(username = value) } },
+                        label = "用户名",
+                        placeholder = "3-32 位，中英文、数字或下划线",
+                        icon = AppIcons.TabMine,
+                        imeAction = ImeAction.Next
+                    )
+                    Spacer(Modifier.height(12.dp))
 
-                        var passwordVisible by remember { mutableStateOf(false) }
-                        AuthTextField(
-                            value = state.password,
-                            onValueChange = { value -> vm.update { it.copy(password = value) } },
-                            label = "密码",
-                            placeholder = if (state.registerMode) "至少 8 位" else "请输入密码",
-                            icon = AppIcons.Key,
-                            password = !passwordVisible,
-                            trailing = {
-                                IconButton(onClick = { passwordVisible = !passwordVisible }) {
-                                    Icon(
-                                        if (passwordVisible) AppIcons.EyeOff else AppIcons.Eye,
-                                        contentDescription = if (passwordVisible) "隐藏密码" else "显示密码"
-                                    )
-                                }
-                            },
-                            imeAction = if (state.registerMode) ImeAction.Next else ImeAction.Done,
-                            onDone = { if (!state.registerMode) vm.submit() }
-                        )
-
-                        if (state.registerMode) {
-                            Spacer(Modifier.height(14.dp))
-                            AuthTextField(
-                                value = state.confirm,
-                                onValueChange = { value -> vm.update { it.copy(confirm = value) } },
-                                label = "确认密码",
-                                placeholder = "再次输入密码",
-                                icon = AppIcons.ShieldCheck,
-                                password = true,
-                                imeAction = ImeAction.Next
-                            )
-                            Spacer(Modifier.height(14.dp))
-                            AuthTextField(
-                                value = state.email,
-                                onValueChange = { value -> vm.update { it.copy(email = value) } },
-                                label = "邮箱（选填）",
-                                placeholder = "用于找回密码",
-                                icon = AppIcons.TabMine,
-                                keyboardType = KeyboardType.Email,
-                                imeAction = ImeAction.Done,
-                                onDone = vm::submit
-                            )
-                        }
-
-                        if (state.message.isNotEmpty()) {
-                            Spacer(Modifier.height(16.dp))
-                            StatusMessage(state.message, state.messageIsError)
-                        }
-
-                        Spacer(Modifier.height(22.dp))
-                        Button(
-                            onClick = vm::submit,
-                            enabled = !state.busy,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
-                            modifier = Modifier.fillMaxWidth().height(52.dp)
-                        ) {
-                            if (state.busy) {
-                                CircularProgressIndicator(
-                                    color = colors.onPrimary,
-                                    strokeWidth = 2.dp,
-                                    modifier = Modifier.size(21.dp)
-                                )
-                            } else {
-                                Text(
-                                    if (state.registerMode) "创建账号" else "登录并继续学习",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontWeight = FontWeight.SemiBold
+                    var passwordVisible by remember { mutableStateOf(false) }
+                    AuthTextField(
+                        value = state.password,
+                        onValueChange = { value -> vm.update { it.copy(password = value) } },
+                        label = "密码",
+                        placeholder = if (state.registerMode) "至少 8 位" else "请输入密码",
+                        icon = AppIcons.Key,
+                        password = !passwordVisible,
+                        trailing = {
+                            IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                                Icon(
+                                    if (passwordVisible) AppIcons.EyeOff else AppIcons.Eye,
+                                    contentDescription = if (passwordVisible) "隐藏密码" else "显示密码"
                                 )
                             }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(18.dp))
-                if (state.registerMode) {
-                    // 协议放在注册这一侧:登录的人早就同意了,不必每次再问一遍
-                    com.yanzhong.app.ui.legal.ConsentRow(
-                        checked = state.consentChecked,
-                        onCheckedChange = { checked ->
-                            vm.update { it.copy(consentChecked = checked, message = "", messageIsError = false) }
                         },
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+                        imeAction = if (state.registerMode) ImeAction.Next else ImeAction.Done,
+                        onDone = { if (!state.registerMode) vm.submit() }
                     )
-                } else {
-                    Text(
-                        "没有账号？点击上方“注册”即可创建",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
+
+                    if (state.registerMode) {
+                        Spacer(Modifier.height(12.dp))
+                        AuthTextField(
+                            value = state.confirm,
+                            onValueChange = { value -> vm.update { it.copy(confirm = value) } },
+                            label = "确认密码",
+                            placeholder = "再次输入密码",
+                            icon = AppIcons.ShieldCheck,
+                            password = true,
+                            imeAction = ImeAction.Next
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        AuthTextField(
+                            value = state.email,
+                            onValueChange = { value -> vm.update { it.copy(email = value) } },
+                            label = "邮箱（选填）",
+                            placeholder = "用于找回密码",
+                            icon = AppIcons.TabMine,
+                            keyboardType = KeyboardType.Email,
+                            imeAction = ImeAction.Done,
+                            onDone = vm::submit
+                        )
+                    }
+
+                    if (state.registerMode) {
+                        Spacer(Modifier.height(12.dp))
+                        // 协议放在注册这一侧:登录的人早就同意了,不必每次再问一遍
+                        com.yanzhong.app.ui.legal.ConsentRow(
+                            checked = state.consentChecked,
+                            onCheckedChange = { checked ->
+                                vm.update { it.copy(consentChecked = checked, message = "", messageIsError = false) }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+
+                    if (state.message.isNotEmpty()) {
+                        Spacer(Modifier.height(12.dp))
+                        StatusMessage(state.message, state.messageIsError)
+                    }
+
+                    Spacer(Modifier.height(20.dp))
+                    PrimaryButton(
+                        text = if (state.registerMode) "创建账号" else "登录并继续学习",
+                        onClick = vm::submit,
+                        enabled = !state.busy,
+                        loading = state.busy
+                    )
+
+                    if (!state.registerMode) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "没有账号？点击上方“注册”即可创建",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    com.yanzhong.app.ui.legal.PolicyLinksRow(
+                        prefix = "政策原文在",
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
-                com.yanzhong.app.ui.legal.PolicyLinksRow(
-                    prefix = "政策原文在",
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp)
-                )
+
                 // 服务器地址是调试入口(F7):普通考生误改后无法登录且难以自行恢复,
                 // 只在 Debug 构建暴露;线上排障可走长按标题唤出。
                 if (com.yanzhong.app.BuildConfig.DEBUG) {
                     TextButton(
                         onClick = { showServerDialog = true },
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
                         modifier = Modifier.align(Alignment.Start)
                     ) {
                         Text("服务器地址（可选）")
@@ -281,69 +263,37 @@ fun LoginScreen() {
     }
 }
 
+/** 品牌头:白色 Logo、名称与一句副标题,压在全屏渐变上 */
 @Composable
 private fun BrandHeader(registerMode: Boolean) {
-    val colors = MaterialTheme.colorScheme
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
                 .size(56.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(colors.primary),
+                .clip(MaterialTheme.shapes.medium)
+                .background(Color.White.copy(alpha = 0.16f)),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 AppIcons.GraduationCap,
                 contentDescription = null,
-                tint = colors.onPrimary,
+                tint = Color.White,
                 modifier = Modifier.size(30.dp)
             )
         }
         Spacer(Modifier.size(14.dp))
         Column {
-            Text("研钟", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+            Text(
+                "研钟",
+                style = MaterialTheme.typography.headlineSmall,
+                color = Color.White
+            )
             Text(
                 if (registerMode) "从这里开始你的备考节奏" else "让每一段专注都有迹可循",
                 style = MaterialTheme.typography.bodyMedium,
-                color = colors.onSurfaceVariant
+                color = Color.White.copy(alpha = 0.85f)
             )
         }
-    }
-}
-
-@Composable
-private fun AuthModeSwitch(registerMode: Boolean, onLogin: () -> Unit, onRegister: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = colors.surfaceVariant.copy(alpha = 0.7f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(Modifier.padding(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            ModeButton("登录", !registerMode, onLogin, Modifier.weight(1f))
-            ModeButton("注册", registerMode, onRegister, Modifier.weight(1f))
-        }
-    }
-}
-
-@Composable
-private fun ModeButton(text: String, selected: Boolean, onClick: () -> Unit, modifier: Modifier) {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(8.dp),
-        color = if (selected) colors.surface else Color.Transparent,
-        shadowElevation = if (selected) 1.dp else 0.dp,
-        modifier = modifier
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) colors.primary else colors.onSurfaceVariant,
-            modifier = Modifier.padding(vertical = 10.dp),
-            textAlign = TextAlign.Center
-        )
     }
 }
 
@@ -381,27 +331,22 @@ private fun AuthTextField(
     )
 }
 
+/** 校验/服务器提示:输入组件下方一行 12sp 文案 */
 @Composable
 private fun StatusMessage(message: String, isError: Boolean) {
-    val colors = MaterialTheme.colorScheme
-    val contentColor = if (isError) colors.error else SuccessGreen
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = if (isError) colors.errorContainer else SuccessGreen.copy(alpha = 0.12f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                if (isError) AppIcons.Info else AppIcons.CheckCircle,
-                contentDescription = null,
-                tint = contentColor,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.size(8.dp))
-            Text(message, style = MaterialTheme.typography.bodyMedium, color = contentColor)
-        }
+    val contentColor = if (isError) MaterialTheme.colorScheme.error else SuccessGreen
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            if (isError) AppIcons.Info else AppIcons.CheckCircle,
+            contentDescription = null,
+            tint = contentColor,
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.size(6.dp))
+        Text(
+            message,
+            style = MaterialTheme.typography.bodySmall,
+            color = contentColor
+        )
     }
 }
