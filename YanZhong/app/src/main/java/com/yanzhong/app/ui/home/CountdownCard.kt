@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,8 +20,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -32,15 +35,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.yanzhong.app.data.db.CountdownNodeEntity
 import com.yanzhong.app.data.db.NodeType
+import com.yanzhong.app.ui.theme.AppCard
+import com.yanzhong.app.ui.theme.AppIcons
+import com.yanzhong.app.ui.theme.BrandGradient
 import com.yanzhong.app.ui.theme.CountdownAlertLevel
+import com.yanzhong.app.ui.theme.CountdownNumberStyle
+import com.yanzhong.app.ui.theme.EmptyState
+import com.yanzhong.app.ui.theme.GradientCard
+import com.yanzhong.app.ui.theme.TextAction
 import com.yanzhong.app.ui.theme.WarnAmber
 import com.yanzhong.app.ui.theme.WarnAmberContainer
 import com.yanzhong.app.ui.theme.WarnAmberContent
@@ -69,22 +76,14 @@ fun CountdownCard(
     }
 
     if (nodes.isEmpty()) {
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(20.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer)
-                .padding(24.dp)
-        ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Text("还没有倒计时节点", style = MaterialTheme.typography.headlineMedium)
-                Text(
-                    "添加一个节点,让每一天都有锚点",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                TextButton(onClick = onManageNodes) { Text("添加节点") }
-            }
+        AppCard {
+            EmptyState(
+                icon = AppIcons.Timer,
+                title = "还没有倒计时节点",
+                hint = "添加一个节点，让每一天都有锚点",
+                compact = true,
+                action = { TextAction("添加节点", onClick = onManageNodes) }
+            )
         }
         return
     }
@@ -103,33 +102,76 @@ fun CountdownCard(
         onNodeSelected(pagerState.currentPage)
     }
 
-    HorizontalPager(state = pagerState) { page ->
-        val node = nodes.getOrNull(page) ?: return@HorizontalPager
-        CountdownFace(node = node, now = now, onManageNodes = onManageNodes)
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalPager(state = pagerState) { page ->
+            val node = nodes.getOrNull(page) ?: return@HorizontalPager
+            CountdownFace(
+                node = node,
+                now = now,
+                nodeCount = nodes.size,
+                onManageNodes = onManageNodes
+            )
+        }
+        // 分页圆点:≤6 个画点,更多时退化为「3/8」计数。
+        // 圆点在卡外(页面底色)上,普通档用 primary、预警档用语义预警色,白点会与浅色背景融为一体。
+        val current = nodes.getOrNull(pagerState.currentPage)
+        val currentLevel = current?.let { alertLevelOf(TimeUtils.daysBetween(now, it.targetAt)) }
+            ?: CountdownAlertLevel.NORMAL
+        val dotColor = when (currentLevel) {
+            CountdownAlertLevel.NORMAL -> MaterialTheme.colorScheme.primary
+            CountdownAlertLevel.AMBER -> WarnAmber
+            else -> WarnRed
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 12.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (nodes.size <= 6) {
+                repeat(nodes.size) { index ->
+                    Box(
+                        Modifier
+                            .padding(horizontal = 3.dp)
+                            .size(if (index == pagerState.currentPage) 7.dp else 5.dp)
+                            .clip(CircleShape)
+                            .background(dotColor.copy(alpha = if (index == pagerState.currentPage) 0.95f else 0.45f))
+                    )
+                }
+            } else {
+                Text(
+                    "${pagerState.currentPage + 1}/${nodes.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = dotColor.copy(alpha = 0.8f)
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun CountdownFace(node: CountdownNodeEntity, now: Long, onManageNodes: () -> Unit) {
+private fun CountdownFace(
+    node: CountdownNodeEntity,
+    now: Long,
+    nodeCount: Int,
+    onManageNodes: () -> Unit
+) {
     val c = TimeUtils.countdownTo(node.targetAt, now)
     val daysLeft = TimeUtils.daysBetween(now, node.targetAt)
     val level = alertLevelOf(daysLeft)
 
-    val alertColor = when (level) {
-        CountdownAlertLevel.NORMAL -> MaterialTheme.colorScheme.primary
-        CountdownAlertLevel.AMBER -> WarnAmber
-        else -> WarnRed
-    }
-    val containerColor = when (level) {
-        CountdownAlertLevel.NORMAL -> MaterialTheme.colorScheme.primaryContainer
-        CountdownAlertLevel.AMBER -> WarnAmberContainer
-        else -> WarnRedContainer
-    }
+    val containerColor = if (level == CountdownAlertLevel.AMBER) WarnAmberContainer else WarnRedContainer
     val contentColor = when (level) {
-        CountdownAlertLevel.NORMAL -> MaterialTheme.colorScheme.onPrimaryContainer
+        CountdownAlertLevel.NORMAL -> Color.White
         CountdownAlertLevel.AMBER -> WarnAmberContent
         else -> WarnRedContent
     }
+    // 天数主数字:普通档纯白,预警档用语义预警色
+    val digitColor = when (level) {
+        CountdownAlertLevel.NORMAL -> Color.White
+        CountdownAlertLevel.AMBER -> WarnAmber
+        else -> WarnRed
+    }
+    val muted = contentColor.copy(alpha = 0.7f)
 
     // ≤3 天:数字呼吸动效(PRD 6.4)
     val breath = if (level == CountdownAlertLevel.CRITICAL) {
@@ -145,15 +187,7 @@ private fun CountdownFace(node: CountdownNodeEntity, now: Long, onManageNodes: (
         ).value
     } else 1f
 
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(
-                Brush.verticalGradient(listOf(containerColor, containerColor.copy(alpha = 0.82f)))
-            )
-            .padding(horizontal = 20.dp, vertical = 18.dp)
-    ) {
+    val face: @Composable ColumnScope.() -> Unit = {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -161,20 +195,20 @@ private fun CountdownFace(node: CountdownNodeEntity, now: Long, onManageNodes: (
         ) {
             Text(
                 text = node.name,
-                style = MaterialTheme.typography.headlineMedium,
+                style = MaterialTheme.typography.titleMedium,
                 color = contentColor,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
             )
             TextButton(onClick = onManageNodes) {
-                Text("管理节点 · ${nodesCountLabel(node)}", color = contentColor.copy(alpha = 0.7f))
+                Text("管理 · $nodeCount 个", style = MaterialTheme.typography.labelMedium, color = muted)
             }
         }
-        Spacer(Modifier.height(2.dp))
         Text(
             text = "${NodeType.label(node.type)} · ${TimeUtils.formatYmdHm(node.targetAt)}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = contentColor.copy(alpha = 0.7f)
+            style = MaterialTheme.typography.bodySmall,
+            color = muted
         )
         Spacer(Modifier.height(14.dp))
         Row(
@@ -183,39 +217,50 @@ private fun CountdownFace(node: CountdownNodeEntity, now: Long, onManageNodes: (
                 .scale(breath),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            TimeUnitCell(c.days, "天", alertColor, contentColor, Modifier.weight(1.1f))
-            TimeUnitCell(c.hours, "时", alertColor, contentColor, Modifier.weight(1f))
-            TimeUnitCell(c.minutes, "分", alertColor, contentColor, Modifier.weight(1f))
-            TimeUnitCell(c.seconds, "秒", alertColor, contentColor, Modifier.weight(1f))
+            TimeUnitCell(c.days, "天", digitColor, muted, Modifier.weight(1.1f))
+            TimeUnitCell(c.hours, "时", contentColor, muted, Modifier.weight(1f))
+            TimeUnitCell(c.minutes, "分", contentColor, muted, Modifier.weight(1f))
+            TimeUnitCell(c.seconds, "秒", contentColor, muted, Modifier.weight(1f))
+        }
+    }
+
+    if (level == CountdownAlertLevel.NORMAL) {
+        GradientCard(colors = BrandGradient, contentPadding = PaddingValues(horizontal = 20.dp, vertical = 18.dp)) {
+            face()
+        }
+    } else {
+        Surface(
+            shape = MaterialTheme.shapes.large,
+            color = containerColor,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Column(Modifier.padding(horizontal = 20.dp, vertical = 18.dp)) {
+                face()
+            }
         }
     }
 }
-
-private fun nodesCountLabel(node: CountdownNodeEntity) = if (node.pinned) "已置顶" else "普通"
 
 @Composable
 private fun TimeUnitCell(
     value: Long,
     unit: String,
-    alertColor: Color,
-    contentColor: Color,
+    valueColor: Color,
+    unitColor: Color,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             text = value.toString(),
-            color = if (unit == "天") alertColor else contentColor,
-            fontSize = 40.sp,
-            fontWeight = FontWeight.Bold,
-            style = MaterialTheme.typography.displayLarge.copy(
-                fontSize = 40.sp,
-                fontFeatureSettings = "tnum"
-            )
+            style = CountdownNumberStyle,
+            color = valueColor,
+            maxLines = 1,
+            overflow = TextOverflow.Clip
         )
         Text(
             text = unit,
-            style = MaterialTheme.typography.bodyMedium,
-            color = contentColor.copy(alpha = 0.6f)
+            style = MaterialTheme.typography.labelSmall,
+            color = unitColor
         )
     }
 }

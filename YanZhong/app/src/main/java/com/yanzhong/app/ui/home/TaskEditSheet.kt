@@ -1,22 +1,20 @@
 package com.yanzhong.app.ui.home
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -27,11 +25,18 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.yanzhong.app.data.db.RepeatRule
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
+import com.yanzhong.app.ui.theme.AppSheet
+import com.yanzhong.app.ui.theme.PrimaryButton
+import com.yanzhong.app.ui.theme.SegmentedChips
+import com.yanzhong.app.ui.theme.TextAction
+import com.yanzhong.app.ui.theme.ToggleChip
 import com.yanzhong.app.util.TimeUtils
 import java.time.Instant
 import java.time.ZoneId
@@ -59,166 +64,147 @@ fun TaskEditSheet(
     /** 删除二次确认:防止误触丢失任务及其专注记录 */
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp)
-        ) {
-            Text(
-                if (initial == null) "新增任务" else "编辑任务",
-                style = MaterialTheme.typography.headlineLarge
+    val save: () -> Unit = {
+        val trimmed = title.trim()
+        if (trimmed.isNotEmpty()) {
+            onSave(
+                (initial ?: TaskEntity(subjectId = subjectId, title = trimmed)).copy(
+                    subjectId = subjectId,
+                    title = trimmed,
+                    priority = priority,
+                    pomodoroEstimate = pomodoroEstimate,
+                    dueAt = dueAt,
+                    repeatRule = repeatRule,
+                    repeatDays = repeatDays,
+                    note = note
+                )
             )
-            Spacer(Modifier.padding(8.dp))
-            OutlinedTextField(
-                value = title,
-                onValueChange = { title = it },
-                label = { Text("标题") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(Modifier.padding(10.dp))
+            onDismiss()
+        }
+    }
 
-            Text("科目", style = MaterialTheme.typography.labelLarge)
+    AppSheet(
+        title = if (initial == null) "新增任务" else "编辑任务",
+        onDismiss = onDismiss
+    ) {
+        OutlinedTextField(
+            value = title,
+            onValueChange = { title = it },
+            label = { Text("标题") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Spacer(Modifier.height(14.dp))
+
+        FormLabel("科目")
+        SegmentedChips(
+            options = subjects.map { it.name },
+            selectedIndex = subjects.indexOfFirst { it.id == subjectId },
+            onSelect = { index -> subjects.getOrNull(index)?.let { subjectId = it.id } }
+        )
+        Spacer(Modifier.height(14.dp))
+
+        FormLabel("截止日期")
+        SegmentedChips(
+            options = listOf("无", "今天", "明天", "选择日期"),
+            selectedIndex = when (val due = dueAt) {
+                null -> 0
+                else -> when (TimeUtils.daysBetween(TimeUtils.now(), due)) {
+                    0L -> 1
+                    1L -> 2
+                    else -> -1
+                }
+            },
+            onSelect = { index ->
+                when (index) {
+                    0 -> dueAt = null
+                    1 -> dueAt = TimeUtils.dayStartOf() + 9 * 3600_000L
+                    2 -> dueAt = TimeUtils.dayStartOf() + 24 * 3600_000L + 9 * 3600_000L
+                    3 -> showDatePicker = true
+                }
+            }
+        )
+        Spacer(Modifier.height(14.dp))
+
+        FormLabel("优先级")
+        SegmentedChips(
+            options = listOf("高", "中", "低"),
+            selectedIndex = priority,
+            onSelect = { priority = it }
+        )
+        Spacer(Modifier.height(14.dp))
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("预计番茄数", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+            TextAction(
+                text = "−",
+                onClick = { if (pomodoroEstimate > 1) pomodoroEstimate-- },
+                enabled = pomodoroEstimate > 1
+            )
+            Text(
+                "$pomodoroEstimate",
+                style = MaterialTheme.typography.titleMedium,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.widthIn(min = 36.dp)
+            )
+            TextAction(
+                text = "+",
+                onClick = { if (pomodoroEstimate < 20) pomodoroEstimate++ },
+                enabled = pomodoroEstimate < 20
+            )
+        }
+        Spacer(Modifier.height(14.dp))
+
+        FormLabel("重复")
+        SegmentedChips(
+            options = listOf("不重复", "每日", "每周"),
+            selectedIndex = repeatRule,
+            onSelect = { repeatRule = it }
+        )
+        if (repeatRule == RepeatRule.WEEKLY) {
+            Spacer(Modifier.height(10.dp))
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.horizontalScroll(rememberScrollState())
+                Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                subjects.forEach { subject ->
-                    FilterChip(
-                        selected = subjectId == subject.id,
-                        onClick = { subjectId = subject.id },
-                        label = { Text(subject.name) }
+                listOf("一", "二", "三", "四", "五", "六", "日").forEachIndexed { i, day ->
+                    val bit = 1 shl i
+                    ToggleChip(
+                        text = day,
+                        selected = (repeatDays and bit) != 0,
+                        onClick = {
+                            repeatDays = if ((repeatDays and bit) != 0) repeatDays and bit.inv()
+                            else repeatDays or bit
+                        }
                     )
                 }
             }
-            Spacer(Modifier.padding(10.dp))
+        }
+        Spacer(Modifier.height(14.dp))
 
-            Text("截止日期", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = dueAt == null,
-                    onClick = { dueAt = null },
-                    label = { Text("无") }
-                )
-                FilterChip(
-                    selected = dueAt != null && TimeUtils.daysBetween(
-                        TimeUtils.now(), dueAt ?: 0
-                    ) == 0L,
-                    onClick = { dueAt = TimeUtils.dayStartOf() + 9 * 3600_000L },
-                    label = { Text("今天") }
-                )
-                FilterChip(
-                    selected = dueAt != null && TimeUtils.daysBetween(
-                        TimeUtils.now(), dueAt ?: 0
-                    ) == 1L,
-                    onClick = { dueAt = TimeUtils.dayStartOf() + 24 * 3600_000L + 9 * 3600_000L },
-                    label = { Text("明天") }
-                )
-                FilterChip(
-                    selected = false,
-                    onClick = { showDatePicker = true },
-                    label = { Text("选择日期") }
-                )
-            }
-            Spacer(Modifier.padding(10.dp))
+        OutlinedTextField(
+            value = note,
+            onValueChange = { note = it },
+            label = { Text("备注（可选）") },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 1
+        )
+        Spacer(Modifier.height(16.dp))
 
-            Text("优先级", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = priority == 0, onClick = { priority = 0 }, label = { Text("高") })
-                FilterChip(selected = priority == 1, onClick = { priority = 1 }, label = { Text("中") })
-                FilterChip(selected = priority == 2, onClick = { priority = 2 }, label = { Text("低") })
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (initial != null && onDelete != null) {
+                TextAction(text = "删除", onClick = { showDeleteConfirm = true }, danger = true)
             }
-            Spacer(Modifier.padding(10.dp))
-
-            Text("预计番茄数:$pomodoroEstimate", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = { if (pomodoroEstimate > 1) pomodoroEstimate-- }) { Text("− 1") }
-                TextButton(onClick = { if (pomodoroEstimate < 20) pomodoroEstimate++ }) { Text("+ 1") }
-            }
-            Spacer(Modifier.padding(6.dp))
-
-            Text("重复", style = MaterialTheme.typography.labelLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(
-                    selected = repeatRule == RepeatRule.NONE,
-                    onClick = { repeatRule = RepeatRule.NONE },
-                    label = { Text("不重复") }
-                )
-                FilterChip(
-                    selected = repeatRule == RepeatRule.DAILY,
-                    onClick = { repeatRule = RepeatRule.DAILY },
-                    label = { Text("每日") }
-                )
-                FilterChip(
-                    selected = repeatRule == RepeatRule.WEEKLY,
-                    onClick = { repeatRule = RepeatRule.WEEKLY },
-                    label = { Text("每周") }
-                )
-            }
-            if (repeatRule == RepeatRule.WEEKLY) {
-                Spacer(Modifier.padding(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("一", "二", "三", "四", "五", "六", "日").forEachIndexed { i, day ->
-                        val bit = 1 shl i
-                        FilterChip(
-                            selected = (repeatDays and bit) != 0,
-                            onClick = {
-                                repeatDays = if ((repeatDays and bit) != 0) repeatDays and bit.inv()
-                                else repeatDays or bit
-                            },
-                            label = { Text(day) }
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.padding(10.dp))
-
-            OutlinedTextField(
-                value = note,
-                onValueChange = { note = it },
-                label = { Text("备注(可选)") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 1
+            PrimaryButton(
+                text = "保存",
+                onClick = save,
+                enabled = title.isNotBlank(),
+                modifier = Modifier.weight(1f)
             )
-            Spacer(Modifier.padding(14.dp))
-
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if (initial != null && onDelete != null) {
-                    TextButton(
-                        onClick = { showDeleteConfirm = true },
-                        colors = androidx.compose.material3.ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
-                    ) { Text("删除") }
-                }
-                Button(
-                    onClick = {
-                        val trimmed = title.trim()
-                        if (trimmed.isEmpty()) return@Button
-                        onSave(
-                            (initial ?: TaskEntity(subjectId = subjectId, title = trimmed)).copy(
-                                subjectId = subjectId,
-                                title = trimmed,
-                                priority = priority,
-                                pomodoroEstimate = pomodoroEstimate,
-                                dueAt = dueAt,
-                                repeatRule = repeatRule,
-                                repeatDays = repeatDays,
-                                note = note
-                            )
-                        )
-                        onDismiss()
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = title.isNotBlank()
-                ) { Text("保存") }
-            }
         }
     }
 
@@ -247,9 +233,9 @@ fun TaskEditSheet(
     if (showDeleteConfirm && initial != null && onDelete != null) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirm = false },
-            title = { Text("删除这个任务?") },
+            title = { Text("删除这个任务？") },
             text = {
-                Text("「${initial.title}」及其专注记录将被永久删除,删除后无法恢复。")
+                Text("「${initial.title}」及其专注记录将被永久删除，删除后无法恢复。")
             },
             confirmButton = {
                 TextButton(
@@ -265,4 +251,15 @@ fun TaskEditSheet(
             }
         )
     }
+}
+
+/** 弹层内小节标签:表单区块不再用 16sp 标题,避免多级标题压垮表单 */
+@Composable
+private fun FormLabel(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(bottom = 6.dp)
+    )
 }

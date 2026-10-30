@@ -6,19 +6,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,14 +37,30 @@ import androidx.compose.ui.unit.dp
 import com.yanzhong.app.data.db.CountdownNodeEntity
 import com.yanzhong.app.data.db.NodeType
 import com.yanzhong.app.ui.theme.AppIcons
+import com.yanzhong.app.ui.theme.AppSheet
+import com.yanzhong.app.ui.theme.EmptyState
+import com.yanzhong.app.ui.theme.ListRow
+import com.yanzhong.app.ui.theme.RowDivider
+import com.yanzhong.app.ui.theme.RowGroup
+import com.yanzhong.app.ui.theme.SecondaryButton
+import com.yanzhong.app.ui.theme.SegmentedChips
 import com.yanzhong.app.util.TimeUtils
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 
+/** 节点类型选项:类型值 ↔ 弹层标签一一对应,初试 / 模考 / 报名等常用项排在前面 */
+private val NODE_TYPE_OPTIONS = listOf(
+    NodeType.EXAM to "初试",
+    NodeType.MOCK to "模考",
+    NodeType.ENROLL to "报名",
+    NodeType.SUBJECT_EXAM to "单科",
+    NodeType.RETEST to "复试",
+    NodeType.CUSTOM to "自定义"
+)
+
 /** 倒计时节点管理:增删 / 编辑 / 置顶切换(PRD 3.1) */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NodeManageSheet(
     nodes: List<CountdownNodeEntity>,
@@ -66,48 +79,57 @@ fun NodeManageSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp)
-        ) {
-            Text("倒计时节点", style = MaterialTheme.typography.headlineLarge)
-            Text(
-                "置顶节点展示在首页,左右滑可临时切换",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+    AppSheet(title = "倒计时节点", onDismiss = onDismiss) {
+        Text(
+            "置顶节点展示在首页，左右滑可临时切换",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+        if (nodes.isEmpty()) {
+            EmptyState(
+                icon = AppIcons.Timer,
+                title = "还没有倒计时节点",
+                hint = "添加初试、模考或报名节点，让每一天都有锚点",
+                compact = true
             )
-            Spacer(Modifier.padding(10.dp))
-            nodes.forEach { node ->
-                NodeRow(
-                    node = node,
-                    onPin = { onPin(node) },
-                    onEdit = { editing = node; showEditor = true },
-                    onDelete = { deleteCandidate = node }
-                )
-                Spacer(Modifier.padding(6.dp))
+        } else {
+            RowGroup {
+                nodes.forEachIndexed { index, node ->
+                    if (index > 0) RowDivider()
+                    NodeRow(
+                        node = node,
+                        onPin = { onPin(node) },
+                        onEdit = { editing = node; showEditor = true },
+                        onDelete = { deleteCandidate = node }
+                    )
+                }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = { editing = null; showEditor = true },
-                    modifier = Modifier.weight(1f)
-                ) { Text("+ 添加节点") }
-                Button(
-                    onClick = { showBatch = true },
-                    modifier = Modifier.weight(1f)
-                ) { Text("批量添加") }
-            }
+        }
+        Spacer(Modifier.height(16.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SecondaryButton(
+                text = "添加节点",
+                onClick = { editing = null; showEditor = true },
+                modifier = Modifier.weight(1f),
+                icon = AppIcons.Add
+            )
+            SecondaryButton(
+                text = "批量添加",
+                onClick = { showBatch = true },
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 
     deleteCandidate?.let { node ->
         AlertDialog(
             onDismissRequest = { deleteCandidate = null },
-            title = { Text("删除节点「${node.name}」?") },
-            text = { Text("该倒计时节点将被永久删除,删除后无法恢复。") },
+            title = { Text("删除节点「${node.name}」？") },
+            text = { Text("该倒计时节点将被永久删除，删除后无法恢复。") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -164,46 +186,31 @@ private fun NodeRow(
         daysLeft == 0L -> "今天"
         else -> "剩 $daysLeft 天"
     }
-    Surface(
-        shape = MaterialTheme.shapes.medium,
-        tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(node.name, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "${NodeType.label(node.type)} · ${TimeUtils.formatYmdHm(node.targetAt)} · $daysLabel",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            IconButton(onClick = onPin) {
+    ListRow(
+        title = node.name,
+        subtitle = "${NodeType.label(node.type)} · ${TimeUtils.formatYmdHm(node.targetAt)} · $daysLabel",
+        onClick = onEdit,
+        showChevron = false,
+        trailing = {
+            IconButton(onClick = onPin, modifier = Modifier.size(40.dp)) {
                 Icon(
                     AppIcons.Pin,
                     contentDescription = if (node.pinned) "取消置顶" else "置顶",
                     tint = if (node.pinned) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.size(18.dp)
                 )
             }
-            IconButton(onClick = onEdit) {
-                Icon(
-                    AppIcons.Edit,
-                    contentDescription = "编辑节点"
-                )
-            }
-            IconButton(onClick = onDelete) {
+            IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
                 Icon(
                     AppIcons.Delete,
                     contentDescription = "删除节点",
-                    tint = MaterialTheme.colorScheme.error
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
-    }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -250,14 +257,14 @@ private fun NodeEditorDialog(
         )
         androidx.compose.ui.window.Dialog(onDismissRequest = { showTime = false }) {
             Surface(
-                shape = MaterialTheme.shapes.extraLarge,
-                tonalElevation = 6.dp
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surface
             ) {
                 Column(Modifier.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("节点时间", style = MaterialTheme.typography.headlineMedium)
-                    Spacer(Modifier.padding(10.dp))
+                    Text("节点时间", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(10.dp))
                     TimePicker(state = timeState)
-                    Spacer(Modifier.padding(10.dp))
+                    Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         TextButton(onClick = { showTime = false }) { Text("取消") }
                         TextButton(onClick = {
@@ -286,49 +293,21 @@ private fun NodeEditorDialog(
                     label = { Text("节点名称") },
                     singleLine = true
                 )
-                Spacer(Modifier.padding(8.dp))
+                Spacer(Modifier.height(8.dp))
                 Text("类型", style = MaterialTheme.typography.labelLarge)
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(
-                        selected = type == NodeType.EXAM,
-                        onClick = { type = NodeType.EXAM },
-                        label = { Text("初试") }
-                    )
-                    FilterChip(
-                        selected = type == NodeType.MOCK,
-                        onClick = { type = NodeType.MOCK },
-                        label = { Text("模考") }
-                    )
-                    FilterChip(
-                        selected = type == NodeType.ENROLL,
-                        onClick = { type = NodeType.ENROLL },
-                        label = { Text("报名") }
-                    )
-                }
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    FilterChip(
-                        selected = type == NodeType.SUBJECT_EXAM,
-                        onClick = { type = NodeType.SUBJECT_EXAM },
-                        label = { Text("单科") }
-                    )
-                    FilterChip(
-                        selected = type == NodeType.RETEST,
-                        onClick = { type = NodeType.RETEST },
-                        label = { Text("复试") }
-                    )
-                    FilterChip(
-                        selected = type == NodeType.CUSTOM,
-                        onClick = { type = NodeType.CUSTOM },
-                        label = { Text("自定义") }
-                    )
-                }
-                Spacer(Modifier.padding(8.dp))
+                Spacer(Modifier.height(6.dp))
+                SegmentedChips(
+                    options = NODE_TYPE_OPTIONS.map { it.second },
+                    selectedIndex = NODE_TYPE_OPTIONS.indexOfFirst { it.first == type },
+                    onSelect = { type = NODE_TYPE_OPTIONS[it].first }
+                )
+                Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(onClick = { showDate = true }) {
-                        Text("日期:${TimeUtils.formatMonthDay(targetAt)}")
+                        Text("日期：${TimeUtils.formatMonthDay(targetAt)}")
                     }
                     TextButton(onClick = { showTime = true }) {
-                        Text("时间:${TimeUtils.formatHm(targetAt)}")
+                        Text("时间：${TimeUtils.formatHm(targetAt)}")
                     }
                 }
             }
@@ -368,16 +347,16 @@ private fun BatchNodeDialog(
         text = {
             Column {
                 Text(
-                    "一行一个节点,格式「名称 日期」;日期可写 2026-12-18 或 12-18(默认今年),缺省为 30 天后 08:00,类型默认自定义。",
+                    "一行一个节点，格式「名称 日期」；日期可写 2026-12-18 或 12-18（默认今年），缺省为 30 天后 08:00，类型默认自定义。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.padding(8.dp))
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
                     modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("例如:\n数学三模 2026-12-06\n报名确认 10-25\n复试备考") },
+                    placeholder = { Text("例如：\n数学三模 2026-12-06\n报名确认 10-25\n复试备考") },
                     minLines = 5,
                     maxLines = 9
                 )

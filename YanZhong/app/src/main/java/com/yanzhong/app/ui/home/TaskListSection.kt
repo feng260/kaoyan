@@ -51,6 +51,7 @@ import com.yanzhong.app.ui.theme.PillButton
 import com.yanzhong.app.ui.theme.ProgressLine
 import com.yanzhong.app.ui.theme.SectionHeader
 import com.yanzhong.app.ui.theme.SuccessGreen
+import com.yanzhong.app.ui.theme.TextAction
 import com.yanzhong.app.ui.theme.WarnRed
 import com.yanzhong.app.util.TimeUtils
 
@@ -66,7 +67,9 @@ fun LazyListScope.taskListSection(
     onPostpone: (TaskEntity) -> Unit,
     onPostponeRequest: (TaskEntity) -> Unit,
     onStartFocus: (TaskEntity) -> Unit,
-    onTaskClick: (TaskEntity) -> Unit
+    onTaskClick: (TaskEntity) -> Unit,
+    onAddTask: () -> Unit,
+    onBatchImport: () -> Unit
 ) {
     item(key = "task-section-header") {
         Column {
@@ -79,7 +82,8 @@ fun LazyListScope.taskListSection(
                     icon = AppIcons.SubjectDefault,
                     title = "今天还没有任务",
                     hint = "添加一个任务，或直接开始自由专注",
-                    compact = true
+                    compact = true,
+                    action = { TextAction("添加任务", onClick = onAddTask) }
                 )
             }
         }
@@ -105,6 +109,16 @@ fun LazyListScope.taskListSection(
     if (doneTasks.isNotEmpty()) {
         item(key = "task-done-section") {
             DoneSection(doneTasks = doneTasks, subjects = subjects, onTaskClick = onTaskClick)
+        }
+    }
+
+    // 列表末尾一行批量录入入口:替代原 QuickStartBar 里的按钮
+    item(key = "task-list-footer") {
+        Row(
+            Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            TextAction(text = "批量录入", icon = AppIcons.Add, onClick = onBatchImport)
         }
     }
 }
