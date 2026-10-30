@@ -6,7 +6,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,64 +19,73 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yanzhong.app.data.prefs.AppSettings
-import com.yanzhong.app.data.prefs.PomodoroPlan
 import com.yanzhong.app.data.remote.PeerState
 import com.yanzhong.app.timer.Phase
 import com.yanzhong.app.timer.TimerMode
+import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
+import com.yanzhong.app.ui.theme.AppSheet
 import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
+import com.yanzhong.app.ui.theme.CountdownNumberStyle
+import com.yanzhong.app.ui.theme.EmptyState
+import com.yanzhong.app.ui.theme.FocusTimerStyle
+import com.yanzhong.app.ui.theme.ListRow
+import com.yanzhong.app.ui.theme.PageHeader
+import com.yanzhong.app.ui.theme.PillTone
+import com.yanzhong.app.ui.theme.PrimaryButton
+import com.yanzhong.app.ui.theme.RowDivider
+import com.yanzhong.app.ui.theme.RowGroup
+import com.yanzhong.app.ui.theme.SectionHeader
+import com.yanzhong.app.ui.theme.SegmentedChips
+import com.yanzhong.app.ui.theme.StatusPill
 import com.yanzhong.app.ui.theme.SuccessGreen
+import com.yanzhong.app.ui.theme.SwitchRow
+import com.yanzhong.app.ui.theme.TextAction
 import com.yanzhong.app.util.TimeUtils
 import kotlinx.coroutines.delay
 
@@ -148,12 +156,36 @@ fun FocusScreen(padding: PaddingValues) {
     }
 }
 
-// ---------------- 空闲态:选方案 → 选任务 / 自由专注 ----------------
+// ---------------- 空闲态:页头 → 圆环 → 主按钮 → 选任务 → 模式与方案 ----------------
 
 @Composable
 private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: List<PeerState>) {
+    val haptic = LocalHapticFeedback.current
     var mode by remember { mutableStateOf(TimerMode.POMODORO) }
     var countdownMin by remember { mutableStateOf(25) }
+    var showTaskSheet by remember { mutableStateOf(false) }
+    var settingsExpanded by remember { mutableStateOf(false) }
+
+    val plan = state.settings.currentPlan
+    val hasTasks = state.todayTasks.isNotEmpty()
+    val quickMinutes = listOf(5, 15, 25, 45)
+    val ringTime = when (mode) {
+        TimerMode.POMODORO -> TimeUtils.mmss(plan.focusMin * 60_000L)
+        TimerMode.STOPWATCH -> TimeUtils.mmss(0L)
+        TimerMode.COUNTDOWN -> TimeUtils.mmss(countdownMin * 60_000L)
+    }
+    val modeLabel = when (mode) {
+        TimerMode.POMODORO -> "番茄钟"
+        TimerMode.STOPWATCH -> "正计时"
+        TimerMode.COUNTDOWN -> "倒计时"
+    }
+    val startLabel = when (mode) {
+        TimerMode.POMODORO -> "开始专注 · ${plan.focusMin} 分钟"
+        TimerMode.STOPWATCH -> "开始正计时"
+        TimerMode.COUNTDOWN -> "开始倒计时 · $countdownMin 分钟"
+    }
+    val ringTrack = MaterialTheme.colorScheme.surfaceVariant
+
     Column(
         Modifier
             .widthIn(max = CONTENT_MAX_WIDTH)
@@ -162,206 +194,245 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
             .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(24.dp))
-        Text("开始专注", style = MaterialTheme.typography.headlineLarge)
-        Text(
-            "选一个任务,或者直接开始",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(12.dp))
+        PageHeader(title = "专注", meta = "选一个任务，或直接开始")
 
         // 专注接力:同账号主机设备正在专注,可一键跟随同步状态与倒计时
         if (activePeers.isNotEmpty()) {
-            activePeers.forEach { peer -> PeerFocusCard(peer = peer, onFollow = { vm.followPeer(peer) }) }
             Spacer(Modifier.height(16.dp))
+            activePeers.forEach { peer ->
+                PeerFocusCard(peer = peer, onFollow = { vm.followPeer(peer) })
+                Spacer(Modifier.height(8.dp))
+            }
         }
 
-        if (state.todayTasks.isNotEmpty()) {
-            Text(
-                "从今日待办开始",
-                style = MaterialTheme.typography.headlineMedium,
-                modifier = Modifier.align(Alignment.Start)
-            )
-            Spacer(Modifier.height(8.dp))
-            state.todayTasks.forEach { task ->
-                val subject = state.subjects.firstOrNull { it.id == task.subjectId }
-                TaskPickRow(
-                    title = task.title,
-                    subjectName = subject?.name ?: "未分类",
-                    subjectColor = subject?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.primary,
-                    onClick = {
-                        when (mode) {
-                            TimerMode.POMODORO -> vm.startForTask(task)
-                            TimerMode.STOPWATCH -> vm.startForTaskStopwatch(task)
-                            TimerMode.COUNTDOWN -> vm.startForTaskCountdown(task, countdownMin)
-                        }
-                    }
+        Spacer(Modifier.height(24.dp))
+
+        // 中央圆环:模式 → 时长 → 当前任务
+        Box(Modifier.size(240.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
+                val stroke = 12.dp.toPx()
+                drawCircle(
+                    color = ringTrack,
+                    radius = size.minDimension / 2f - stroke / 2f,
+                    style = Stroke(stroke)
                 )
-                Spacer(Modifier.height(12.dp))
             }
-            Spacer(Modifier.height(24.dp))
-        }
-
-        // 三种计时模式(参考番茄ToDo):番茄钟 / 正计时 / 倒计时
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            ModeChip("番茄钟", mode == TimerMode.POMODORO) { mode = TimerMode.POMODORO }
-            ModeChip("正计时", mode == TimerMode.STOPWATCH) { mode = TimerMode.STOPWATCH }
-            ModeChip("倒计时", mode == TimerMode.COUNTDOWN) { mode = TimerMode.COUNTDOWN }
-        }
-        Spacer(Modifier.height(8.dp))
-
-        if (mode == TimerMode.POMODORO) {
-            Text(
-                "番茄方案",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.align(Alignment.Start)
-            )
-            Spacer(Modifier.height(8.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                state.settings.plans.forEach { plan ->
-                    PlanCard(
-                        plan = plan,
-                        selected = plan.name == state.settings.currentPlanName,
-                        onClick = { vm.selectPlan(plan.name) },
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-            }
-            Spacer(Modifier.height(16.dp))
-
-            Button(
-                onClick = { vm.quickFocus() },
-                shape = RoundedCornerShape(999.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-            ) {
-                Text("自由专注 · ${state.settings.currentPlan.focusMin} 分钟", fontSize = 16.sp)
-            }
-            Spacer(Modifier.height(20.dp))
-        } else if (mode == TimerMode.STOPWATCH) {
-            Text(
-                "从 00:00 向上累计,无上限,随时结束并记录总专注时长",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = { vm.quickStopwatch() },
-                shape = RoundedCornerShape(999.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-            ) {
-                Text("自由正计时 · 无上限", fontSize = 16.sp)
-            }
-            Spacer(Modifier.height(20.dp))
-        } else {
-            Text(
-                "单次倒计时,归零即完成,不进入休息循环",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(5, 15, 25, 45).forEach { min ->
-                    FilterChip(
-                        selected = countdownMin == min,
-                        onClick = { countdownMin = min },
-                        label = { Text("${min}分") }
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.widthIn(max = 200.dp)
             ) {
                 Text(
-                    "$countdownMin",
-                    style = MaterialTheme.typography.headlineLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    "分钟",
-                    style = MaterialTheme.typography.bodyMedium,
+                    modeLabel,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.weight(1f))
+                Spacer(Modifier.height(4.dp))
+                Text(ringTime, style = CountdownNumberStyle)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "自由专注",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
             }
-            Slider(
-                value = countdownMin.toFloat(),
-                onValueChange = { countdownMin = it.toInt().coerceIn(5, 180) },
-                valueRange = 5f..180f,
-                steps = 34,
-                modifier = Modifier.fillMaxWidth()
+        }
+
+        Spacer(Modifier.height(20.dp))
+        PrimaryButton(
+            text = startLabel,
+            onClick = {
+                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                when (mode) {
+                    TimerMode.POMODORO -> vm.quickFocus()
+                    TimerMode.STOPWATCH -> vm.quickStopwatch()
+                    TimerMode.COUNTDOWN -> vm.quickCountdown(countdownMin)
+                }
+            },
+            modifier = Modifier.widthIn(max = 320.dp)
+        )
+
+        Spacer(Modifier.height(20.dp))
+        RowGroup {
+            ListRow(
+                title = "选择任务",
+                icon = AppIcons.ClipboardList,
+                subtitle = if (hasTasks) "从今日待办中选一个" else "今日没有待办",
+                onClick = if (hasTasks) ({ showTaskSheet = true }) else null,
+                showChevron = hasTasks,
+                enabled = hasTasks
             )
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = { vm.quickCountdown(countdownMin) },
-                shape = RoundedCornerShape(999.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp)
-            ) {
-                Text("开始倒计时 · $countdownMin 分钟", fontSize = 16.sp)
+        }
+
+        Spacer(Modifier.height(20.dp))
+        SegmentedChips(
+            options = listOf("番茄钟", "正计时", "倒计时"),
+            selectedIndex = mode.ordinal,
+            onSelect = { index ->
+                mode = when (index) {
+                    0 -> TimerMode.POMODORO
+                    1 -> TimerMode.STOPWATCH
+                    else -> TimerMode.COUNTDOWN
+                }
             }
-            Spacer(Modifier.height(20.dp))
+        )
+
+        when (mode) {
+            TimerMode.POMODORO -> {
+                Spacer(Modifier.height(20.dp))
+                SectionHeader(title = "番茄方案")
+                Spacer(Modifier.height(8.dp))
+                RowGroup {
+                    state.settings.plans.forEachIndexed { index, planOption ->
+                        if (index > 0) RowDivider(startIndent = 16.dp)
+                        val selected = planOption.name == state.settings.currentPlanName
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(MaterialTheme.shapes.large)
+                                .background(
+                                    if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                    else Color.Transparent
+                                )
+                        ) {
+                            ListRow(
+                                title = "${planOption.name} 分钟",
+                                subtitle = "专注 ${planOption.focusMin} 分钟 · 短休 ${planOption.shortBreakMin} 分钟",
+                                onClick = { vm.selectPlan(planOption.name) },
+                                showChevron = false,
+                                trailing = {
+                                    if (selected) {
+                                        Icon(
+                                            AppIcons.Check,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+
+            TimerMode.COUNTDOWN -> {
+                Spacer(Modifier.height(20.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        "倒计时时长",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        "$countdownMin 分钟",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Slider(
+                    value = countdownMin.toFloat(),
+                    onValueChange = { countdownMin = it.toInt().coerceIn(5, 180) },
+                    valueRange = 5f..180f,
+                    steps = 34,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                SegmentedChips(
+                    options = quickMinutes.map { "$it 分" },
+                    selectedIndex = quickMinutes.indexOf(countdownMin),
+                    onSelect = { countdownMin = quickMinutes[it] }
+                )
+            }
+
+            TimerMode.STOPWATCH -> Unit
         }
 
         // 更多设置:默认收起,降低首屏密度;与模式无关的开关集中在此
-        var moreExpanded by remember { mutableStateOf(false) }
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Row(
-                    Modifier.fillMaxWidth().clickable { moreExpanded = !moreExpanded },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("更多设置", modifier = Modifier.weight(1f))
-                    Icon(
-                        if (moreExpanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
-                        contentDescription = null
-                    )
-                }
-                if (moreExpanded) {
-                    Spacer(Modifier.height(8.dp))
-                    SettingSwitchRow(
-                        title = "自动串联",
-                        subtitle = "休息结束自动开始下一个番茄",
-                        checked = state.settings.autoChain,
-                        onChange = { vm.toggleAutoChain(it) }
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    SettingSwitchRow(
-                        title = "连续专注",
-                        subtitle = "跳过休息,继续专注",
-                        checked = state.settings.continuousFocus,
-                        onChange = { vm.toggleContinuous(it) }
-                    )
+        Spacer(Modifier.height(24.dp))
+        RowGroup {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .clickable { settingsExpanded = !settingsExpanded }
+                    .padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "更多设置",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                Icon(
+                    if (settingsExpanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
+                    contentDescription = if (settingsExpanded) "收起" else "展开",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            if (settingsExpanded) {
+                RowDivider(startIndent = 16.dp)
+                SwitchRow(
+                    title = "自动串联",
+                    checked = state.settings.autoChain,
+                    onCheckedChange = vm::toggleAutoChain,
+                    subtitle = "休息结束自动开始下一个"
+                )
+                RowDivider(startIndent = 16.dp)
+                SwitchRow(
+                    title = "连续专注",
+                    checked = state.settings.continuousFocus,
+                    onCheckedChange = vm::toggleContinuous,
+                    subtitle = "跳过休息，一路专注下去"
+                )
+            }
+        }
+        // 底部导航的中央 FAB 会向上探出,预留它的高度避免最后一行被压住
+        Spacer(Modifier.height(40.dp))
+    }
+
+    if (showTaskSheet) {
+        AppSheet(title = "选择今日任务", onDismiss = { showTaskSheet = false }) {
+            if (!hasTasks) {
+                EmptyState(icon = AppIcons.ClipboardList, title = "今日没有待办", compact = true)
+            } else {
+                RowGroup {
+                    state.todayTasks.forEachIndexed { index, task ->
+                        if (index > 0) RowDivider()
+                        val subject = state.subjects.firstOrNull { it.id == task.subjectId }
+                        val pomodoro = if (task.pomodoroEstimate > 0) {
+                            "番茄 ${task.completedPomodoros}/${task.pomodoroEstimate}"
+                        } else {
+                            "番茄 ${task.completedPomodoros}"
+                        }
+                        ListRow(
+                            title = task.title,
+                            subtitle = "${subject?.name ?: "未分类"} · $pomodoro",
+                            onClick = {
+                                showTaskSheet = false
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                when (mode) {
+                                    TimerMode.POMODORO -> vm.startForTask(task)
+                                    TimerMode.STOPWATCH -> vm.startForTaskStopwatch(task)
+                                    TimerMode.COUNTDOWN -> vm.startForTaskCountdown(task, countdownMin)
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }
-        Spacer(Modifier.height(20.dp))
     }
 }
 
-/** 方案卡片:选中 primaryContainer 弱底色强调块 + 对勾,未选中弱化;时长胶囊「专注 + 短休」 */
-@Composable
-private fun ModeChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
-}
-
-/** 接力邀请卡片(专注接力入口):主机设备名 + 任务 + 实时倒计时 + 接力跟随按钮 */
+/** 接力邀请卡片:主机设备名 + 任务 + 实时倒计时 + 跟随入口(专注接力) */
 @Composable
 private fun PeerFocusCard(peer: PeerState, onFollow: () -> Unit) {
     var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
@@ -374,25 +445,13 @@ private fun PeerFocusCard(peer: PeerState, onFollow: () -> Unit) {
     val remain = if (peer.paused) peer.remainMs
     else (peer.endsAtLocalMs - nowMs).coerceAtLeast(0)
     val isBreak = peer.phase == "break"
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = if (isBreak) SuccessGreen.copy(alpha = 0.10f)
-        else MaterialTheme.colorScheme.primary.copy(alpha = 0.10f),
-        border = BorderStroke(
-            1.dp,
-            if (isBreak) SuccessGreen.copy(alpha = 0.4f)
-            else MaterialTheme.colorScheme.primary.copy(alpha = 0.4f)
-        ),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
-        ) {
+    val accent = if (isBreak) SuccessGreen else MaterialTheme.colorScheme.primary
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 AppIcons.Smartphone,
                 contentDescription = null,
-                tint = if (isBreak) SuccessGreen else MaterialTheme.colorScheme.primary,
+                tint = accent,
                 modifier = Modifier.size(22.dp)
             )
             Spacer(Modifier.width(12.dp))
@@ -409,155 +468,16 @@ private fun PeerFocusCard(peer: PeerState, onFollow: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Button(
-                onClick = onFollow,
-                shape = RoundedCornerShape(999.dp),
-                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 6.dp)
-            ) {
-                Text("接力跟随", style = MaterialTheme.typography.labelLarge)
-            }
+            TextAction(text = "跟随", onClick = onFollow)
         }
     }
 }
 
-@Composable
-private fun PlanCard(
-    plan: PomodoroPlan,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)) else null,
-        modifier = modifier.clickable(onClick = onClick)
-    ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    plan.name,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1
-                )
-                if (selected) {
-                    Spacer(Modifier.width(4.dp))
-                    Icon(
-                        AppIcons.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-            Spacer(Modifier.height(8.dp))
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
-            ) {
-                Text(
-                    "${plan.focusMin} + ${plan.shortBreakMin} 分钟",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                )
-            }
-        }
-    }
-}
-
-/** 开关行:弱底色圆角容器 + 副说明 */
-@Composable
-private fun SettingSwitchRow(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onChange: (Boolean) -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(checked = checked, onCheckedChange = onChange)
-        }
-    }
-}
-
-@Composable
-private fun TaskPickRow(
-    title: String,
-    subjectName: String,
-    subjectColor: Color,
-    onClick: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                Modifier
-                    .size(8.dp)
-                    .clip(CircleShape)
-                    .background(subjectColor)
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    subjectName,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = subjectColor
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            Box(
-                Modifier
-                    .size(32.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    AppIcons.Play,
-                    contentDescription = "开始",
-                    tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
-    }
-}
-
-// ---------------- 运行态:环形进度 + 三键 ----------------
+// ---------------- 运行态:环形进度 + 阶段胶囊 + 主控制 ----------------
 
 @Composable
 private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
+    val haptic = LocalHapticFeedback.current
     val timer = state.timer
     var showAbandonConfirm by remember { mutableStateOf(false) }
     var showEmergencyExit by remember { mutableStateOf(false) }
@@ -591,6 +511,10 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
         isBreak -> SuccessGreen
         else -> Color(timer.subjectColorArgb)
     }
+    // 任务番茄未做完 → 休息结束自动续做(长任务跨多个番茄连续推进)
+    val taskEstimate = timer.taskPomodoroEstimate
+    val taskDoneTotal = timer.taskPomodoroDoneAtStart + timer.completedInCycle
+    val willContinue = taskEstimate > 0 && taskDoneTotal < taskEstimate
     // 正计时:进度环按分钟循环填充(秒针式);其余:剩余时间占比
     val rawProgress = if (timer.mode == TimerMode.STOPWATCH) {
         (timer.remainingMs % 60_000).toFloat() / 60_000
@@ -601,69 +525,37 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
         animationSpec = tween(500),
         label = "ringProgress"
     )
-
-    // 完成一个番茄的即时反馈:番茄数增加时弹出“+1 🍅”(参考番茄ToDo 成就反馈)
-    var showPomodoroBurst by remember { mutableStateOf(false) }
-    LaunchedEffect(timer.completedInCycle) {
-        if (timer.completedInCycle > 0) {
-            showPomodoroBurst = true
-            delay(1600)
-            showPomodoroBurst = false
-        }
+    val phaseLabel = when (timer.phase) {
+        Phase.FOCUSING -> "专注"
+        Phase.PAUSED -> "暂停"
+        Phase.SHORT_BREAK -> "短休"
+        Phase.LONG_BREAK -> "长休"
+        Phase.IDLE -> ""
     }
-    val burstAlpha by animateFloatAsState(
-        targetValue = if (showPomodoroBurst) 1f else 0f,
-        animationSpec = tween(500),
-        label = "burstAlpha"
-    )
+    val phaseTone = if (timer.phase == Phase.PAUSED) PillTone.NEUTRAL else PillTone.ACCENT
+    val ringCaption = when {
+        timer.phase == Phase.PAUSED -> "累计上限 5 分钟"
+        isBreak && willContinue -> "结束后自动继续"
+        timer.isFocusing && timer.mode == TimerMode.POMODORO && taskEstimate > 0 ->
+            "番茄 ${taskDoneTotal + 1}/$taskEstimate"
+        timer.isFocusing && timer.mode == TimerMode.POMODORO ->
+            "本任务第 ${state.taskPomodoroToday + 1} 个番茄"
+        else -> null
+    }
 
     Column(
         Modifier
             .widthIn(max = CONTENT_MAX_WIDTH)
             .fillMaxSize()
-            // 可滚动:横屏/矮屏下 260dp 圆环 + 文案不裁切(与空闲态一致)
+            // 可滚动:横屏/矮屏下 280dp 圆环 + 文案不裁切(与空闲态一致)
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp),
+            .padding(horizontal = 20.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.height(24.dp))
 
-        // 任务名 + 科目色环
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier
-                    .size(12.dp)
-                    .clip(CircleShape)
-                    .background(ringColor)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                text = timer.taskTitle.ifBlank { "自由专注" },
-                style = MaterialTheme.typography.headlineLarge,
-                textAlign = TextAlign.Center
-            )
-        }
-        // 任务番茄未做完 → 休息结束自动续做(长任务跨多个番茄连续推进)
-        val taskEstimate = timer.taskPomodoroEstimate
-        val taskDoneTotal = timer.taskPomodoroDoneAtStart + timer.completedInCycle
-        val willContinue = taskEstimate > 0 && taskDoneTotal < taskEstimate
-        Text(
-            text = when (timer.phase) {
-                Phase.FOCUSING -> when (timer.mode) {
-                    TimerMode.STOPWATCH -> "正计时中 · 无上限累计"
-                    TimerMode.COUNTDOWN -> "倒计时中 · ${timer.planName}"
-                    else -> "专注中 · ${timer.planName}"
-                }
-                Phase.PAUSED -> "已暂停(累计上限 5 分钟)"
-                Phase.SHORT_BREAK -> "短休息" + if (willContinue) " · 结束后自动继续" else ""
-                Phase.LONG_BREAK -> "长休息" + if (willContinue) " · 结束后自动继续" else ""
-                Phase.IDLE -> ""
-            },
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        // 学霸模式提示胶囊:严格锁定与原白名单状态文案保持不变
         if (superOn) {
-            Spacer(Modifier.height(8.dp))
             Surface(
                 shape = RoundedCornerShape(999.dp),
                 color = if (state.settings.superModeStrict) {
@@ -696,12 +588,12 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
                     )
                 }
             }
+            Spacer(Modifier.height(16.dp))
         }
-        Spacer(Modifier.height(28.dp))
 
-        // 环形进度 + 中央时间
-        Box(contentAlignment = Alignment.Center) {
-            Canvas(Modifier.size(260.dp)) {
+        // 环形进度 + 阶段胶囊 + 中央时间 + 任务名
+        Box(Modifier.size(280.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.fillMaxSize()) {
                 val stroke = 14.dp.toPx()
                 val inset = stroke / 2 + 2.dp.toPx()
                 val arcSize = size.width - inset * 2
@@ -735,49 +627,37 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
                     style = Stroke(stroke, cap = StrokeCap.Round)
                 )
             }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.widthIn(max = 220.dp)
+            ) {
+                StatusPill(text = phaseLabel, tone = phaseTone)
+                Spacer(Modifier.height(12.dp))
+                Text(text = TimeUtils.mmss(timer.remainingMs), style = FocusTimerStyle)
+                Spacer(Modifier.height(6.dp))
                 Text(
-                    text = TimeUtils.mmss(timer.remainingMs),
-                    fontSize = 56.sp,
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.displayLarge.copy(
-                        fontSize = 56.sp,
-                        fontFeatureSettings = "tnum"
-                    )
+                    text = timer.taskTitle.ifBlank { "自由专注" },
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
                 )
-                if (timer.isFocusing && timer.mode == TimerMode.POMODORO) {
+                if (ringCaption != null) {
+                    Spacer(Modifier.height(2.dp))
                     Text(
-                        if (taskEstimate > 0)
-                            "任务番茄 ${taskDoneTotal + 1}/$taskEstimate · 今日 ${state.taskPomodoroToday} 🍅"
-                        else "本任务第 ${state.taskPomodoroToday + 1} 个番茄",
-                        style = MaterialTheme.typography.bodyMedium,
+                        ringCaption,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
-            // “+1 🍅”上浮淡出动画
-            Text(
-                "+1 🍅",
-                fontSize = 34.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .graphicsLayer {
-                        alpha = burstAlpha
-                        translationY = (1f - burstAlpha) * 60f
-                    }
-            )
         }
 
-        Spacer(Modifier.height(30.dp))
+        Spacer(Modifier.height(24.dp))
 
         // 操作键:严格锁定期间无任何计时操作(参考番茄ToDo 严格模式);
         // 其余:暂停/继续 · 正计时「结束并记录」 · 休息=跳过
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
             when {
                 strictFocus -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -795,46 +675,94 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
                         )
                     }
                 }
+
                 timer.phase == Phase.FOCUSING -> {
-                    ActionButton("暂停", AppIcons.Pause, onClick = { vm.pause() })
+                    PrimaryButton(
+                        text = "暂停",
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            vm.pause()
+                        },
+                        modifier = Modifier.width(200.dp),
+                        icon = AppIcons.Pause
+                    )
                     if (timer.mode == TimerMode.STOPWATCH) {
-                        ActionButton("结束并记录", AppIcons.Stop, compact = true, onClick = { vm.finishStopwatch() })
+                        Spacer(Modifier.height(4.dp))
+                        TextAction(
+                            text = "结束并记录",
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                vm.finishStopwatch()
+                            },
+                            icon = AppIcons.Stop
+                        )
                     }
                 }
+
                 timer.phase == Phase.PAUSED -> {
-                    ActionButton("继续", AppIcons.Play, onClick = { vm.resume() })
+                    PrimaryButton(
+                        text = "继续",
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            vm.resume()
+                        },
+                        modifier = Modifier.width(200.dp),
+                        icon = AppIcons.Play
+                    )
                 }
+
                 isBreak -> {
-                    ActionButton("跳过休息", AppIcons.SkipForward, onClick = { vm.skipBreak() })
+                    // 休息态主按钮与文字操作统一用 SuccessGreen(与圆环同色)
+                    MaterialTheme(
+                        colorScheme = MaterialTheme.colorScheme.copy(
+                            primary = SuccessGreen,
+                            onPrimary = Color.White
+                        )
+                    ) {
+                        PrimaryButton(
+                            text = "跳过休息",
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                vm.skipBreak()
+                            },
+                            modifier = Modifier.width(200.dp),
+                            icon = AppIcons.SkipForward
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        TextAction(
+                            text = "结束专注 · 休息中,不消耗次数",
+                            onClick = {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                vm.endDuringBreak()
+                            }
+                        )
+                    }
                 }
             }
         }
 
-        Spacer(Modifier.height(18.dp))
+        Spacer(Modifier.height(8.dp))
 
-        if (isBreak) {
-            // 休息时段:可直接结束专注,不消耗紧急退出月配额(休息本就不在番茄内)
-            TextButton(onClick = { vm.endDuringBreak() }) {
+        when {
+            // 休息入口已并入控制区
+            isBreak -> Unit
+            strictFocus && quotaLeft <= 0 -> {
+                // 严格锁定 + 配额耗尽:防逃逸,计时结束前无法退出
                 Text(
-                    "结束专注 · 休息中,不消耗次数",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    "本月紧急退出次数已用完 · 计时结束前无法退出",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.error
                 )
             }
-        } else if (strictFocus && quotaLeft <= 0) {
-            // 严格锁定 + 配额耗尽:防逃逸,计时结束前无法退出
-            Text(
-                "本月紧急退出次数已用完 · 计时结束前无法退出",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.error
-            )
-        } else {
-            TextButton(onClick = {
-                // 严格锁定走密码 + 配额;普通模式随时可放弃,不计次
-                if (strictFocus) showEmergencyExit = true else setAbandonConfirm(true)
-            }) {
-                Text(
-                    if (strictFocus) "紧急退出 · 本月剩 $quotaLeft 次" else "结束专注",
-                    color = MaterialTheme.colorScheme.error
+            else -> {
+                TextAction(
+                    text = if (strictFocus) "紧急退出 · 本月剩 $quotaLeft 次" else "结束专注",
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        // 严格锁定走密码 + 配额;普通模式随时可放弃,不计次
+                        if (strictFocus) showEmergencyExit = true else setAbandonConfirm(true)
+                    },
+                    danger = true
                 )
             }
         }
@@ -842,7 +770,7 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
         Spacer(Modifier.height(20.dp))
         Text(
             "今日已专注 ${TimeUtils.formatHours(state.todayFocusMin)}" +
-                if (state.timer.completedInCycle > 0) " · 本轮第 ${state.timer.completedInCycle + 1} 🍅"
+                if (state.timer.completedInCycle > 0) " · 本轮第 ${state.timer.completedInCycle + 1} 个番茄"
                 else "",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -988,26 +916,4 @@ private fun EmergencyExitDialog(
             TextButton(onClick = onDismiss) { Text("继续专注") }
         }
     )
-}
-
-@Composable
-private fun ActionButton(text: String, icon: ImageVector?, onClick: () -> Unit, compact: Boolean = false) {
-    Button(
-        onClick = onClick,
-        modifier = Modifier
-            .height(52.dp)
-            .widthIn(min = if (compact) 120.dp else 168.dp),
-        shape = RoundedCornerShape(26.dp),
-        colors = ButtonDefaults.buttonColors()
-    ) {
-        if (icon != null) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(6.dp))
-        }
-        Text(text, fontSize = 16.sp)
-    }
 }
