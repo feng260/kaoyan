@@ -251,7 +251,12 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                             "静音模式",
                             state.settings.silentMode,
                             vm::setSilent,
-                            subtitle = "阶段切换不震动、不出声"
+                            // 开启时用副标题补回旧版的说明行,行数不变
+                            subtitle = if (state.settings.silentMode) {
+                                "已静音：横幅与弹窗提醒不受影响"
+                            } else {
+                                "阶段切换不震动、不出声"
+                            }
                         )
                         RowDivider()
                         SwitchRow(
@@ -398,7 +403,9 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                         vm.deleteSubject(subject)
                         deleteSubjectCandidate = null
                     },
-                    onDismiss = { deleteSubjectCandidate = null }
+                    onDismiss = { deleteSubjectCandidate = null },
+                    // 破坏性二次确认:主按钮用危险色,不用品牌填充色
+                    danger = true
                 )
             }
         )
@@ -690,7 +697,9 @@ private fun DialogActions(
     confirmText: String,
     onConfirm: () -> Unit,
     onDismiss: () -> Unit,
-    confirmEnabled: Boolean = true
+    confirmEnabled: Boolean = true,
+    /** 破坏性确认(删除等):主操作改用危险色描边按钮 */
+    danger: Boolean = false
 ) {
     Row(
         Modifier.fillMaxWidth(),
@@ -702,12 +711,22 @@ private fun DialogActions(
             onClick = onDismiss,
             modifier = Modifier.weight(1f)
         )
-        PrimaryButton(
-            text = confirmText,
-            onClick = onConfirm,
-            enabled = confirmEnabled,
-            modifier = Modifier.weight(1f)
-        )
+        if (danger) {
+            SecondaryButton(
+                text = confirmText,
+                onClick = onConfirm,
+                enabled = confirmEnabled,
+                danger = true,
+                modifier = Modifier.weight(1f)
+            )
+        } else {
+            PrimaryButton(
+                text = confirmText,
+                onClick = onConfirm,
+                enabled = confirmEnabled,
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 
