@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.remote.AdjustmentDto
 import com.yanzhong.app.data.remote.AdjustReq
 import com.yanzhong.app.data.remote.ApiClient
@@ -11,7 +12,13 @@ import com.yanzhong.app.data.remote.InterviewMessageDto
 import com.yanzhong.app.data.remote.InterviewReq
 import com.yanzhong.app.data.remote.PlanBriefDto
 import com.yanzhong.app.data.remote.PlanDto
+import com.yanzhong.app.data.remote.PlanGenerationJobDto
+import com.yanzhong.app.data.remote.PlanJobErrorDto
+import com.yanzhong.app.data.remote.PlanJobProgressDto
+import com.yanzhong.app.data.remote.SyncNotice
 import com.yanzhong.app.data.remote.TokenStore
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -43,7 +50,11 @@ data class InterviewUiState(
     val activePlan: PlanDto? = null,
     val mode: InterviewMode = InterviewMode.BUILD,
     val adjustment: AdjustmentDto? = null,
-    val activeCompared: Boolean = false
+    val activeCompared: Boolean = false,
+    /** 异步生成的进度(0–100);null 表示还没开始或已结束 */
+    val progress: Int? = null,
+    /** 当前生成阶段的说明(骨架/细化/校验/评审/文档) */
+    val progressMessage: String? = null
 ) {
     val busy: Boolean get() = sending || generating || confirming
     val canGenerate: Boolean get() = phase == InterviewPhase.CHATTING && done && !busy
@@ -65,7 +76,9 @@ private data class InterviewSessionSnapshot(
     val brief: PlanBriefDto? = null,
     val mode: InterviewMode = InterviewMode.BUILD,
     /** 已生成但还没确认的草稿：退出后重进直接回到草稿预览，不用再点一次「生成」 */
-    val plan: PlanDto? = null
+    val plan: PlanDto? = null,
+    /** 正在跑的异步生成任务:退出重进后接着看进度,而不是重新生成一份 */
+    val jobId: String? = null
 )
 
 private class InterviewSessionStore(context: Context) {
@@ -94,10 +107,16 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
     private var started = false
     private val session = InterviewSessionStore(app)
     private var accountGuid: String? = null
+    /** 正在跟踪的异步生成任务:用于去重 WS 推送与轮询两条完成路径 */
+    private var activeJobId: String? = null
+    private var noticeJob: Job? = null
 
     fun beginSession(profileJustSaved: Boolean = false, forcedMode: InterviewMode? = null) {
         if (started && !profileJustSaved) return
         started = true
+        activeJobId = null
+        noticeJob?.cancel()
+        noticeJob = null
         _ui.value = InterviewUiState()
         viewModelScope.launch {
             accountGuid = runCatching { TokenStore.currentAccountGuid() }.getOrNull()
@@ -156,6 +175,18 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     return@launch
                 }
+                // 上次已发起异步生成但还没回来:接着看进度,而不是让考生再点一次「生成」
+                val pendingJob = saved.jobId?.takeIf { it.isNotBlank() }
+                if (pendingJob != null) {
+                    _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
+                        messages = saved.messages, options = saved.options, done = saved.done,
+                        brief = saved.brief, generating = true, progress = 0,
+                        progressMessage = "正在恢复生成进度…")
+                    activeJobId = pendingJob
+                    watchGeneration(pendingJob)
+                    pollGeneration(pendingJob)
+                    return@launch
+                }
                 _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
                     messages = saved.messages, options = saved.options, done = saved.done, brief = saved.brief)
                 // 存档停在"考生刚发完、AI 还没回"：补问一次，否则续上也没得可点
@@ -181,22 +212,141 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * 生成草稿:优先走异步任务(立即返回 jobId,WS 推进度、轮询兜底),
+     * 避免一次 HTTP 等上两三分钟被网关掐断;旧服务端没有异步路由时回退到同步接口。
+     */
     fun generate() {
         if (!_ui.value.canGenerate) return
+        noticeJob?.cancel()
         viewModelScope.launch {
-            _ui.update { it.copy(generating = true, error = null, activePlan = null, activeCompared = false) }
-            runCatching { ApiClient.aiApi().generatePlan().plan?.takeIf { p -> p.status == "draft" }
-                ?: error("服务端没有返回草稿") }.fold({ draft ->
-                _ui.update { it.copy(phase = InterviewPhase.DRAFT, plan = draft, generating = false) }
-                // 草稿仍留在服务端；本地只记「面谈已完成」，退出后再进来还能一键重新拉草稿
-                persist()
-                // 对比只是辅助信息；读取失败不阻塞草稿预览或确认。
-                runCatching { ApiClient.api().getActivePlan().plan }.onSuccess { active ->
-                    _ui.update { it.copy(activePlan = active, activeCompared = true) }
+            _ui.update { it.copy(generating = true, error = null, activePlan = null,
+                activeCompared = false, progress = 0, progressMessage = "正在创建生成任务…") }
+            runCatching { ApiClient.api().startPlanGeneration() }.fold({ resp ->
+                val jobId = resp.jobId.ifBlank { resp.job.id }
+                if (jobId.isBlank()) {
+                    failGeneration("草稿生成失败：服务端没有返回生成任务")
+                    return@fold
                 }
+                activeJobId = jobId
+                // 先落盘 jobId:请求途中退出页面,回来还能接着看进度
+                persist()
+                watchGeneration(jobId)
+                applyJob(jobId, resp.job)
+                pollGeneration(jobId)
             }, { e ->
-                _ui.update { it.copy(generating = false, error = "草稿生成失败：${e.userMessage()}。可继续纠正后重试") }
+                if (e is HttpException && (e.code() == 404 || e.code() == 405)) legacyGenerate()
+                else failGeneration("草稿生成失败：${e.userMessage()}。可继续纠正后重试")
             })
+        }
+    }
+
+    /** 旧服务端(无 /plans/generate/jobs):保持升级前的同步生成行为 */
+    private suspend fun legacyGenerate() {
+        runCatching { ApiClient.aiApi().generatePlan().plan?.takeIf { p -> p.status == "draft" }
+            ?: error("服务端没有返回草稿") }.fold({ draft ->
+            _ui.update { it.copy(phase = InterviewPhase.DRAFT, plan = draft, generating = false,
+                progress = null, progressMessage = null) }
+            // 草稿仍留在服务端；本地只记「面谈已完成」，退出后再进来还能一键重新拉草稿
+            persist()
+            loadActiveComparison()
+        }, { e ->
+            failGeneration("草稿生成失败：${e.userMessage()}。可继续纠正后重试")
+        })
+    }
+
+    /** 异步任务的进度同时来自 WS 推送与轮询,这里统一落到 UI */
+    private suspend fun applyJob(jobId: String, job: PlanGenerationJobDto) {
+        if (activeJobId != jobId) return
+        _ui.update {
+            it.copy(progress = job.progress.percent,
+                progressMessage = job.progress.message.takeIf { msg -> msg.isNotBlank() })
+        }
+        when (job.status) {
+            "done" -> if (claimGeneration(jobId)) loadDraft(job.planId)
+            "failed" -> if (claimGeneration(jobId)) {
+                val detail = job.error?.message?.takeIf { it.isNotBlank() }
+                failGeneration(detail?.let { "草稿生成失败：$it。可继续纠正后重试" } ?: "草稿生成失败，请重试")
+            }
+        }
+    }
+
+    /** 同一次生成只允许一条完成路径(WS 与轮询可能同时到达) */
+    private fun claimGeneration(jobId: String): Boolean {
+        if (activeJobId != jobId) return false
+        activeJobId = null
+        noticeJob?.cancel()
+        noticeJob = null
+        return true
+    }
+
+    private suspend fun loadDraft(planId: Long?) {
+        val draft = runCatching {
+            val id = planId ?: error("生成任务没有返回计划 id")
+            ApiClient.api().getPlanById(id).plan?.takeIf { p -> p.status == "draft" }
+                ?: error("服务端没有返回草稿")
+        }.getOrElse { e ->
+            failGeneration("草稿生成失败：${e.userMessage()}。可继续纠正后重试")
+            return
+        }
+        _ui.update {
+            it.copy(phase = InterviewPhase.DRAFT, plan = draft, generating = false,
+                progress = null, progressMessage = null, error = null)
+        }
+        persist()
+        loadActiveComparison()
+    }
+
+    private suspend fun loadActiveComparison() {
+        // 对比只是辅助信息；读取失败不阻塞草稿预览或确认。
+        runCatching { ApiClient.api().getActivePlan().plan }.onSuccess { active ->
+            _ui.update { it.copy(activePlan = active, activeCompared = true) }
+        }
+    }
+
+    private fun failGeneration(message: String) {
+        activeJobId = null
+        noticeJob?.cancel()
+        noticeJob = null
+        _ui.update {
+            it.copy(generating = false, progress = null, progressMessage = null, error = message)
+        }
+        persist()
+    }
+
+    /** WS 推送优先:进度变化即时可见;连不上时下面的轮询仍然兜底 */
+    private fun watchGeneration(jobId: String) {
+        val container = getApplication<Application>() as? YanZhongApp ?: return
+        noticeJob = viewModelScope.launch {
+            container.statusSync.notices.collect { notice ->
+                if (notice !is SyncNotice.PlanGeneration || notice.jobId != jobId) return@collect
+                applyJob(jobId, PlanGenerationJobDto(
+                    id = notice.jobId,
+                    status = notice.status,
+                    progress = PlanJobProgressDto(percent = notice.percent, message = notice.message),
+                    planId = notice.planId,
+                    error = notice.errorMessage?.let { PlanJobErrorDto(message = it) }
+                ))
+            }
+        }
+    }
+
+    private suspend fun pollGeneration(jobId: String) {
+        var misses = 0
+        while (activeJobId == jobId) {
+            delay(if (misses == 0) 1500L else 3000L)
+            val result = runCatching { ApiClient.api().getPlanGenerationJob(jobId).job }
+            val job = result.getOrNull()
+            if (job == null) {
+                val notFound = (result.exceptionOrNull() as? HttpException)?.code() == 404
+                if (notFound || ++misses >= 8) {
+                    if (claimGeneration(jobId)) failGeneration("生成任务已过期，请重新生成")
+                    return
+                }
+                continue
+            }
+            misses = 0
+            applyJob(jobId, job)
         }
     }
 
@@ -318,7 +468,8 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
         if (s.phase == InterviewPhase.SUCCESS) { session.clear(); return }
         if (s.messages.isEmpty()) return
         session.save(InterviewSessionSnapshot(accountGuid = accountGuid, messages = s.messages,
-            options = s.options, done = s.done, brief = s.brief, mode = s.mode, plan = s.plan))
+            options = s.options, done = s.done, brief = s.brief, mode = s.mode, plan = s.plan,
+            jobId = activeJobId))
     }
 
     /** 把异常翻译成人话；不要把服务端原始 body / HTTP 400 直接甩给考生 */

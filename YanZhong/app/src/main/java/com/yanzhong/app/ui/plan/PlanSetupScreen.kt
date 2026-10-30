@@ -1,27 +1,28 @@
 package com.yanzhong.app.ui.plan
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -35,7 +36,11 @@ import com.yanzhong.app.ui.onboarding.StepDots
 import com.yanzhong.app.ui.onboarding.StepFacts
 import com.yanzhong.app.ui.onboarding.StepRhythm
 import com.yanzhong.app.ui.onboarding.StepTarget
-import com.yanzhong.app.ui.theme.AppIcons
+import com.yanzhong.app.ui.theme.AppCard
+import com.yanzhong.app.ui.theme.PrimaryButton
+import com.yanzhong.app.ui.theme.SectionHeader
+import com.yanzhong.app.ui.theme.SubPageHeader
+import com.yanzhong.app.ui.theme.TextAction
 
 @Composable
 fun PlanSetupScreen(padding: PaddingValues, navController: NavHostController, profileOnly: Boolean = false) {
@@ -56,53 +61,114 @@ fun PlanSetupScreen(padding: PaddingValues, navController: NavHostController, pr
             }
         }
     }
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding()
-        .padding(horizontal = 20.dp, vertical = 12.dp)) {
-        IconButton(onClick = { navController.popBackStack() }) {
-            Icon(AppIcons.ArrowBack, contentDescription = "返回")
+    // 表单阶段的保存按钮固定在底部安全区;加载 / 重试阶段不显示
+    val showForm = state.phase == OnboardingPhase.EDITING || state.phase == OnboardingPhase.SUCCESS
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .statusBarsPadding()
+                .padding(bottom = 96.dp)
+        ) {
+            SubPageHeader(
+                title = "制定备考档案",
+                meta = "AI 按这份档案排计划",
+                onBack = { navController.popBackStack() },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
+            )
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                Text(
+                    "保存后继续面谈，确认草稿前不会替换现有计划",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(16.dp))
+                when (state.phase) {
+                    OnboardingPhase.LOADING, OnboardingPhase.SUBMITTING -> {
+                        CircularProgressIndicator()
+                        Spacer(Modifier.height(8.dp))
+                        Text(if (state.busy) "正在保存档案…" else "正在读取档案…")
+                    }
+                    OnboardingPhase.FALLBACK -> {
+                        Text(state.message)
+                        Spacer(Modifier.height(12.dp))
+                        PrimaryButton(text = "重试", onClick = vm::startManage)
+                    }
+                    else -> {
+                        StepDots(state.step)
+                        Spacer(Modifier.height(20.dp))
+                        // 档案完整时直接落在最后一题,可考期在第一步 —— 这里常驻一块考期,
+                        // 想改日期的人不必先点两次「返回上一步」才找得到。
+                        if (state.step > 0) {
+                            AppCard {
+                                Text("考试是哪天", style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "倒计时和阶段划分都以它为终点",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.height(10.dp))
+                                // 与问卷第一步同一个组件:日历图标可点,不再是摆设
+                                ExamDateField(value = state.examDate, onValueChange = vm::setExamDate)
+                            }
+                            Spacer(Modifier.height(20.dp))
+                        }
+                        SectionHeader(stepSectionTitle(state.step))
+                        Spacer(Modifier.height(8.dp))
+                        AppCard {
+                            when (state.step) {
+                                0 -> StepTarget(state, vm)
+                                1 -> StepRhythm(state, vm)
+                                else -> StepFacts(state, vm)
+                            }
+                        }
+                        if (state.message.isNotBlank()) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                state.message,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                        if (state.step > 0) {
+                            Spacer(Modifier.height(8.dp))
+                            TextAction(
+                                text = "返回上一步",
+                                onClick = vm::back,
+                                modifier = Modifier.align(Alignment.CenterHorizontally)
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(24.dp))
+            }
         }
-        Text("备考档案", style = MaterialTheme.typography.titleLarge)
-        Text("保存后继续面谈，确认草稿前不会替换现有计划", style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(20.dp))
-        when (state.phase) {
-            OnboardingPhase.LOADING, OnboardingPhase.SUBMITTING -> {
-                CircularProgressIndicator()
-                Text(if (state.busy) "正在保存档案…" else "正在读取档案…")
-            }
-            OnboardingPhase.FALLBACK -> {
-                Text(state.message)
-                Button(onClick = vm::startManage) { Text("重试") }
-            }
-            else -> {
-                StepDots(state.step)
-                Spacer(Modifier.height(20.dp))
-                // 档案完整时直接落在最后一题,可考期在第一步 —— 这里常驻一行考期,
-                // 想改日期的人不必先点两次「返回上一步」才找得到。
-                if (state.step > 0) {
-                    Text("考试是哪天", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Spacer(Modifier.height(2.dp))
-                    Text("倒计时和阶段划分都以它为终点", style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(10.dp))
-                    // 与问卷第一步同一个组件:日历图标可点,不再是摆设
-                    ExamDateField(value = state.examDate, onValueChange = vm::setExamDate)
-                    Spacer(Modifier.height(20.dp))
+        if (showForm) {
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+            ) {
+                Column(Modifier.navigationBarsPadding().imePadding()) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                        val lastStep = state.step >= ONBOARDING_STEPS - 1
+                        PrimaryButton(
+                            text = if (lastStep) "保存档案并继续面谈" else "下一步",
+                            onClick = { if (lastStep) vm.saveProfileOnly() else vm.next() },
+                            enabled = !state.busy
+                        )
+                    }
                 }
-                when (state.step) {
-                    0 -> StepTarget(state, vm)
-                    1 -> StepRhythm(state, vm)
-                    else -> StepFacts(state, vm)
-                }
-                if (state.message.isNotBlank()) Text(state.message, color = MaterialTheme.colorScheme.error)
-                Spacer(Modifier.height(20.dp))
-                val lastStep = state.step >= ONBOARDING_STEPS - 1
-                Button(onClick = { if (lastStep) vm.saveProfileOnly() else vm.next() },
-                    enabled = !state.busy, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-                    Text(if (lastStep) "保存档案并继续面谈" else "下一步")
-                }
-                if (state.step > 0) TextButton(onClick = vm::back) { Text("返回上一步") }
             }
         }
-        Spacer(Modifier.height(padding.calculateBottomPadding() + 24.dp))
     }
+}
+
+/** 当前步骤在卡片外的分组标题 */
+private fun stepSectionTitle(step: Int): String = when (step) {
+    0 -> "目标院校"
+    1 -> "每日时长"
+    else -> "考试科目与课表"
 }

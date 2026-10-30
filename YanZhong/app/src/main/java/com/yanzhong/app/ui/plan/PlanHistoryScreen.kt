@@ -1,7 +1,6 @@
 package com.yanzhong.app.ui.plan
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,16 +16,11 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,8 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
@@ -46,11 +39,17 @@ import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.remote.PlanItemDto
 import com.yanzhong.app.data.remote.PlanSummaryDto
 import com.yanzhong.app.data.remote.PlanStageDto
+import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.EmptyState
+import com.yanzhong.app.ui.theme.ListRow
 import com.yanzhong.app.ui.theme.PillTone
-import com.yanzhong.app.ui.theme.SectionCard
+import com.yanzhong.app.ui.theme.PrimaryButton
+import com.yanzhong.app.ui.theme.SectionHeader
+import com.yanzhong.app.ui.theme.SkeletonBlock
 import com.yanzhong.app.ui.theme.StatusPill
+import com.yanzhong.app.ui.theme.SubPageHeader
+import com.yanzhong.app.ui.theme.TextAction
 
 /**
  * 「历史计划」页:按版本倒序保留每一份生成过的计划,供只读回看。
@@ -100,30 +99,18 @@ fun PlanHistoryScreen(padding: PaddingValues, navController: NavHostController) 
     // 详情态优先接管返回:先回列表,再退出本页
     BackHandler(enabled = detail != null) { detail = null }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(colors.primaryContainer.copy(alpha = 0.45f), colors.background, colors.background)
-                )
-            )
-    ) {
-        Column(
-            Modifier
-                .fillMaxSize()
-                .statusBarsPadding()
-        ) {
-            HistoryTopBar(
-                title = if (detail != null) "计划详情" else "历史计划",
-                subtitle = if (detail != null) detail?.title.orEmpty()
-                else "重新生成不会删掉旧计划,每一版都留在这里",
-                onBack = { if (detail != null) detail = null else navController.popBackStack() }
+    val current = detail
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize().statusBarsPadding()) {
+            SubPageHeader(
+                title = if (current != null) "计划详情" else "历史计划",
+                meta = current?.title?.ifBlank { "只读回看" } ?: "只读回看",
+                onBack = { if (current != null) detail = null else navController.popBackStack() },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
             )
 
-            val current = detail
             when {
-                pendingDetailId != null -> LoadingBlock("正在打开这一版计划…")
+                pendingDetailId != null -> HistorySkeleton()
                 current != null -> DetailContent(
                     plan = current,
                     bottomPadding = padding.calculateBottomPadding()
@@ -132,7 +119,7 @@ fun PlanHistoryScreen(padding: PaddingValues, navController: NavHostController) 
                     message = listError ?: "网络异常",
                     onRetry = { reloadKey++ }
                 )
-                plans == null -> LoadingBlock("正在读取历史计划…")
+                plans == null -> HistorySkeleton()
                 plans!!.isEmpty() -> EmptyBlock()
                 else -> HistoryList(
                     plans = plans!!,
@@ -145,77 +132,66 @@ fun PlanHistoryScreen(padding: PaddingValues, navController: NavHostController) 
         // 详情打开失败:留在列表上给一句提示,别把用户扔在空白页
         detailError?.let { msg ->
             Surface(
-                shape = RoundedCornerShape(12.dp),
+                shape = MaterialTheme.shapes.medium,
                 color = colors.errorContainer,
                 contentColor = colors.onErrorContainer,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(20.dp)
             ) {
-                Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(msg, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f, fill = false))
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text(msg, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
                     Spacer(Modifier.width(8.dp))
-                    TextButton(onClick = { detailError = null }) { Text("知道了") }
+                    TextAction(text = "知道了", onClick = { detailError = null })
                 }
             }
         }
     }
 }
 
-/** 顶部返回栏:深层页隐藏了底部导航,返回必须由本页自己提供 */
+/** 加载态:几条骨架示意"列表即将铺开",不再整屏转圈 */
 @Composable
-private fun HistoryTopBar(title: String, subtitle: String, onBack: () -> Unit) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-    ) {
-        IconButton(onClick = onBack) {
-            Icon(AppIcons.ArrowBack, contentDescription = "返回")
-        }
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            if (subtitle.isNotBlank()) {
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun LoadingBlock(text: String) {
+private fun HistorySkeleton() {
     Column(
-        Modifier.fillMaxWidth().padding(vertical = 64.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        CircularProgressIndicator()
-        Text(text, style = MaterialTheme.typography.bodyMedium)
+        repeat(4) {
+            SkeletonBlock(height = 64.dp)
+        }
     }
 }
 
 @Composable
 private fun ErrorBlock(message: String, onRetry: () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 56.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+    Box(
+        Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 24.dp),
+        contentAlignment = Alignment.TopCenter
     ) {
-        Icon(AppIcons.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp))
-        Text("暂时打不开历史计划", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text(
-            message,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Button(onClick = onRetry, shape = RoundedCornerShape(12.dp)) { Text("重试") }
+        AppCard {
+            Column(
+                Modifier.fillMaxWidth(),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    AppIcons.Info,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+                Text("暂时打不开历史计划", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+                Spacer(Modifier.height(4.dp))
+                PrimaryButton(text = "重试", onClick = onRetry)
+            }
+        }
     }
 }
 
@@ -225,7 +201,9 @@ private fun EmptyBlock() {
     EmptyState(
         icon = AppIcons.ClipboardList,
         title = "还没有历史计划",
-        hint = "生成过计划之后,每一版都会保留在这里,重新生成也不会覆盖旧的。"
+        hint = "生成过计划之后,每一版都会保留在这里,重新生成也不会覆盖旧的。",
+        modifier = Modifier.padding(horizontal = 20.dp),
+        compact = true
     )
 }
 
@@ -238,30 +216,17 @@ private fun HistoryList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = bottomPadding + 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         items(plans, key = { it.id }) { plan ->
-            SummaryCard(plan = plan, onClick = { onOpen(plan) })
-        }
-    }
-}
-
-@Composable
-private fun SummaryCard(plan: PlanSummaryDto, onClick: () -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    SectionCard(
-        title = plan.title,
-        subtitle = "第 ${plan.version} 版 · ${plan.startDate} ~ ${plan.examDate}",
-        onClick = onClick,
-        trailing = { StatusTag(plan.status) }
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "完成 ${plan.doneItems}/${plan.totalItems} · 共 ${plan.totalDays} 天",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f)
-            )
-            Text("查看", style = MaterialTheme.typography.labelLarge, color = colors.primary)
+            AppCard(contentPadding = PaddingValues(0.dp), onClick = { onOpen(plan) }) {
+                ListRow(
+                    title = plan.title,
+                    subtitle = "第 ${plan.version} 版 · ${plan.startDate} ~ ${plan.examDate}",
+                    showChevron = true,
+                    trailing = { StatusTag(plan.status) }
+                )
+            }
         }
     }
 }
@@ -291,45 +256,40 @@ private fun DetailContent(plan: PlanDto, bottomPadding: androidx.compose.ui.unit
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item(key = "overview") {
-            Surface(
-                shape = MaterialTheme.shapes.large,
-                color = colors.surface,
-                tonalElevation = 1.dp,
-                shadowElevation = 2.dp,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            plan.title,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f)
-                        )
-                        StatusTag(plan.status)
-                    }
+            AppCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "第 ${plan.version} 版 · 考期 ${plan.examDate}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.onSurfaceVariant
+                        plan.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.weight(1f)
                     )
-                    Text(
-                        "总进度 ${plan.progress.doneItems}/${plan.progress.totalItems} · 共 ${plan.progress.totalDays} 天 · ${plan.progress.totalMinutes} 分钟",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    LinearProgressIndicator(
-                        progress = {
-                            if (plan.progress.totalItems == 0) 0f
-                            else plan.progress.doneItems.toFloat() / plan.progress.totalItems
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Text(
-                        "这一版为只读回看,勾选请回到当前计划。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant
-                    )
+                    StatusTag(plan.status)
                 }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "第 ${plan.version} 版 · 考期 ${plan.examDate}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "总进度 ${plan.progress.doneItems}/${plan.progress.totalItems} · 共 ${plan.progress.totalDays} 天 · ${plan.progress.totalMinutes} 分钟",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Spacer(Modifier.height(10.dp))
+                LinearProgressIndicator(
+                    progress = {
+                        if (plan.progress.totalItems == 0) 0f
+                        else plan.progress.doneItems.toFloat() / plan.progress.totalItems
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "这一版为只读回看,勾选请回到当前计划。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant
+                )
             }
         }
 
@@ -354,7 +314,7 @@ private fun DetailContent(plan: PlanDto, bottomPadding: androidx.compose.ui.unit
 
         if (looseItems.isNotEmpty()) {
             item(key = "loose-header") {
-                Text("其他计划项", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                SectionHeader(title = "其他计划项")
             }
             items(
                 looseItems.sortedWith(compareBy({ it.planDate }, { it.sortOrder }, { it.id })),
@@ -381,16 +341,10 @@ private fun StageCard(stage: PlanStageDto, plan: PlanDto, expanded: Boolean, onT
     val colors = MaterialTheme.colorScheme
     val items = plan.items.filter { it.stageId == stage.id }
     val done = items.count { it.status == "done" }
-    Surface(
-        onClick = onToggle,
-        shape = MaterialTheme.shapes.large,
-        color = colors.surface,
-        tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+    AppCard(onClick = onToggle) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text(stage.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(stage.name, style = MaterialTheme.typography.titleMedium)
                 Text(
                     "${stage.startDate} ~ ${stage.endDate}",
                     style = MaterialTheme.typography.bodySmall,
@@ -416,7 +370,7 @@ private fun HistoryItemRow(item: PlanItemDto) {
     val colors = MaterialTheme.colorScheme
     val done = item.status == "done"
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = MaterialTheme.shapes.medium,
         color = if (done) colors.primaryContainer.copy(alpha = 0.5f) else colors.surface,
         modifier = Modifier.fillMaxWidth()
     ) {

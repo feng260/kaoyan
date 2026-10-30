@@ -59,6 +59,16 @@ sealed interface SyncNotice {
     data class PlanChanged(val deviceId: Long) : SyncNotice
     /** 服务端主动提醒:落后/积压(服务端已做每人每天 1 条去重) */
     data class PlanReminder(val text: String) : SyncNotice
+    /** 异步生成计划的进度:面谈页据此实时更新进度条(轮询仍是兜底) */
+    data class PlanGeneration(
+        val jobId: String,
+        /** running / done / failed */
+        val status: String,
+        val percent: Int,
+        val message: String,
+        val planId: Long?,
+        val errorMessage: String?
+    ) : SyncNotice
 }
 
 /**
@@ -306,6 +316,21 @@ class StatusSyncClient(private val app: YanZhongApp) {
             "planReminder" -> {
                 val text = obj["text"]?.jsonPrimitive?.content ?: return
                 _notices.tryEmit(SyncNotice.PlanReminder(text))
+            }
+            "planGeneration" -> {
+                val job = obj["job"]?.jsonObject ?: return
+                val jobId = job["id"]?.jsonPrimitive?.content ?: return
+                val progress = job["progress"]?.jsonObject
+                _notices.tryEmit(
+                    SyncNotice.PlanGeneration(
+                        jobId = jobId,
+                        status = job["status"]?.jsonPrimitive?.content ?: "running",
+                        percent = progress?.get("percent")?.jsonPrimitive?.content?.toIntOrNull() ?: 0,
+                        message = progress?.get("message")?.jsonPrimitive?.content.orEmpty(),
+                        planId = job["planId"]?.jsonPrimitive?.longOrNull,
+                        errorMessage = job["error"]?.jsonObject?.get("message")?.jsonPrimitive?.content
+                    )
+                )
             }
             "kicked" -> {
                 workScope?.launch {

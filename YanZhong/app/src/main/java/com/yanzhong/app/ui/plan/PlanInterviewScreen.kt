@@ -26,19 +26,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,8 +46,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -59,7 +56,15 @@ import com.yanzhong.app.data.remote.InterviewMessageDto
 import com.yanzhong.app.data.remote.PlanBriefDto
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.ui.nav.Routes
+import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
+import com.yanzhong.app.ui.theme.OptionChip
+import com.yanzhong.app.ui.theme.PillTone
+import com.yanzhong.app.ui.theme.PrimaryButton
+import com.yanzhong.app.ui.theme.SecondaryButton
+import com.yanzhong.app.ui.theme.StatusPill
+import com.yanzhong.app.ui.theme.SubPageHeader
+import com.yanzhong.app.ui.theme.TextAction
 import java.time.LocalDate
 
 @Composable
@@ -101,31 +106,18 @@ fun PlanInterviewScreen(
     BackHandler(adjustPreview && state.phase == InterviewPhase.CHATTING) { adjustPreview = false }
     LaunchedEffect(state.adjustment) { if (state.adjustment == null) adjustPreview = false }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding()) {
-        Row(Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = { if (fullscreen) fullscreen = false else navController.popBackStack() }) {
-                Icon(AppIcons.ArrowBack, contentDescription = "返回")
-            }
-            Column(Modifier.weight(1f)) {
-                Text(if (fullscreen) "全屏预览 · DRAFT"
-                    else if (state.mode == InterviewMode.ADJUST) "AI 行程小助手" else "AI 备考面谈",
-                    style = MaterialTheme.typography.titleMedium)
-                // 副标题说明「AI 在问什么/已经确认了什么」，避免只有光秃秃一个对话框
-                if (!fullscreen && state.phase == InterviewPhase.CHATTING) {
-                    Text(chatterSubtitle(state), style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        SubPageHeader(
+            title = if (fullscreen) "全屏预览 · DRAFT"
+            else if (state.mode == InterviewMode.ADJUST) "AI 行程小助手" else "AI 备考面谈",
+            // 副标题说明「AI 在问什么/已经确认了什么」，避免只有光秃秃一个对话框
+            meta = if (!fullscreen && state.phase == InterviewPhase.CHATTING) chatterSubtitle(state) else null,
+            onBack = { if (fullscreen) fullscreen = false else navController.popBackStack() },
+            modifier = Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp)
+        ) {
             if (!fullscreen && state.phase == InterviewPhase.CHATTING) {
                 val answered = state.messages.count { it.role == "user" }
-                if (answered > 0) Surface(color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = RoundedCornerShape(50.dp)) {
-                    Text("已答 $answered 轮", Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer)
-                }
+                if (answered > 0) StatusPill("已答 $answered 轮", PillTone.NEUTRAL)
             }
         }
         if (state.phase == InterviewPhase.CHATTING && state.mode == InterviewMode.BUILD) {
@@ -136,10 +128,16 @@ fun PlanInterviewScreen(
             InterviewPhase.LOADING -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
             }
-            InterviewPhase.NEED_PROFILE -> Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
-                Text("先补齐备考档案，再开始面谈", style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(16.dp))
-                Button(onClick = { navController.navigate(Routes.planSetup(profileOnly = true)) }) { Text("填写备考档案") }
+            InterviewPhase.NEED_PROFILE -> Column(Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.Center) {
+                AppCard {
+                    Text("先补齐备考档案，再开始面谈", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(16.dp))
+                    PrimaryButton(
+                        text = "填写备考档案",
+                        onClick = { navController.navigate(Routes.planSetup(profileOnly = true)) }
+                    )
+                }
             }
             InterviewPhase.CHATTING -> {
                 if (adjustPreview && state.adjustment?.tier == "L2") {
@@ -180,36 +178,57 @@ fun PlanInterviewScreen(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     )
                 }
-                Surface(color = MaterialTheme.colorScheme.surface, shadowElevation = 4.dp) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        state.error?.let { ErrorRow(it, vm::retry, vm::dismissError) }
-                        if (state.done) {
-                            Surface(color = MaterialTheme.colorScheme.secondaryContainer,
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                                    Text("面谈已完成", style = MaterialTheme.typography.labelLarge,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer)
-                                    Text("确认前不会改变当前计划，草稿可先预览再决定。",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSecondaryContainer)
+                // 底部输入/操作条:不再靠阴影分层,用同一张 surface + 顶部描边与正文分开
+                Surface(color = MaterialTheme.colorScheme.surface, modifier = Modifier.imePadding()) {
+                    Column(Modifier.fillMaxWidth()) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                            state.error?.let { ErrorRow(it, vm::retry, vm::dismissError) }
+                            if (state.done) {
+                                Surface(color = MaterialTheme.colorScheme.secondaryContainer,
+                                    shape = RoundedCornerShape(12.dp),
+                                    modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                                        Text("面谈已完成", style = MaterialTheme.typography.labelLarge,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                        Text("确认前不会改变当前计划，草稿可先预览再决定。",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                    }
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                PrimaryButton(
+                                    text = if (state.generating) (state.progressMessage ?: "正在生成草稿…")
+                                    else "生成计划草稿",
+                                    onClick = vm::generate,
+                                    enabled = state.canGenerate
+                                )
+                                if (state.generating) {
+                                    val percent = state.progress
+                                    Spacer(Modifier.height(6.dp))
+                                    LinearProgressIndicator(
+                                        progress = { if (percent == null) 0f else percent / 100f },
+                                        modifier = Modifier.fillMaxWidth()
+                                    )
+                                    if (percent != null) {
+                                        Text("$percent% · 约需 1-3 分钟，可先退出，回来还能继续看进度",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(top = 4.dp))
+                                    }
                                 }
                             }
-                            Spacer(Modifier.height(8.dp))
-                            Button(onClick = vm::generate, enabled = state.canGenerate, modifier = Modifier.fillMaxWidth()) {
-                                Text(if (state.generating) "正在多轮生成草稿…约需 1-3 分钟" else "生成计划草稿")
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(value = input, onValueChange = { input = it },
+                                    enabled = !state.busy, modifier = Modifier.weight(1f), maxLines = 4,
+                                    placeholder = { Text(if (state.done) "还有要纠正的内容？" else "回答面谈问题") })
+                                IconButton(onClick = { vm.send(input); input = "" },
+                                    enabled = !state.busy && input.isNotBlank()) {
+                                    Icon(AppIcons.Send, contentDescription = "发送")
+                                }
                             }
+                            Spacer(Modifier.height(padding.calculateBottomPadding()))
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            OutlinedTextField(value = input, onValueChange = { input = it },
-                                enabled = !state.busy, modifier = Modifier.weight(1f), maxLines = 4,
-                                placeholder = { Text(if (state.done) "还有要纠正的内容？" else "回答面谈问题") })
-                            IconButton(onClick = { vm.send(input); input = "" },
-                                enabled = !state.busy && input.isNotBlank()) {
-                                Icon(AppIcons.Send, contentDescription = "发送")
-                            }
-                        }
-                        Spacer(Modifier.height(padding.calculateBottomPadding()))
                     }
                 }
                 }
@@ -273,8 +292,7 @@ private fun SuccessContent(plan: PlanDto?, onOpenDocument: () -> Unit, onBack: (
                 tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(40.dp))
         }
         Spacer(Modifier.height(20.dp))
-        Text("计划已生效", style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold)
+        Text("计划已生效", style = MaterialTheme.typography.titleLarge)
         if (!plan?.title.isNullOrBlank()) {
             Spacer(Modifier.height(6.dp))
             Text(plan!!.title, style = MaterialTheme.typography.bodyMedium,
@@ -289,9 +307,7 @@ private fun SuccessContent(plan: PlanDto?, onOpenDocument: () -> Unit, onBack: (
         Spacer(Modifier.height(32.dp))
         val documentMissing = plan != null && plan.document == null
         if (!documentMissing) {
-            Button(onClick = onOpenDocument, modifier = Modifier.fillMaxWidth()) {
-                Text("查看全程规划文档")
-            }
+            PrimaryButton(text = "查看全程规划文档", onClick = onOpenDocument)
         } else {
             Surface(
                 color = MaterialTheme.colorScheme.surfaceVariant,
@@ -310,7 +326,7 @@ private fun SuccessContent(plan: PlanDto?, onOpenDocument: () -> Unit, onBack: (
             }
         }
         Spacer(Modifier.height(10.dp))
-        TextButton(onClick = onBack) { Text("返回计划页") }
+        TextAction(text = "返回计划页", onClick = onBack)
     }
 }
 
@@ -388,7 +404,7 @@ private fun MessageBubble(
 ) {
     if (message.role == "user") {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(14.dp),
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(16.dp),
                 modifier = Modifier.fillMaxWidth(0.85f)) {
                 Text(message.content, modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                     style = MaterialTheme.typography.bodyMedium,
@@ -409,8 +425,7 @@ private fun MessageBubble(
                     color = MaterialTheme.colorScheme.secondary)
             }
             Spacer(Modifier.height(6.dp))
-            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(14.dp),
-                shadowElevation = 1.dp,
+            Surface(color = MaterialTheme.colorScheme.surface, shape = RoundedCornerShape(16.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -439,17 +454,15 @@ private fun PlannerAvatar() {
     }
 }
 
-/** 本轮唯一的问题:单独填色、加「请回答」标签并放大加粗,和上面的接话拉开层级 */
+/** 本轮唯一的问题:单独填色,和上面的接话拉开层级 */
 @Composable
 private fun QuestionCard(text: String) {
-    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(10.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp)) {
         Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
             Text("请回答", style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.secondary, fontWeight = FontWeight.SemiBold)
+                color = MaterialTheme.colorScheme.secondary)
             Spacer(Modifier.height(3.dp))
-            Text(text, style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
+            Text(text, style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onSecondaryContainer)
         }
     }
@@ -471,19 +484,12 @@ private fun TypingRow() {
 @Composable
 private fun QuickAnswers(options: List<String>, enabled: Boolean, onOption: (String) -> Unit) {
     if (!enabled || options.isEmpty()) return
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         options.forEach { option ->
-            Surface(
-                onClick = { onOption(option) },
-                shape = RoundedCornerShape(50.dp),
-                color = MaterialTheme.colorScheme.secondaryContainer,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            ) {
-                Text(option, modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer)
-            }
+            OptionChip(text = option, onClick = { onOption(option) })
         }
     }
 }
@@ -512,22 +518,26 @@ private fun ColumnScope.DraftContent(
         }
     }
     DraftWebView(html, Modifier.weight(1f).fillMaxWidth())
-    Surface(shadowElevation = 6.dp) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
-            if (!fullscreen) {
-                error?.let { ErrorRow(it, onRetry, onDismiss) }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onChat, modifier = Modifier.weight(1f)) { Text("回聊天更正") }
-                    OutlinedButton(onClick = onProfile, modifier = Modifier.weight(1f)) { Text("改档案重生成") }
+    Surface(color = MaterialTheme.colorScheme.surface) {
+        Column(Modifier.fillMaxWidth()) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                if (!fullscreen) {
+                    error?.let { ErrorRow(it, onRetry, onDismiss) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SecondaryButton(text = "回聊天更正", onClick = onChat, modifier = Modifier.weight(1f))
+                        SecondaryButton(text = "改档案重生成", onClick = onProfile, modifier = Modifier.weight(1f))
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    PrimaryButton(text = "确认并启用这份计划", onClick = onConfirm, enabled = canConfirm)
                 }
-                Button(onClick = onConfirm, enabled = canConfirm, modifier = Modifier.fillMaxWidth()) {
-                    Text("确认并启用这份计划")
-                }
+                TextAction(
+                    text = if (fullscreen) "退出全屏预览" else "全屏阅读草稿",
+                    onClick = onFullscreen,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(Modifier.height(bottom))
             }
-            TextButton(onClick = onFullscreen, modifier = Modifier.fillMaxWidth()) {
-                Text(if (fullscreen) "退出全屏预览" else "全屏阅读草稿")
-            }
-            Spacer(Modifier.height(bottom))
         }
     }
 }
@@ -551,7 +561,7 @@ private fun DraftWebView(html: String, modifier: Modifier = Modifier) {
             }
         }
     }
-    androidx.compose.runtime.DisposableEffect(webView) { onDispose { webView.destroy() } }
+    DisposableEffect(webView) { onDispose { webView.destroy() } }
     AndroidView(factory = { webView }, modifier = modifier, update = {
         if (it.tag != html) {
             it.tag = html
@@ -578,7 +588,7 @@ private fun AdjustmentPreviewColumn(
     if (preview == null) {
         Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
             Text("当前计划还没读到,无法整页预览", style = MaterialTheme.typography.bodyLarge)
-            TextButton(onClick = onBack) { Text("回聊天") }
+            TextAction(text = "回聊天", onClick = onBack)
         }
         return
     }
@@ -589,16 +599,22 @@ private fun AdjustmentPreviewColumn(
     }
     Column(Modifier.fillMaxSize()) {
         DraftWebView(html, Modifier.weight(1f).fillMaxWidth())
-        Surface(shadowElevation = 6.dp) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
-                state.error?.let { ErrorRow(it, onRetry, onDismiss) }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f)) { Text("回聊天") }
-                    Button(onClick = onConfirm, enabled = !state.busy, modifier = Modifier.weight(1f)) {
-                        Text(if (state.confirming) "正在生效…" else "确认调整")
+        Surface(color = MaterialTheme.colorScheme.surface) {
+            Column(Modifier.fillMaxWidth()) {
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    state.error?.let { ErrorRow(it, onRetry, onDismiss) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SecondaryButton(text = "回聊天", onClick = onBack, modifier = Modifier.weight(1f))
+                        PrimaryButton(
+                            text = if (state.confirming) "正在生效…" else "确认调整",
+                            onClick = onConfirm,
+                            enabled = !state.busy,
+                            modifier = Modifier.weight(1f)
+                        )
                     }
+                    Spacer(Modifier.height(bottom))
                 }
-                Spacer(Modifier.height(bottom))
             }
         }
     }
@@ -609,7 +625,7 @@ private fun ErrorRow(error: String, onRetry: () -> Unit, onDismiss: () -> Unit) 
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall,
             modifier = Modifier.weight(1f))
-        TextButton(onClick = onRetry) { Text("重试") }
-        TextButton(onClick = onDismiss) { Text("关闭") }
+        TextAction(text = "重试", onClick = onRetry)
+        TextAction(text = "关闭", onClick = onDismiss)
     }
 }

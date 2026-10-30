@@ -202,7 +202,11 @@ data class PlanItemDto(
     val priority: Int = 0,
     val status: String = "pending",
     val sortOrder: Int = 0,
-    val completedAt: Long? = null
+    val completedAt: Long? = null,
+    /** 服务端编译出的时段(morning/afternoon/evening),旧计划为 null */
+    val slot: String? = null,
+    /** 服务端编译出的开始时刻 HH:mm,客户端据此按时间轴展示与排序 */
+    val startTime: String? = null
 )
 
 @Serializable
@@ -237,6 +241,41 @@ data class PlanDto(
 
 @Serializable
 data class PlanResp(val plan: PlanDto? = null, val serverTime: Long = 0)
+
+/** 异步生成任务的进度(与服务端 PlanProgress 对齐) */
+@Serializable
+data class PlanJobProgressDto(
+    val percent: Int = 0,
+    /** skeleton/refining/compiling/verifying/repairing/reviewing/documenting/done */
+    val phase: String = "",
+    val message: String = ""
+)
+
+@Serializable
+data class PlanJobErrorDto(val code: String = "", val message: String = "")
+
+@Serializable
+data class PlanGenerationJobDto(
+    val id: String = "",
+    /** running / done / failed */
+    val status: String = "running",
+    val progress: PlanJobProgressDto = PlanJobProgressDto(),
+    val planId: Long? = null,
+    val error: PlanJobErrorDto? = null
+)
+
+@Serializable
+data class PlanGenerationJobResp(
+    val jobId: String = "",
+    val job: PlanGenerationJobDto = PlanGenerationJobDto(),
+    val serverTime: Long = 0
+)
+
+@Serializable
+data class PlanGenerationStatusResp(
+    val job: PlanGenerationJobDto = PlanGenerationJobDto(),
+    val serverTime: Long = 0
+)
 
 /** 勾选计划项的 slim 响应:只回被改的那一项与进度(全量 plan 数百 KB,勾选是高频操作) */
 @Serializable
@@ -568,6 +607,17 @@ interface YanzhongApi {
      */
     @POST("api/v1/plans/generate")
     suspend fun generatePlan(): PlanResp
+
+    /**
+     * 异步生成计划:立刻拿到 jobId,后台跑完整链路,进度经 WebSocket 的 planGeneration
+     * 事件推送,也可以用 [getPlanGenerationJob] 轮询兜底。旧服务端无此路由时返回 404,
+     * 调用方回退到同步的 [generatePlan]。
+     */
+    @POST("api/v1/plans/generate/jobs")
+    suspend fun startPlanGeneration(): PlanGenerationJobResp
+
+    @GET("api/v1/plans/generate/jobs/{id}")
+    suspend fun getPlanGenerationJob(@Path("id") id: String): PlanGenerationStatusResp
 
     @POST("api/v1/plans/{id}/confirm")
     suspend fun confirmPlan(@Path("id") id: Long): PlanResp

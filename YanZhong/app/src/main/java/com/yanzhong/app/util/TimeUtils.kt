@@ -135,6 +135,27 @@ object TimeUtils {
     /** 周一=0 … 周日=6,与任务 repeatDays 位定义(bit0=周一)一致 */
     fun dayOfWeekIndex(epochMilli: Long): Int = dateOf(epochMilli).dayOfWeek.value - 1
 
+    /**
+     * 服务端计划时段 → 展示文案(上午 08:00)。
+     * slot 是机器可读的 morning/afternoon/evening,startTime 是 HH:mm;
+     * 任一缺失就退到还有的那一半,都没有返回 null(手工任务不显示时间)。
+     */
+    fun planTimeLabel(slot: String?, startTime: String?): String? {
+        val time = startTime?.trim().orEmpty()
+        val label = when (slot?.trim()?.lowercase()) {
+            "morning" -> "上午"
+            "afternoon" -> "下午"
+            "evening" -> "晚上"
+            else -> ""
+        }
+        return when {
+            time.isNotEmpty() && label.isNotEmpty() -> "$label $time"
+            time.isNotEmpty() -> time
+            label.isNotEmpty() -> label
+            else -> null
+        }
+    }
+
     /** 长时长格式化:5h 40m / 42m / 3h */
     fun formatHours(minutes: Int): String {
         if (minutes <= 0) return "0m"
