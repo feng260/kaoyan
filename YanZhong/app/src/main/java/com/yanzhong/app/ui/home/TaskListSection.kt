@@ -1,18 +1,17 @@
 package com.yanzhong.app.ui.home
 
 import androidx.compose.animation.animateContentSize
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -20,14 +19,11 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -37,28 +33,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.data.plan.isServerPlanItem
-import com.yanzhong.app.ui.theme.AmberGold
+import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
-import com.yanzhong.app.ui.theme.SubjectCsColor
-import com.yanzhong.app.ui.theme.SubjectArtwork
+import com.yanzhong.app.ui.theme.CompletionCircle
+import com.yanzhong.app.ui.theme.EmptyState
+import com.yanzhong.app.ui.theme.ListRow
+import com.yanzhong.app.ui.theme.PillButton
+import com.yanzhong.app.ui.theme.ProgressLine
+import com.yanzhong.app.ui.theme.SectionHeader
 import com.yanzhong.app.ui.theme.SuccessGreen
 import com.yanzhong.app.ui.theme.WarnRed
 import com.yanzhong.app.util.TimeUtils
 
-/** 今日待办列表:右滑完成、左滑顺延、▶ 开钟(PRD 3.3 / 6.5,视觉参考番茄ToDo 待办区块)。
+/** 今日待办列表:点圆环或右滑完成、左滑顺延、点「开始」直接专注(PRD 3.3 / 6.5)。
  *  LazyListScope 扩展:待办逐项成 item(key=id),增删带位移动画且互不牵连重组 */
 fun LazyListScope.taskListSection(
     openTasks: List<TaskEntity>,
@@ -73,26 +69,19 @@ fun LazyListScope.taskListSection(
     onTaskClick: (TaskEntity) -> Unit
 ) {
     item(key = "task-section-header") {
-        Column(Modifier.padding(top = 8.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("今日待办", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.width(10.dp))
-                Surface(
-                    shape = RoundedCornerShape(999.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer
-                ) {
-                    Text(
-                        "${doneTasks.size}/${openTasks.size + doneTasks.size}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                    )
-                }
+        Column {
+            SectionHeader(
+                title = "今日待办",
+                meta = "${doneTasks.size}/${openTasks.size + doneTasks.size} 已完成"
+            )
+            if (openTasks.isEmpty()) {
+                EmptyState(
+                    icon = AppIcons.SubjectDefault,
+                    title = "今天还没有任务",
+                    hint = "添加一个任务，或直接开始自由专注",
+                    compact = true
+                )
             }
-            Spacer(Modifier.height(12.dp))
-            if (openTasks.isEmpty()) EmptyTaskHint()
         }
     }
 
@@ -129,41 +118,25 @@ private fun DoneSection(
 ) {
     var doneExpanded by remember { mutableStateOf(false) }
     Column(Modifier.animateContentSize()) {
-        Surface(
-            onClick = { doneExpanded = !doneExpanded },
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Row(
-                Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = if (doneExpanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    "已完成 ${doneTasks.size} 项",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        AppCard(contentPadding = PaddingValues(0.dp)) {
+            ListRow(
+                title = "已完成 ${doneTasks.size} 项",
+                icon = if (doneExpanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
+                onClick = { doneExpanded = !doneExpanded }
+            )
         }
         if (doneExpanded) {
             Spacer(Modifier.height(8.dp))
-            doneTasks.forEach { task ->
-                DoneTaskRow(task = task, subjects = subjects, onClick = { onTaskClick(task) })
-                Spacer(Modifier.height(8.dp))
+            AppCard(contentPadding = PaddingValues(vertical = 4.dp)) {
+                doneTasks.forEach { task ->
+                    DoneTaskRow(task = task, subjects = subjects, onClick = { onTaskClick(task) })
+                }
             }
         }
     }
 }
 
-/** 任务区块卡(参考番茄ToDo 待办集):清新插画 + 标题信息 + 番茄进度条 */
+/** 任务行卡:左圆环一键完成,右侧「开始」胶囊进入专注,整卡点开编辑 */
 @Composable
 private fun TaskRow(
     task: TaskEntity,
@@ -178,10 +151,12 @@ private fun TaskRow(
     modifier: Modifier = Modifier,
     planSlot: String? = null
 ) {
+    val haptic = LocalHapticFeedback.current
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
             when (value) {
                 SwipeToDismissBoxValue.StartToEnd -> {
+                    haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                     onComplete()
                     !task.isServerPlanItem()
                 }
@@ -225,136 +200,71 @@ private fun TaskRow(
             }
         }
     ) {
-        Surface(
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 1.dp,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .animateContentSize()
+        AppCard(
+            onClick = onClick,
+            contentPadding = PaddingValues(12.dp),
+            modifier = Modifier.animateContentSize()
         ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 15.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // 科目清新小插画(参考番茄ToDo 待办集插图)
-                    SubjectArtwork(
-                        subjectName = subjectName,
-                        color = subjectColor,
-                        modifier = Modifier.size(48.dp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                CompletionCircle(
+                    checked = false,
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onComplete()
+                    }
+                )
+                Spacer(Modifier.width(4.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        task.title,
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
+                    Spacer(Modifier.height(2.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(subjectColor)
+                        )
+                        Spacer(Modifier.width(6.dp))
                         Text(
-                            task.title,
-                            style = MaterialTheme.typography.bodyLarge,
+                            listOfNotNull(
+                                subjectName,
+                                planSlot ?: task.dueAt?.let { TimeUtils.formatHm(it) },
+                                task.pomodoroEstimate
+                                    .takeIf { it > 0 }
+                                    ?.let { "${task.completedPomodoros}/$it 番茄" }
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (overdue) WarnRed else MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(top = 3.dp)
-                        ) {
-                            // 时间显示:优先节奏计划时段(随排程动态调整),无排程回退 dueAt
-                            when {
-                                planSlot != null -> {
-                                    Text(
-                                        planSlot,
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = SuccessGreen
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                }
-                                task.dueAt != null -> {
-                                    Text(
-                                        TimeUtils.formatHm(task.dueAt!!),
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = if (overdue) WarnRed else subjectColor
-                                    )
-                                    Spacer(Modifier.width(8.dp))
-                                }
-                            }
-                            Text(
-                                subjectName,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = subjectColor
-                            )
-                            if (task.repeatRule != 0) {
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    repeatLabel(task),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (task.postponeCount > 0) {
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    "顺延×${task.postponeCount}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.tertiary
-                                )
-                            }
-                        }
-                        if (overdue) {
-                            Text(
-                                "已过期 · ${TimeUtils.dueLabel(task.dueAt!!)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = WarnRed,
-                                modifier = Modifier.padding(top = 2.dp)
-                            )
-                        }
                     }
-                    // 开钟圆按钮
-                    Box(
-                        Modifier
-                            .size(36.dp)
-                            .clip(CircleShape)
-                            .background(subjectColor.copy(alpha = 0.14f))
-                            .clickable(onClick = onStartFocus),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            AppIcons.Play,
-                            contentDescription = "为「${task.title}」开始番茄钟",
-                            tint = subjectColor,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-                // 番茄进度条:区块卡底部完成度可视化
-                if (task.pomodoroEstimate > 0) {
-                    Spacer(Modifier.height(10.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        val fraction =
-                            (task.completedPomodoros.toFloat() / task.pomodoroEstimate)
-                                .coerceIn(0f, 1f)
-                        Box(
-                            Modifier
-                                .weight(1f)
-                                .height(5.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f))
-                        ) {
-                            Box(
-                                Modifier
-                                    .fillMaxWidth(fraction)
-                                    .fillMaxHeight()
-                                    .clip(CircleShape)
-                                    .background(
-                                        if (task.completedPomodoros >= task.pomodoroEstimate)
-                                            SuccessGreen else subjectColor
-                                    )
-                            )
-                        }
-                        Spacer(Modifier.width(8.dp))
+                    if (task.repeatRule != 0 || task.postponeCount > 0) {
                         Text(
-                            "🍅 ${task.completedPomodoros}/${task.pomodoroEstimate}",
+                            listOfNotNull(
+                                task.repeatRule.takeIf { it != 0 }?.let { repeatLabel(task) },
+                                task.postponeCount.takeIf { it > 0 }?.let { "顺延×$it" }
+                            ).joinToString(" · "),
                             style = MaterialTheme.typography.labelSmall,
-                            color = if (task.completedPomodoros >= task.pomodoroEstimate)
-                                SuccessGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
+                Spacer(Modifier.width(8.dp))
+                PillButton(text = "开始", onClick = onStartFocus)
+            }
+            if (task.pomodoroEstimate > 0) {
+                Spacer(Modifier.height(10.dp))
+                ProgressLine(
+                    progress = task.completedPomodoros.toFloat() / task.pomodoroEstimate,
+                    color = if (task.completedPomodoros >= task.pomodoroEstimate) SuccessGreen else subjectColor,
+                    height = 4.dp
+                )
             }
         }
     }
@@ -377,134 +287,34 @@ private fun repeatLabel(task: TaskEntity): String = when (task.repeatRule) {
 @Composable
 private fun DoneTaskRow(task: TaskEntity, subjects: List<SubjectEntity>, onClick: () -> Unit) {
     val subject = subjects.firstOrNull { it.id == task.subjectId }
-    val subjectColor = subject?.let { Color(it.colorArgb) } ?: MaterialTheme.colorScheme.primary
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-        modifier = Modifier
+    Row(
+        Modifier
             .fillMaxWidth()
+            .heightIn(min = 48.dp)
             .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(SuccessGreen.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    AppIcons.Check,
-                    contentDescription = "已完成",
-                    tint = SuccessGreen,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-            Spacer(Modifier.width(10.dp))
-            Text(
-                task.title,
-                style = MaterialTheme.typography.bodyLarge,
-                textDecoration = TextDecoration.LineThrough,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            Text(
-                subject?.name ?: "",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-            )
-        }
-    }
-}
-
-/** 空状态:清新日出山丘小插画(Canvas 代码绘制,不加图片资源) */
-@Composable
-private fun EmptyTaskHint() {
-    Surface(
-        shape = RoundedCornerShape(20.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(
-            Modifier.padding(vertical = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                Modifier
-                    .padding(horizontal = 36.dp)
-                    .fillMaxWidth()
-                    .height(120.dp)
-                    .clip(RoundedCornerShape(16.dp))
-            ) {
-                // 日出山丘场景
-                val skyTop = MaterialTheme.colorScheme.primaryContainer
-                val skyBottom = MaterialTheme.colorScheme.surface
-                val hillFar = SubjectCsColor.copy(alpha = 0.30f)
-                val hillNear = SubjectCsColor.copy(alpha = 0.45f)
-                Canvas(Modifier.fillMaxSize()) {
-                    val w = size.width
-                    val h = size.height
-                    drawRoundRect(
-                        brush = Brush.verticalGradient(listOf(skyTop, skyBottom)),
-                        cornerRadius = CornerRadius(24f, 24f),
-                        size = Size(w, h)
-                    )
-                    // 太阳 + 光晕
-                    val sun = Offset(w * 0.76f, h * 0.26f)
-                    drawCircle(AmberGold.copy(alpha = 0.25f), radius = 30f, center = sun)
-                    drawCircle(AmberGold, radius = 17f, center = sun)
-                    // 远山
-                    val far = Path().apply {
-                        moveTo(0f, h * 0.78f)
-                        cubicTo(w * 0.22f, h * 0.58f, w * 0.5f, h * 0.82f, w * 0.78f, h * 0.66f)
-                        lineTo(w, h * 0.74f)
-                        lineTo(w, h)
-                        lineTo(0f, h)
-                        close()
-                    }
-                    drawPath(far, hillFar)
-                    // 近山
-                    val near = Path().apply {
-                        moveTo(0f, h * 0.92f)
-                        cubicTo(w * 0.3f, h * 0.78f, w * 0.7f, h * 0.9f, w, h * 0.84f)
-                        lineTo(w, h)
-                        lineTo(0f, h)
-                        close()
-                    }
-                    drawPath(near, hillNear)
-                }
-                // 场景中央:书本
-                Box(
-                    Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = 14.dp)
-                        .size(52.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surface),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        AppIcons.SubjectDefault,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(26.dp)
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            Text("今天没有安排?", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "从添加一个任务开始,或者点下方新番茄直接专注",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        Icon(
+            AppIcons.CheckCircle,
+            contentDescription = "已完成",
+            tint = SuccessGreen,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Text(
+            task.title,
+            style = MaterialTheme.typography.bodyMedium,
+            textDecoration = TextDecoration.LineThrough,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f)
+        )
+        Text(
+            subject?.name ?: "",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
