@@ -2,11 +2,9 @@ package com.yanzhong.app.ui.supermode
 
 import android.app.Application
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -17,23 +15,23 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,7 +42,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,6 +55,9 @@ import androidx.navigation.NavHostController
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
+import com.yanzhong.app.ui.theme.PrimaryButton
+import com.yanzhong.app.ui.theme.RowDivider
+import com.yanzhong.app.ui.theme.SkeletonBlock
 import com.yanzhong.app.ui.theme.SubPageHeader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -183,95 +183,110 @@ fun AppPickerScreen(
 
     // 平板:限宽 720dp 居中
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-    Column(
-        Modifier
-            .widthIn(max = CONTENT_MAX_WIDTH)
-            .fillMaxWidth()
-            .statusBarsPadding()
-            .padding(bottom = padding.calculateBottomPadding())
-    ) {
-        SubPageHeader(
-            title = "应用白名单",
-            meta = if (subjectId == -1L) "专注期间可正常使用的应用"
-            else "该科目专注时使用的应用(场景化策略)",
-            onBack = {
-                if (state.isDirty) showDiscardConfirm = true else navController.popBackStack()
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp),
-            actions = {
-                TextButton(
-                    enabled = !state.loading,
-                    onClick = { vm.save { navController.popBackStack() } }
-                ) { Text("保存") }
-            }
-        )
-
-        OutlinedTextField(
-            value = query,
-            onValueChange = {
-                query = it
-                vm.setQuery(it)
-            },
-            label = { Text("搜索应用") },
-            leadingIcon = {
-                Icon(
-                    AppIcons.Search,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-            },
-            singleLine = true,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-        )
-
-        Row(
+        Column(
             Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .widthIn(max = CONTENT_MAX_WIDTH)
+                .fillMaxSize()
+                .statusBarsPadding()
         ) {
-            Text(
-                "已选 ${state.selected.size} 个应用",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.weight(1f)
+            SubPageHeader(
+                title = "选择允许的应用",
+                meta = "仅学霸模式生效",
+                onBack = {
+                    if (state.isDirty) showDiscardConfirm = true else navController.popBackStack()
+                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
             )
-            TextButton(onClick = { vm.selectAll(vm.filtered(state.apps).map { it.pkg }) }) {
-                Text("全选")
-            }
-            TextButton(
-                onClick = {
-                    // 已有勾选的清空属于大改动,确认后再执行
-                    if (state.selected.isEmpty()) vm.clearAll() else showClearConfirm = true
-                }
-            ) { Text("清空") }
-        }
 
-        if (state.loading) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator()
-            }
-        } else {
-            LazyColumn(
-                contentPadding = PaddingValues(
-                    start = 20.dp, end = 20.dp, bottom = 24.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                items(vm.filtered(state.apps), key = { it.pkg }) { app ->
-                    AppRow(
-                        app = app,
-                        checked = app.pkg in state.selected,
-                        onToggle = { vm.toggle(app.pkg) }
+            Spacer(Modifier.height(4.dp))
+            OutlinedTextField(
+                value = query,
+                onValueChange = {
+                    query = it
+                    vm.setQuery(it)
+                },
+                label = { Text("搜索应用") },
+                leadingIcon = {
+                    Icon(
+                        AppIcons.Search,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
                     )
+                },
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp)
+            )
+
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "已选 ${state.selected.size} 个应用",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(onClick = { vm.selectAll(vm.filtered(state.apps).map { it.pkg }) }) {
+                    Text("全选")
+                }
+                TextButton(
+                    onClick = {
+                        // 已有勾选的清空属于大改动,确认后再执行
+                        if (state.selected.isEmpty()) vm.clearAll() else showClearConfirm = true
+                    }
+                ) { Text("清空") }
+            }
+
+            if (state.loading) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    repeat(6) {
+                        SkeletonBlock(height = 48.dp)
+                    }
+                }
+            } else {
+                val apps = vm.filtered(state.apps)
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 4.dp, bottom = 16.dp)
+                ) {
+                    itemsIndexed(apps, key = { _, app -> app.pkg }) { index, app ->
+                        AppRow(
+                            app = app,
+                            checked = app.pkg in state.selected,
+                            onToggle = { vm.toggle(app.pkg) }
+                        )
+                        if (index < apps.lastIndex) RowDivider(startIndent = 44.dp)
+                    }
+                }
+            }
+
+            // 固定底部保存:选择器隐藏了底部导航,这里补上系统栏与键盘避让
+            Surface(color = MaterialTheme.colorScheme.surface) {
+                Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding()) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                        PrimaryButton(
+                            text = "保存",
+                            onClick = { vm.save { navController.popBackStack() } },
+                            enabled = !state.loading
+                        )
+                    }
                 }
             }
         }
-    }
     }
 
     if (showDiscardConfirm) {
@@ -309,55 +324,44 @@ fun AppPickerScreen(
     }
 }
 
+/** 应用行:系统图标 + 名称 + 包名 + 开关;整行 ≥56dp 可点,视觉与 ListRow 一致 */
 @Composable
 private fun AppRow(app: InstalledApp, checked: Boolean, onToggle: () -> Unit) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        modifier = Modifier
+    val bitmap = remember(app.pkg) {
+        runCatching { app.icon?.toBitmap(96, 96)?.asImageBitmap() }.getOrNull()
+    }
+    Row(
+        Modifier
             .fillMaxWidth()
+            .heightIn(min = 56.dp)
             .clickable(onClick = onToggle)
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            val bitmap = remember(app.pkg) {
-                runCatching { app.icon?.toBitmap(96, 96)?.asImageBitmap() }.getOrNull()
-            }
-            if (bitmap != null) {
-                Image(
-                    bitmap = bitmap,
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.size(40.dp)
-                )
-            } else {
-                Box(
-                    Modifier
-                        .size(40.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                )
-            }
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.size(32.dp)
+            )
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    app.label,
-                    style = MaterialTheme.typography.bodyLarge,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    app.pkg,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Checkbox(checked = checked, onCheckedChange = { onToggle() })
         }
+        Column(Modifier.weight(1f)) {
+            Text(
+                app.label,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                app.pkg,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Switch(checked = checked, onCheckedChange = { onToggle() })
     }
 }

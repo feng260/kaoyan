@@ -2,10 +2,7 @@ package com.yanzhong.app.ui.supermode
 
 import android.content.Intent
 import android.provider.Settings
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,17 +18,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,7 +36,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -61,10 +52,19 @@ import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.service.FocusService
 import com.yanzhong.app.ui.nav.Routes
+import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
-import com.yanzhong.app.ui.theme.SectionCard
+import com.yanzhong.app.ui.theme.ListRow
+import com.yanzhong.app.ui.theme.PillTone
+import com.yanzhong.app.ui.theme.PrimaryButton
+import com.yanzhong.app.ui.theme.RowDivider
+import com.yanzhong.app.ui.theme.RowGroup
+import com.yanzhong.app.ui.theme.SecondaryButton
+import com.yanzhong.app.ui.theme.SectionHeader
+import com.yanzhong.app.ui.theme.StatusPill
 import com.yanzhong.app.ui.theme.SubPageHeader
+import com.yanzhong.app.ui.theme.TextAction
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -136,196 +136,48 @@ fun SuperModeScreen(padding: PaddingValues, navController: androidx.navigation.N
 
     // 平板:限宽 720dp 居中
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-    Column(
-        Modifier
-            .widthIn(max = CONTENT_MAX_WIDTH)
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .statusBarsPadding()
-            .padding(bottom = padding.calculateBottomPadding() + 24.dp)
-    ) {
-        SubPageHeader(
-            title = "学霸模式",
-            onBack = { navController.popBackStack() },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 4.dp)
-        )
-        Column(Modifier.padding(horizontal = 20.dp)) {
-            Text(
-                "开启后,启动番茄钟专注计时时自动拦截非白名单应用,计时结束自动解除。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        Column(
+            Modifier
+                .widthIn(max = CONTENT_MAX_WIDTH)
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .statusBarsPadding()
+                .padding(bottom = padding.calculateBottomPadding() + 24.dp)
+        ) {
+            SubPageHeader(
+                title = "学霸模式",
+                meta = "专注期间拦截非白名单应用",
+                onBack = { navController.popBackStack() },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 4.dp)
             )
-            Spacer(Modifier.height(16.dp))
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                Spacer(Modifier.height(8.dp))
+                StatusCard(
+                    enabled = state.settings.superModeOn,
+                    onChange = { vm.setOn(it) }
+                )
 
-            // 总开关
-            SwitchCard(
-                title = "启用学霸模式",
-                subtitle = "专注期间从根源避免刷社交、看视频等分心行为",
-                checked = state.settings.superModeOn,
-                onChange = { vm.setOn(it) }
-            )
-
-            if (state.settings.superModeOn) {
-                Spacer(Modifier.height(16.dp))
-
-                // 严格等级
-                SectionCard(title = "严格等级", icon = AppIcons.Sliders) {
-                    StrictLevelCard(
-                        title = "标准模式",
-                        desc = "允许正常使用白名单内的应用(词典、网课、刷题等),屏蔽其余所有应用",
-                        icon = AppIcons.ShieldCheck,
-                        selected = !state.settings.superModeStrict,
-                        onClick = { vm.setStrict(false) }
+                if (state.settings.superModeOn) {
+                    StrictLevelSection(
+                        strict = state.settings.superModeStrict,
+                        onSelect = { vm.setStrict(it) }
                     )
-                    Spacer(Modifier.height(10.dp))
-                    StrictLevelCard(
-                        title = "严格模式",
-                        desc = "完全锁定在研钟专注界面,无法退出、无法暂停、无法使用任何其他应用",
-                        icon = AppIcons.Lock,
-                        selected = state.settings.superModeStrict,
-                        onClick = { vm.setStrict(true) }
-                    )
-                }
+                    OverlaySection(granted = state.overlayAccess)
 
-                Spacer(Modifier.height(16.dp))
-
-                // 悬浮窗权限:全屏覆盖层拦截(防逃逸增强)
-                SectionCard(title = "悬浮窗拦截", icon = AppIcons.Smartphone) {
-                    val context = LocalContext.current
-                    // 一行摘要 + 按需展开详情(A3):三四行小字压在一起读不动
-                    var detailOpen by remember { mutableStateOf(false) }
-                    Text(
-                        if (state.overlayAccess) "已授权 · 专注期间非白名单应用被全屏锁定层拦截。"
-                        else "未授权 · 专注期间以 1 秒轮询拉回代替，体验较差。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    if (detailOpen) {
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            if (state.overlayAccess)
-                                "「显示在其他应用上层」生效中:专注期间对非白名单应用渲染全屏锁定层,直接拦截触摸,消除按 Home 键后的最大逃逸口。"
-                            else
-                                "开启「显示在其他应用上层」后,专注期间对非白名单应用渲染全屏锁定层直接拦截触摸;" +
-                                    "未授权时回退为 1 秒轮询拉回方案(体验较差)。注意:覆盖层无法拦截下拉状态栏。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (!state.settings.superModeStrict) {
+                        UsageAccessSection(granted = state.usageAccess)
+                        WhitelistSection(
+                            settings = state.settings,
+                            subjects = state.subjects,
+                            onOpenPicker = { subjectId -> navController.navigate(Routes.appPicker(subjectId)) }
                         )
-                    }
-                    TextButton(onClick = { detailOpen = !detailOpen }) {
-                        Text(if (detailOpen) "收起详情" else "查看详情")
-                    }
-                    if (!state.overlayAccess) {
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = {
-                                runCatching {
-                                    context.startActivity(
-                                        Intent(
-                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                            android.net.Uri.parse("package:${context.packageName}")
-                                        )
-                                    )
-                                }
-                            },
-                            shape = RoundedCornerShape(999.dp)
-                        ) { Text("去开启悬浮窗权限") }
-                    }
-                }
-
-                if (!state.settings.superModeStrict) {
-                    Spacer(Modifier.height(16.dp))
-
-                    // 权限引导:标准模式识别前台应用
-                    SectionCard(title = "拦截权限", icon = AppIcons.ShieldCheck) {
-                        val context = LocalContext.current
-                        Text(
-                            if (state.usageAccess) "已授权 · 可识别白名单应用并拦截其余应用。"
-                            else "未授权 · 标准模式无法识别前台应用，白名单拦截不生效。",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
+                    } else {
+                        EmergencyPinSection(
+                            configured = state.settings.emergencyPinHash.isNotEmpty(),
+                            onEdit = { showPinEditor = true }
                         )
-                        if (!state.usageAccess) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                "标准模式需要「使用情况访问」权限识别前台应用,未授权时无法执行白名单拦截。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Button(
-                                onClick = {
-                                    runCatching {
-                                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
-                                    }
-                                },
-                                shape = RoundedCornerShape(999.dp)
-                            ) { Text("去系统设置授权") }
-                        }
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-
-                    // 白名单管理
-                    SectionCard(title = "应用白名单", icon = AppIcons.AppWindow) {
-                        EntryRow(
-                            title = "全局白名单",
-                            value = "已选 ${state.settings.whitelist.size} 个应用",
-                            onClick = {
-                                navController.navigate(Routes.appPicker(-1L))
-                            }
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            "场景化策略:可为不同科目定制专属白名单,启动该科目任务时生效;未定制科目使用全局白名单。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        state.subjects.forEach { subject ->
-                            val custom = state.settings.subjectWhitelist[subject.id]
-                            EntryRow(
-                                title = subject.name,
-                                value = custom?.let { "定制 ${it.size} 个应用" } ?: "跟随全局",
-                                dotColor = Color(subject.colorArgb),
-                                onClick = {
-                                    navController.navigate(Routes.appPicker(subject.id))
-                                }
-                            )
-                            Spacer(Modifier.height(8.dp))
-                        }
-                    }
-                } else {
-                    Spacer(Modifier.height(16.dp))
-
-                    // 紧急退出密码(严格模式逃生口)
-                    SectionCard(title = "紧急退出密码", icon = AppIcons.Key) {
-                        Text(
-                            "遇到突发情况时,输入 6 位密码可强制退出严格锁定;" +
-                                "此次退出会记录为非正常退出,体现在专注数据报告中。忘记密码只能等待计时结束。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = { showPinEditor = true },
-                            shape = RoundedCornerShape(999.dp)
-                        ) {
-                            Text(
-                                if (state.settings.emergencyPinHash.isEmpty()) "设置 6 位紧急退出密码"
-                                else "修改紧急退出密码"
-                            )
-                        }
-                        if (state.settings.emergencyPinHash.isEmpty()) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                "未设置密码时严格模式无法紧急退出",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
                     }
                 }
             }
@@ -340,130 +192,244 @@ fun SuperModeScreen(padding: PaddingValues, navController: androidx.navigation.N
             onDismiss = { showPinEditor = false }
         )
     }
-    }
 }
 
+/** 总开关状态卡:一个状态徽标 + 一句说明 + 唯一的行动按钮 */
 @Composable
-private fun SwitchCard(
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onChange: (Boolean) -> Unit
-) {
-    Surface(
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = if (checked) 0.5f else 0.3f),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                AppIcons.Shield,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp)
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Switch(checked = checked, onCheckedChange = onChange)
-        }
-    }
-}
-
-@Composable
-private fun StrictLevelCard(
-    title: String,
-    desc: String,
-    icon: ImageVector,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
-        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)) else null,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = if (selected) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = if (selected) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface
-                )
-                Text(
-                    desc,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun EntryRow(
-    title: String,
-    value: String,
-    dotColor: Color? = null,
-    onClick: () -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-    ) {
-        Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (dotColor != null) {
-                Box(
-                    Modifier
-                        .size(12.dp)
-                        .clip(CircleShape)
-                        .background(dotColor)
-                )
-                Spacer(Modifier.width(10.dp))
-            }
-            Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+private fun StatusCard(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                value,
-                style = MaterialTheme.typography.labelMedium,
+                "启用学霸模式",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f)
+            )
+            StatusPill(
+                text = if (enabled) "已开启" else "未开启",
+                tone = if (enabled) PillTone.SOLID else PillTone.NEUTRAL
+            )
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            "开启后,启动番茄钟专注计时时自动拦截非白名单应用,计时结束自动解除。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(14.dp))
+        if (enabled) {
+            SecondaryButton(text = "关闭学霸模式", onClick = { onChange(false) })
+        } else {
+            PrimaryButton(text = "开启学霸模式", onClick = { onChange(true) })
+        }
+    }
+}
+
+/** 严格等级:两档二选一,当前档位用勾选图标标出 */
+@Composable
+private fun StrictLevelSection(strict: Boolean, onSelect: (Boolean) -> Unit) {
+    Spacer(Modifier.height(20.dp))
+    SectionHeader(title = "严格等级")
+    Spacer(Modifier.height(8.dp))
+    RowGroup {
+        ListRow(
+            title = "标准模式",
+            subtitle = "允许正常使用白名单内的应用(词典、网课、刷题等),屏蔽其余所有应用",
+            onClick = { onSelect(false) },
+            showChevron = false,
+            trailing = { SelectedMark(selected = !strict) }
+        )
+        RowDivider()
+        ListRow(
+            title = "严格模式",
+            subtitle = "完全锁定在研钟专注界面,无法退出、无法暂停、无法使用任何其他应用",
+            onClick = { onSelect(true) },
+            showChevron = false,
+            trailing = { SelectedMark(selected = strict) }
+        )
+    }
+}
+
+@Composable
+private fun SelectedMark(selected: Boolean) {
+    if (selected) {
+        Icon(
+            AppIcons.Check,
+            contentDescription = "使用中",
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+    }
+}
+
+/** 悬浮窗拦截:状态一句话,详情按需展开,未授权时给唯一行动按钮 */
+@Composable
+private fun OverlaySection(granted: Boolean) {
+    val context = LocalContext.current
+    var detailOpen by remember { mutableStateOf(false) }
+
+    Spacer(Modifier.height(20.dp))
+    SectionHeader(
+        title = "悬浮窗拦截",
+        action = {
+            TextAction(
+                text = if (detailOpen) "收起详情" else "查看详情",
+                onClick = { detailOpen = !detailOpen }
+            )
+        }
+    )
+    Spacer(Modifier.height(8.dp))
+    AppCard {
+        Text(
+            if (granted) "已授权 · 专注期间非白名单应用被全屏锁定层拦截。"
+            else "未授权 · 专注期间以 1 秒轮询拉回代替，体验较差。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        if (detailOpen) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (granted)
+                    "「显示在其他应用上层」生效中:专注期间对非白名单应用渲染全屏锁定层,直接拦截触摸,消除按 Home 键后的最大逃逸口。"
+                else
+                    "开启「显示在其他应用上层」后,专注期间对非白名单应用渲染全屏锁定层直接拦截触摸;" +
+                        "未授权时回退为 1 秒轮询拉回方案(体验较差)。注意:覆盖层无法拦截下拉状态栏。",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.width(4.dp))
-            Icon(
-                AppIcons.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(18.dp)
+        }
+        if (!granted) {
+            Spacer(Modifier.height(12.dp))
+            PrimaryButton(
+                text = "去开启悬浮窗权限",
+                onClick = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                android.net.Uri.parse("package:${context.packageName}")
+                            )
+                        )
+                    }
+                }
+            )
+        }
+    }
+}
+
+/** 使用情况访问权限:标准模式识别前台应用的前提 */
+@Composable
+private fun UsageAccessSection(granted: Boolean) {
+    val context = LocalContext.current
+
+    Spacer(Modifier.height(20.dp))
+    SectionHeader(title = "拦截权限")
+    Spacer(Modifier.height(8.dp))
+    AppCard {
+        Text(
+            if (granted) "已授权 · 可识别白名单应用并拦截其余应用。"
+            else "未授权 · 标准模式无法识别前台应用，白名单拦截不生效。",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        if (!granted) {
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "标准模式需要「使用情况访问」权限识别前台应用,未授权时无法执行白名单拦截。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(12.dp))
+            PrimaryButton(
+                text = "去系统设置授权",
+                onClick = {
+                    runCatching {
+                        context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                    }
+                }
+            )
+        }
+    }
+}
+
+/** 应用白名单:全局 + 按科目定制,每行进入同一个选择器 */
+@Composable
+private fun WhitelistSection(
+    settings: AppSettings,
+    subjects: List<SubjectEntity>,
+    onOpenPicker: (Long) -> Unit
+) {
+    Spacer(Modifier.height(20.dp))
+    SectionHeader(title = "应用白名单")
+    Spacer(Modifier.height(8.dp))
+    RowGroup {
+        ListRow(
+            title = "全局白名单",
+            onClick = { onOpenPicker(-1L) },
+            trailing = {
+                Text(
+                    "已选 ${settings.whitelist.size} 个应用",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        )
+        RowDivider()
+        subjects.forEachIndexed { index, subject ->
+            if (index > 0) RowDivider()
+            val custom = settings.subjectWhitelist[subject.id]
+            ListRow(
+                title = subject.name,
+                onClick = { onOpenPicker(subject.id) },
+                trailing = {
+                    Box(
+                        Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(Color(subject.colorArgb))
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        custom?.let { "定制 ${it.size} 个应用" } ?: "跟随全局",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            )
+        }
+        RowDivider()
+        Text(
+            "场景化策略:可为不同科目定制专属白名单,启动该科目任务时生效;未定制科目使用全局白名单。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)
+        )
+    }
+}
+
+/** 紧急退出密码:严格模式下唯一的逃生口 */
+@Composable
+private fun EmergencyPinSection(configured: Boolean, onEdit: () -> Unit) {
+    Spacer(Modifier.height(20.dp))
+    SectionHeader(title = "紧急退出密码")
+    Spacer(Modifier.height(8.dp))
+    AppCard {
+        Text(
+            "遇到突发情况时,输入 6 位密码可强制退出严格锁定;" +
+                "此次退出会记录为非正常退出,体现在专注数据报告中。忘记密码只能等待计时结束。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(12.dp))
+        PrimaryButton(
+            text = if (configured) "修改紧急退出密码" else "设置 6 位紧急退出密码",
+            onClick = onEdit
+        )
+        if (!configured) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "未设置密码时严格模式无法紧急退出",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
             )
         }
     }
