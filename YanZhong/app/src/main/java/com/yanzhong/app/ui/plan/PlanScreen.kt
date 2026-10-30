@@ -115,17 +115,18 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
         item {
             com.yanzhong.app.ui.theme.PageHeader(
                 title = "计划",
-                subtitle = "AI 按你的备考档案排的计划"
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = { navController.navigate(Routes.PLAN_HISTORY) }) {
-                        Icon(AppIcons.ClipboardList, contentDescription = "历史计划")
-                    }
-                    IconButton(onClick = vm::refreshPlan, enabled = loggedIn && !planLoading) {
-                        Icon(AppIcons.RotateCcw, contentDescription = "刷新")
+                meta = "AI 按你的备考档案排的计划",
+                actions = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { navController.navigate(Routes.PLAN_HISTORY) }) {
+                            Icon(AppIcons.ClipboardList, contentDescription = "历史计划")
+                        }
+                        IconButton(onClick = vm::refreshPlan, enabled = loggedIn && !planLoading) {
+                            Icon(AppIcons.RotateCcw, contentDescription = "刷新")
+                        }
                     }
                 }
-            }
+            )
         }
 
         item(key = "server-plan") {

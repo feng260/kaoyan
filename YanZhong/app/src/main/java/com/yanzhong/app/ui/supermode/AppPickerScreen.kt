@@ -192,7 +192,7 @@ fun AppPickerScreen(
     ) {
         SubPageHeader(
             title = "应用白名单",
-            subtitle = if (subjectId == -1L) "专注期间可正常使用的应用"
+            meta = if (subjectId == -1L) "专注期间可正常使用的应用"
             else "该科目专注时使用的应用(场景化策略)",
             onBack = {
                 if (state.isDirty) showDiscardConfirm = true else navController.popBackStack()
@@ -200,7 +200,7 @@ fun AppPickerScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 8.dp, vertical = 4.dp),
-            trailing = {
+            actions = {
                 TextButton(
                     enabled = !state.loading,
                     onClick = { vm.save { navController.popBackStack() } }

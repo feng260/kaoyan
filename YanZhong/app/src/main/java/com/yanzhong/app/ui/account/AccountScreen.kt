@@ -99,7 +99,7 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
         ) {
             SubPageHeader(
                 title = "账号",
-                subtitle = "多设备共用同一份计划与进度",
+                meta = "多设备共用同一份计划与进度",
                 onBack = { navController.popBackStack() },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
             )

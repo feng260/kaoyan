@@ -222,7 +222,7 @@ fun HomeScreen(
                             }
                             PageHeader(
                                 title = "今日",
-                                subtitle = dateLabel + (state.phase?.let { " · ${it.stageName}" } ?: "")
+                                meta = dateLabel + (state.phase?.let { " · ${it.stageName}" } ?: "")
                             )
                         }
                         item {
@@ -375,13 +375,14 @@ fun HomeScreen(
                 }
                 PageHeader(
                     title = "今日",
-                    subtitle = dateLabel + (state.phase?.let { " · ${it.stageName}" } ?: "")
-                ) {
-                    TextButton(onClick = {
-                        editingTask = null
-                        showTaskEditor = true
-                    }) { Text("＋ 添加任务") }
-                }
+                    meta = dateLabel + (state.phase?.let { " · ${it.stageName}" } ?: ""),
+                    actions = {
+                        TextButton(onClick = {
+                            editingTask = null
+                            showTaskEditor = true
+                        }) { Text("＋ 添加任务") }
+                    }
+                )
             }
 
             item {
