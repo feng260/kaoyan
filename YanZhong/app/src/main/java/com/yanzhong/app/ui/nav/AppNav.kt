@@ -1,5 +1,6 @@
 package com.yanzhong.app.ui.nav
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -7,23 +8,28 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
@@ -122,7 +128,7 @@ fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
         currentRoute == Routes.PLAN_SETUP || currentRoute == Routes.PLAN_HISTORY ||
         currentRoute == Routes.PLAN_INTERVIEW || currentRoute == Routes.PLAN_DOCUMENT ||
         currentRoute?.startsWith("apppicker") == true
-    val showNav = !timerRunning && !deepPage
+    val showNav = !deepPage && !(currentRoute == Routes.FOCUS && timerRunning)
 
     // 应用内更新:启动时检查一次(需已配置服务器),有新版本弹窗 → 下载 → 调起安装
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -306,8 +312,8 @@ fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
         }
     }
 
-        // 专注运行中(导航栏已隐藏):右下角悬浮迷你倒计时,点击回到专注屏
-        if (timerRunning && currentRoute != Routes.FOCUS) {
+        // 深层页(导航栏已隐藏):右下角悬浮迷你倒计时,点击回到专注屏
+        if (timerRunning && deepPage) {
             RunningTimerPill(
                 navController,
                 modifier = Modifier
@@ -380,34 +386,13 @@ private fun YanZhongNavRail(navController: NavHostController) {
     NavigationRail(
         containerColor = MaterialTheme.colorScheme.surface,
         header = {
-            FloatingActionButton(
-                    onClick = {
-                        navController.navigate(Routes.FOCUS) {
-                            launchSingleTop = true
-                            popUpTo(Routes.HOME) { saveState = true }
-                            restoreState = true
-                        }
-                    },
-                    containerColor = MaterialTheme.colorScheme.primary,
-                    contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                Icon(
-                    AppIcons.TabFocus,
-                    contentDescription = "专注"
-                )
-            }
+            FocusFab(navController, Modifier.padding(top = 8.dp))
         }
     ) {
         tabs.forEach { tab ->
             NavigationRailItem(
                 selected = currentRoute == tab.route,
-                onClick = {
-                    navController.navigate(tab.route) {
-                        launchSingleTop = true
-                        popUpTo(Routes.HOME) { saveState = true }
-                        restoreState = true
-                    }
-                },
+                onClick = { navigateTab(navController, tab.route) },
                 icon = {
                     Icon(
                         tab.icon,
@@ -422,75 +407,119 @@ private fun YanZhongNavRail(navController: NavHostController) {
 
 @Composable
 private fun YanZhongBottomBar(navController: NavHostController) {
-    val tabs = listOf(
-        TabSpec(Routes.HOME, "今日", AppIcons.TabToday),
-        TabSpec(Routes.PLAN, "计划", AppIcons.TabPlan),
-        TabSpec(Routes.FOCUS, "专注", AppIcons.TabFocus),
-        TabSpec(Routes.STATS, "统计", AppIcons.TabStats),
-        TabSpec(Routes.MINE, "我的", AppIcons.TabMine)
-    )
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
-
+    val colors = MaterialTheme.colorScheme
     Box {
-        NavigationBar(
-            tonalElevation = 2.dp
-        ) {
-            tabs.forEach { tab ->
-                if (tab.route == Routes.FOCUS) {
-                    NavigationBarItem(
-                        selected = currentRoute == tab.route,
-                        onClick = { navController.navigate(tab.route) { launchSingleTop = true } },
-                        icon = { Box(Modifier.size(24.dp)) },
-                        label = { Text(tab.label) },
-                        enabled = false // 由中央凸起按钮接管点击
-                    )
-                } else {
-                    NavigationBarItem(
-                        selected = currentRoute == tab.route,
-                        onClick = {
-                            navController.navigate(tab.route) {
-                                launchSingleTop = true
-                                popUpTo(Routes.HOME) { saveState = true }
-                                restoreState = true
-                            }
-                        },
-                        icon = {
-                            Icon(
-                                tab.icon,
-                                contentDescription = tab.label
-                            )
-                        },
-                        label = { Text(tab.label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                            selectedIconColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                            unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+        Surface(color = colors.surface, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.navigationBarsPadding()) {
+                HorizontalDivider(color = colors.outlineVariant)
+                Box(Modifier.fillMaxWidth().height(64.dp), contentAlignment = Alignment.BottomCenter) {
+                    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                        BottomTab(
+                            selected = currentRoute == Routes.HOME,
+                            label = "今日",
+                            icon = AppIcons.TabToday,
+                            onClick = { navigateTab(navController, Routes.HOME) },
+                            modifier = Modifier.weight(1f)
                         )
+                        BottomTab(
+                            selected = currentRoute == Routes.PLAN,
+                            label = "计划",
+                            icon = AppIcons.TabPlan,
+                            onClick = { navigateTab(navController, Routes.PLAN) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        Spacer(Modifier.weight(1f))
+                        BottomTab(
+                            selected = currentRoute == Routes.STATS,
+                            label = "统计",
+                            icon = AppIcons.TabStats,
+                            onClick = { navigateTab(navController, Routes.STATS) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        BottomTab(
+                            selected = currentRoute == Routes.MINE,
+                            label = "我的",
+                            icon = AppIcons.TabMine,
+                            onClick = { navigateTab(navController, Routes.MINE) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    Text(
+                        "专注",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (currentRoute == Routes.FOCUS) colors.primary else colors.onSurfaceVariant,
+                        modifier = Modifier.padding(bottom = 6.dp)
                     )
                 }
             }
         }
+        FocusFab(
+            navController = navController,
+            modifier = Modifier.align(Alignment.TopCenter).offset(y = (-18).dp)
+        )
+    }
+}
 
-        // 中央凸起专注按钮:全局常驻入口(PRD 4.2);专注中显示迷你倒计时(PRD 4.3)
+private fun navigateTab(navController: NavHostController, route: String) {
+    navController.navigate(route) {
+        launchSingleTop = true
+        popUpTo(Routes.HOME) { saveState = true }
+        restoreState = true
+    }
+}
+
+@Composable
+private fun BottomTab(
+    selected: Boolean,
+    label: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val color = if (selected) MaterialTheme.colorScheme.primary
+    else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(3.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = color)
+    }
+}
+
+/** 中央 56dp 专注 FAB：计时中显示 mm:ss；切换只做一次淡入淡出，文字每秒更新不触发动画 */
+@Composable
+private fun FocusFab(navController: NavHostController, modifier: Modifier = Modifier) {
+    val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as YanZhongApp
+    val timer by app.engine.state.collectAsState()
+    AnimatedContent(
+        targetState = timer.isRunning,
+        transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(200)) },
+        label = "focus-fab",
+        modifier = modifier
+    ) { running ->
         FloatingActionButton(
-            onClick = {
-                navController.navigate(Routes.FOCUS) {
-                    launchSingleTop = true
-                    popUpTo(Routes.HOME) { saveState = true }
-                    restoreState = true
-                }
-            },
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .offset(y = (-8).dp),
+            onClick = { navigateTab(navController, Routes.FOCUS) },
+            shape = CircleShape,
             containerColor = MaterialTheme.colorScheme.primary,
-            contentColor = MaterialTheme.colorScheme.onPrimary
+            contentColor = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(56.dp)
         ) {
-            Icon(
-                AppIcons.TabFocus,
-                contentDescription = "专注"
-            )
+            if (running) {
+                Text(
+                    formatPillTime(timer.remainingMs),
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1
+                )
+            } else {
+                Icon(AppIcons.TabFocus, contentDescription = "专注", modifier = Modifier.size(24.dp))
+            }
         }
     }
 }
