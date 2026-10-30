@@ -52,8 +52,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.semantics.selected
-import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -265,7 +265,7 @@ internal fun StepTarget(state: OnboardingUiState, vm: OnboardingViewModel) {
     }
 }
 
-/** 单选题用完成圆环收尾,多选题只在选中时露出勾 */
+/** 单选题用完成圆环收尾,多选题只在选中时露出勾;整行带单选/复选语义,圆环只作视觉 */
 @Composable
 private fun ChoiceRow(
     title: String,
@@ -277,7 +277,8 @@ private fun ChoiceRow(
         title = title,
         onClick = onClick,
         showChevron = false,
-        modifier = Modifier.semantics { this.selected = selected },
+        selected = selected,
+        role = if (multi) Role.Checkbox else Role.RadioButton,
         trailing = {
             if (multi) {
                 if (selected) {
@@ -289,11 +290,14 @@ private fun ChoiceRow(
                     )
                 }
             } else {
-                CompletionCircle(
-                    checked = selected,
-                    onClick = onClick,
-                    description = if (selected) "已选择 $title" else "选择 $title"
-                )
+                // 圆环只作视觉,语义交给整行的单选状态,避免 TalkBack 出现第二个焦点
+                Box(Modifier.clearAndSetSemantics {}) {
+                    CompletionCircle(
+                        checked = selected,
+                        onClick = onClick,
+                        description = if (selected) "已选择 $title" else "选择 $title"
+                    )
+                }
             }
         }
     )

@@ -157,7 +157,7 @@ object RhythmEngine {
         return minutes
     }
 
-    /** 科目名 → 学科标签(关键词与 SubjectArtwork 场景匹配保持一致) */
+    /** 科目名 → 学科标签(供科目配色与高强度休息节奏使用) */
     fun tagOfSubject(name: String): String {
         val n = name.trim()
         return when {

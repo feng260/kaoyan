@@ -17,6 +17,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
@@ -34,6 +36,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -161,7 +165,7 @@ fun RowDivider(startIndent: Dp = 16.dp) {
     )
 }
 
-/** 列表行：高 ≥56，图标 32 primary 12% 底，整行可点；enabled=false 时置灰且不可点 */
+/** 列表行:高 ≥56,图标 32 primary 12% 底,整行可点;选中行传 selected + role 获得单选/复选语义 */
 @Composable
 fun ListRow(
     title: String,
@@ -171,14 +175,21 @@ fun ListRow(
     onClick: (() -> Unit)? = null,
     showChevron: Boolean = onClick != null,
     trailing: @Composable RowScope.() -> Unit = {},
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    selected: Boolean? = null,
+    role: Role? = null
 ) {
+    val rowModifier = when {
+        onClick == null || !enabled -> Modifier
+        selected != null -> Modifier.selectable(selected = selected, role = role, onClick = onClick)
+        else -> Modifier.clickable(role = role, onClick = onClick)
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
             .alpha(if (enabled) 1f else 0.5f)
-            .then(if (onClick != null && enabled) Modifier.clickable(onClick = onClick) else Modifier)
+            .then(rowModifier)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -229,7 +240,7 @@ fun ListRow(
     }
 }
 
-/** 开关行：dimmed 只降透明度，不禁用（静音时仍可预改震动/音效） */
+/** 开关行:整行可切换,开关只作视觉,避免 TalkBack 出现两个焦点;dimmed 只降透明度,不禁用 */
 @Composable
 fun SwitchRow(
     title: String,
@@ -244,6 +255,12 @@ fun SwitchRow(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Switch,
+                onValueChange = onCheckedChange
+            )
             .padding(horizontal = 16.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -262,7 +279,12 @@ fun SwitchRow(
                 )
             }
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+            enabled = enabled,
+            modifier = Modifier.clearAndSetSemantics {}
+        )
     }
 }
 

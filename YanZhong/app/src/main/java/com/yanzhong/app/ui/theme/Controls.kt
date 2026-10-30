@@ -28,6 +28,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -57,6 +60,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
@@ -165,7 +169,7 @@ fun ProgressLine(
     }
 }
 
-/** 单行分段选择：选中 primaryContainer，未选中描边；48dp 触达 */
+/** 单行分段选择:选中 primaryContainer,未选中描边;48dp 触达,单选组语义 */
 @Composable
 fun SegmentedChips(
     options: List<String>,
@@ -174,7 +178,9 @@ fun SegmentedChips(
     modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = modifier.horizontalScroll(rememberScrollState()),
+        modifier = modifier
+            .horizontalScroll(rememberScrollState())
+            .selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         options.forEachIndexed { index, label ->
@@ -192,7 +198,11 @@ fun SegmentedChips(
                         if (selected) Modifier
                         else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
                     )
-                    .clickable { onSelect(index) }
+                    .selectable(
+                        selected = selected,
+                        role = Role.RadioButton,
+                        onClick = { onSelect(index) }
+                    )
                     .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.Center
             ) {
@@ -207,7 +217,7 @@ fun SegmentedChips(
     }
 }
 
-/** 多选胶囊：与 SegmentedChips 同款视觉，可同时选中多个；48dp 触达 */
+/** 多选胶囊：与 SegmentedChips 同款视觉，可同时选中多个；48dp 触达，复选语义 */
 @Composable
 fun ToggleChip(
     text: String,
@@ -228,7 +238,11 @@ fun ToggleChip(
                 if (selected) Modifier
                 else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
             )
-            .clickable { onClick() }
+            .toggleable(
+                value = selected,
+                role = Role.Checkbox,
+                onValueChange = { onClick() }
+            )
             .padding(horizontal = 14.dp),
         contentAlignment = Alignment.Center
     ) {

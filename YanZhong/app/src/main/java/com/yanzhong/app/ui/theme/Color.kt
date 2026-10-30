@@ -46,6 +46,8 @@ val TomatoOrange = Color(0xFFFF7043)
 val SuccessGreen = Color(0xFF2E9E5B)
 // 浅色主题下的成功态文字色:白底约 6.3:1,12% 绿色底上约 5.4:1
 val SuccessContentGreen = Color(0xFF1B6E3D)
+// 深色主题下的成功态文字色:成功绿提亮,12% 绿色底上约 7.9:1
+val SuccessContentGreenDark = Color(0xFF6BD69B)
 
 // ---- 功能卡色板(参考番茄ToDo 一功能一色)----
 // 薄荷绿:放松 / 小憩类功能

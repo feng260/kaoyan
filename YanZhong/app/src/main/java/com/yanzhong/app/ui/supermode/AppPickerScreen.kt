@@ -5,7 +5,6 @@ import android.content.Intent
 import android.graphics.drawable.Drawable
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -44,6 +44,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
@@ -324,7 +326,7 @@ fun AppPickerScreen(
     }
 }
 
-/** 应用行:系统图标 + 名称 + 包名 + 开关;整行 ≥56dp 可点,视觉与 ListRow 一致 */
+/** 应用行:系统图标 + 名称 + 包名 + 开关;整行 ≥56dp 可切换,开关只作视觉,避免重复焦点 */
 @Composable
 private fun AppRow(app: InstalledApp, checked: Boolean, onToggle: () -> Unit) {
     val bitmap = remember(app.pkg) {
@@ -334,7 +336,11 @@ private fun AppRow(app: InstalledApp, checked: Boolean, onToggle: () -> Unit) {
         Modifier
             .fillMaxWidth()
             .heightIn(min = 56.dp)
-            .clickable(onClick = onToggle)
+            .toggleable(
+                value = checked,
+                role = Role.Switch,
+                onValueChange = { onToggle() }
+            )
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -362,6 +368,10 @@ private fun AppRow(app: InstalledApp, checked: Boolean, onToggle: () -> Unit) {
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Switch(checked = checked, onCheckedChange = { onToggle() })
+        Switch(
+            checked = checked,
+            onCheckedChange = null,
+            modifier = Modifier.clearAndSetSemantics {}
+        )
     }
 }

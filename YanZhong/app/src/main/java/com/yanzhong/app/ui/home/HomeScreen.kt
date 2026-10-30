@@ -66,7 +66,7 @@ import com.yanzhong.app.ui.theme.PoliticsColor
 import com.yanzhong.app.ui.theme.ProgressLine
 import com.yanzhong.app.ui.theme.StatusPill
 import com.yanzhong.app.ui.theme.SubjectCsColor
-import com.yanzhong.app.ui.theme.SuccessGreen
+import com.yanzhong.app.ui.theme.successContentColor
 import com.yanzhong.app.util.RhythmEngine
 import com.yanzhong.app.util.StageInfo
 import com.yanzhong.app.util.TimeUtils
@@ -877,7 +877,7 @@ private fun TodayProgress(
             label = "本周净学习",
             value = "${formatStudyMinutes(weekMinutes)} / ${formatStudyMinutes(weekGoalMin)}",
             progress = weekProgress,
-            color = if (weekReached) SuccessGreen else MaterialTheme.colorScheme.primary
+            color = if (weekReached) successContentColor else MaterialTheme.colorScheme.primary
         )
     }
 }
