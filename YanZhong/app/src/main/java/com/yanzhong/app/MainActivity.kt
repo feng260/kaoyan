@@ -31,8 +31,7 @@ import com.yanzhong.app.service.FocusService
 import com.yanzhong.app.ui.auth.LoginScreen
 import com.yanzhong.app.ui.nav.YanZhongAppRoot
 import com.yanzhong.app.ui.theme.AppIcons
-import com.yanzhong.app.ui.theme.NightSkyBottom
-import com.yanzhong.app.ui.theme.NightSkyTop
+import com.yanzhong.app.ui.theme.BrandGradient
 import com.yanzhong.app.ui.theme.YanZhongTheme
 import kotlinx.coroutines.flow.map
 
@@ -66,13 +65,13 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 登录态检查过场:夜空底 + 品牌,通常一闪而过 */
+    /** 登录态检查过场:品牌渐变底 + 白字,通常一闪而过 */
     @androidx.compose.runtime.Composable
     private fun AuthChecking() {
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Brush.verticalGradient(listOf(NightSkyTop, NightSkyBottom))),
+                .background(Brush.linearGradient(BrandGradient)),
             contentAlignment = Alignment.Center
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {

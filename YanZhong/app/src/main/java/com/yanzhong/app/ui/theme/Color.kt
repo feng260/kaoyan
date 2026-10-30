@@ -25,6 +25,17 @@ val BrandPrimaryDark = Color(0xFFA9B0FF)
 val BrandContainer = Color(0xFFE2E4FF)
 val BrandContainerDark = Color(0xFF40499A)
 
+/** 品牌深靛 → 深紫:白字对比度 8.4:1 / 6.4:1,深浅模式共用 */
+val BrandGradientStart = Color(0xFF4338CA)
+val BrandGradientEnd = Color(0xFF6D28D9)
+val BrandGradient = listOf(BrandGradientStart, BrandGradientEnd)
+
+/** 珊瑚行动渐变:白字 ≥ 4.7:1;深色模式降一档但保持对比度 */
+val CtaStart = Color(0xFFD9482E)
+val CtaEnd = Color(0xFFB3321F)
+val CtaStartDark = Color(0xFFB3321F)
+val CtaEndDark = Color(0xFF8F2717)
+
 // 深色模式底色:低饱和靛蓝,非纯灰(PRD 5.4)
 val DarkBackground = Color(0xFF12142A)
 val DarkSurface = Color(0xFF1A1D38)
@@ -41,26 +52,12 @@ val MintGreenDeep = Color(0xFF009688)
 // 珊瑚红:立即行动 / 番茄专注类
 val CoralRed = Color(0xFFFF7059)
 val CoralRedDeep = Color(0xFFEF5B43)
-// 珊瑚红夜档(A5):深色靛蓝底上高饱和橙红与主色互相抢眼,降到低饱和一档
-val CoralRedNight = Color(0xFFC97C6B)
-val CoralRedDeepNight = Color(0xFFA86050)
 // 天蓝:规划 / 定制类
 val SkyBlue = Color(0xFF4FA8F5)
 val SkyBlueDeep = Color(0xFF3784D9)
 // 琥珀:设置 / 权限类
 val AmberGold = Color(0xFFF5A83C)
 val AmberGoldDeep = Color(0xFFE88E1B)
-
-// ---- 我的页沉浸式头部:夜空渐变(参考图3 山脉夜景)----
-val NightSkyTop = Color(0xFF1E2A5A)
-val NightSkyMid = Color(0xFF34477F)
-val NightSkyBottom = Color(0xFF51689F)
-val NightMountainFar = Color(0xFF2B3A66)
-val NightMountainNear = Color(0xFF1F2C52)
-
-// ---- 统计页渐变横幅(参考图1 蓝色渐变累计卡)----
-val StatBannerStart = Color(0xFF5865F2)
-val StatBannerEnd = Color(0xFF7B9AF8)
 
 // ---- 参考计划(468 天全程作战计划)设计语言 ----
 val PlanAccent = Color(0xFF4F46E5)   // --accent 靛蓝

@@ -124,7 +124,7 @@ fun HeroCard(
 @Composable
 fun StatBanner(
     title: String,
-    colors: List<Color> = listOf(StatBannerStart, StatBannerEnd),
+    colors: List<Color> = BrandGradient,
     content: @Composable () -> Unit
 ) {
     Box(
