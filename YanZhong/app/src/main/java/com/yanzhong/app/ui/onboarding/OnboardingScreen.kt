@@ -74,6 +74,7 @@ import com.yanzhong.app.ui.theme.SegmentedChips
 import com.yanzhong.app.ui.theme.SubPageHeader
 import com.yanzhong.app.ui.theme.SuccessGreen
 import com.yanzhong.app.ui.theme.TextAction
+import com.yanzhong.app.ui.theme.successContentColor
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -780,7 +781,7 @@ private fun FieldLabel(title: String, hint: String? = null) {
 @Composable
 internal fun OnboardingMessage(message: String, isError: Boolean) {
     val colors = MaterialTheme.colorScheme
-    val content = if (isError) colors.error else SuccessGreen
+    val content = if (isError) colors.error else successContentColor
     Surface(
         shape = MaterialTheme.shapes.medium,
         color = if (isError) colors.errorContainer else SuccessGreen.copy(alpha = 0.12f),

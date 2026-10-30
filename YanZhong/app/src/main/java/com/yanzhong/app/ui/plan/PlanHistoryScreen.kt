@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -137,6 +138,7 @@ fun PlanHistoryScreen(padding: PaddingValues, navController: NavHostController) 
                 contentColor = colors.onErrorContainer,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
                     .padding(20.dp)
             ) {
                 Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
@@ -201,7 +203,7 @@ private fun EmptyBlock() {
     EmptyState(
         icon = AppIcons.ClipboardList,
         title = "还没有历史计划",
-        hint = "生成过计划之后,每一版都会保留在这里,重新生成也不会覆盖旧的。",
+        hint = "生成计划后,每一版都会留在这里。",
         modifier = Modifier.padding(horizontal = 20.dp),
         compact = true
     )

@@ -84,7 +84,8 @@ fun ConsentRow(
         Checkbox(
             checked = checked,
             onCheckedChange = onCheckedChange,
-            modifier = Modifier.size(24.dp).padding(top = 2.dp)
+            // 不固定 24dp:交给 Material3 的 48dp 最小交互尺寸,指头够得着
+            modifier = Modifier.padding(top = 2.dp)
         )
         Spacer(Modifier.size(6.dp))
         Text(

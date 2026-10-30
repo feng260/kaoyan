@@ -44,23 +44,15 @@ val DarkOutline = Color(0xFF3B3F66)
 
 val TomatoOrange = Color(0xFFFF7043)
 val SuccessGreen = Color(0xFF2E9E5B)
+// 浅色主题下的成功态文字色:白底约 6.3:1,12% 绿色底上约 5.4:1
+val SuccessContentGreen = Color(0xFF1B6E3D)
 
 // ---- 功能卡色板(参考番茄ToDo 一功能一色)----
 // 薄荷绿:放松 / 小憩类功能
 val MintGreen = Color(0xFF00B8A9)
-val MintGreenDeep = Color(0xFF009688)
 // 珊瑚红:立即行动 / 番茄专注类
 val CoralRed = Color(0xFFFF7059)
-val CoralRedDeep = Color(0xFFEF5B43)
-// 天蓝:规划 / 定制类
-val SkyBlue = Color(0xFF4FA8F5)
-val SkyBlueDeep = Color(0xFF3784D9)
-// 琥珀:设置 / 权限类
-val AmberGold = Color(0xFFF5A83C)
-val AmberGoldDeep = Color(0xFFE88E1B)
 
 // ---- 参考计划(468 天全程作战计划)设计语言 ----
 val PlanAccent = Color(0xFF4F46E5)   // --accent 靛蓝
 val PlanAccent2 = Color(0xFF7C3AED)  // --accent2 紫
-val PlanTeal = Color(0xFF0D9488)     // --c-en 青绿
-val PlanBg = Color(0xFFF2F4FB)       // --bg

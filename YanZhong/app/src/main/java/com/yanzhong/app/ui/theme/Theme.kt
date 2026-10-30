@@ -123,6 +123,10 @@ fun actionCardGradient(): List<Color> {
 @Composable
 fun insetSurfaceColor(): Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
 
+/** 成功态文字色:浅色主题用深绿保证 ≥4.5:1,深色主题沿用 SuccessGreen */
+val successContentColor: Color
+    @Composable get() = if (MaterialTheme.colorScheme.background.luminance() < 0.5f) SuccessGreen else SuccessContentGreen
+
 /** 倒计时预警档位(PRD 6.4):>30 正常 / ≤30 琥珀 / ≤10 红 / ≤3 红+呼吸 */
 enum class CountdownAlertLevel { NORMAL, AMBER, RED, CRITICAL }
 

@@ -52,7 +52,7 @@ import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.BrandGradient
 import com.yanzhong.app.ui.theme.PrimaryButton
 import com.yanzhong.app.ui.theme.SegmentedChips
-import com.yanzhong.app.ui.theme.SuccessGreen
+import com.yanzhong.app.ui.theme.successContentColor
 
 /** 未登录时的账号入口。登录和注册共用同一页面，避免用户找不到注册入口。 */
 @Composable
@@ -334,7 +334,7 @@ private fun AuthTextField(
 /** 校验/服务器提示:输入组件下方一行 12sp 文案 */
 @Composable
 private fun StatusMessage(message: String, isError: Boolean) {
-    val contentColor = if (isError) MaterialTheme.colorScheme.error else SuccessGreen
+    val contentColor = if (isError) MaterialTheme.colorScheme.error else successContentColor
     Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
             if (isError) AppIcons.Info else AppIcons.CheckCircle,

@@ -59,7 +59,7 @@ fun StatsScreen(padding: PaddingValues) {
                 top = 12.dp,
                 bottom = padding.calculateBottomPadding() + 72.dp
             ),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item(key = "header") {
                 Column {

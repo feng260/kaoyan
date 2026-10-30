@@ -312,7 +312,7 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
                                     )
                             ) {
                                 ListRow(
-                                    title = "${planOption.name} 分钟",
+                                    title = planOption.name,
                                     subtitle = "专注 ${planOption.focusMin} 分钟 · 短休 ${planOption.shortBreakMin} 分钟",
                                     onClick = { vm.selectPlan(planOption.name) },
                                     showChevron = false,

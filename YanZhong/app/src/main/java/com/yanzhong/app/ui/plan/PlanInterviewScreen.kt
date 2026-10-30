@@ -362,15 +362,10 @@ private fun InterviewProgress(brief: PlanBriefDto?, modifier: Modifier = Modifie
 
 @Composable
 private fun FactChip(label: String, ready: Boolean) {
-    Surface(color = if (ready) MaterialTheme.colorScheme.secondaryContainer
-        else MaterialTheme.colorScheme.surfaceVariant,
-        shape = RoundedCornerShape(50.dp)) {
-        Text(if (ready) "✓ $label" else "待确认 · $label",
-            Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = if (ready) MaterialTheme.colorScheme.onSecondaryContainer
-            else MaterialTheme.colorScheme.onSurfaceVariant)
-    }
+    StatusPill(
+        text = if (ready) label else "待确认 · $label",
+        tone = if (ready) PillTone.ACCENT else PillTone.NEUTRAL
+    )
 }
 
 /** 一条回复拆成「一句接话」和「本轮要回答的问题」两类,只有后者需要被看见 */
