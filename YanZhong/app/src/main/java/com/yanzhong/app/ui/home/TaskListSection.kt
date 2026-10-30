@@ -74,7 +74,7 @@ fun LazyListScope.taskListSection(
                 title = "今日待办",
                 meta = "${doneTasks.size}/${openTasks.size + doneTasks.size} 已完成"
             )
-            if (openTasks.isEmpty()) {
+            if (openTasks.isEmpty() && doneTasks.isEmpty()) {
                 EmptyState(
                     icon = AppIcons.SubjectDefault,
                     title = "今天还没有任务",
