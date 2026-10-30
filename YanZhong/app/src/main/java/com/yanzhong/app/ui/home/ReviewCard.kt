@@ -1,6 +1,8 @@
 package com.yanzhong.app.ui.home
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,18 +11,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,12 +23,21 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yanzhong.app.data.db.DailyReviewEntity
 import com.yanzhong.app.data.db.MonthlyReviewEntity
 import com.yanzhong.app.data.db.WeeklyReviewEntity
+import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
+import com.yanzhong.app.ui.theme.AppSheet
+import com.yanzhong.app.ui.theme.ListRow
+import com.yanzhong.app.ui.theme.PrimaryButton
+import com.yanzhong.app.ui.theme.RowDivider
+import com.yanzhong.app.ui.theme.RowGroup
+import com.yanzhong.app.ui.theme.SecondaryButton
+import com.yanzhong.app.ui.theme.insetSurfaceColor
 
 /** 每日复盘三问(文案与 DailyReviewEntity 字段语义一一对应,改动需同步) */
 private val REVIEW_QUESTIONS = listOf(
@@ -67,188 +71,111 @@ fun ReviewCard(
     val dailyDone = todayReview != null
     val weeklyDone = weeklyReview != null
     val monthlyDone = monthlyReview != null
-    Surface(
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth()
+
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Column(Modifier.padding(horizontal = 20.dp, vertical = 16.dp)) {
-            if (yesterdayGoal != null) {
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-                    modifier = Modifier.fillMaxWidth()
+        if (yesterdayGoal != null) {
+            AppCard {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(MaterialTheme.shapes.medium)
+                        .background(insetSurfaceColor())
+                        .padding(12.dp)
                 ) {
-                    Row(
-                        Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            AppIcons.Target,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Column {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                AppIcons.Target,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
                             Text(
                                 "昨日定下的今日要事",
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Text(
-                                yesterdayGoal,
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
                         }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-            }
-
-            // 今日复盘三问
-            Surface(
-                onClick = onOpenDaily,
-                shape = MaterialTheme.shapes.medium,
-                color = if (dailyDone) {
-                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                } else {
-                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        if (dailyDone) AppIcons.CheckCircle else AppIcons.Sparkles,
-                        contentDescription = null,
-                        tint = if (dailyDone) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.secondary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f)) {
+                        Spacer(Modifier.height(4.dp))
                         Text(
-                            if (dailyDone) "今日复盘 · 已完成" else "今日复盘 · 三问未写",
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Text(
-                            when {
-                                dailyDone -> todayReview.q1Done.ifBlank { "点击查看 / 修改" }
-                                else -> "睡前 3 问 30 秒闭环:完成什么 · 哪里模糊 · 明天要事"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
+                            yesterdayGoal,
+                            style = MaterialTheme.typography.bodyMedium,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
                     }
                 }
             }
+        }
+
+        RowGroup {
+            ListRow(
+                title = "今日复盘",
+                icon = if (dailyDone) AppIcons.CheckCircle else AppIcons.Sparkles,
+                subtitle = if (dailyDone) "点击查看 / 修改" else "睡前 3 问，30 秒闭环",
+                onClick = onOpenDaily,
+                trailing = {
+                    Text(
+                        if (dailyDone) "已完成" else "未写",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (dailyDone) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.primary
+                    )
+                }
+            )
 
             // 周复盘:周日晚雷打不动;本周未写时其余天也保留次级入口
             if (isSunday || !weeklyDone) {
-                Spacer(Modifier.height(8.dp))
-                Surface(
+                RowDivider()
+                ListRow(
+                    title = "本周复盘",
+                    icon = AppIcons.Repeat,
                     onClick = onOpenWeekly,
-                    shape = MaterialTheme.shapes.medium,
-                    color = if (isSunday && !weeklyDone) {
-                        MaterialTheme.colorScheme.tertiary.copy(alpha = 0.12f)
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            AppIcons.Repeat,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.tertiary,
-                            modifier = Modifier.size(20.dp)
+                    trailing = {
+                        Text(
+                            when {
+                                weeklyDone -> "已完成"
+                                isSunday -> "周日提醒"
+                                else -> "未写"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (weeklyDone) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.primary
                         )
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                if (weeklyDone) "本周复盘 · 已完成" else "本周复盘",
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                            Text(
-                                when {
-                                    weeklyDone && isSunday -> "点击修改 · 下周 3 要事已定"
-                                    weeklyDone -> "点击查看 / 修改"
-                                    isSunday -> "周日晚 30min 雷打不动:盘点 · 薄弱点 · 下周要事"
-                                    else -> "周日晚写,先点开看本周自动盘点"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
                     }
-                }
+                )
             }
 
             // 月复盘:月底(最后一天)雷打不动;本月未写时其余天保留次级入口
             if (isMonthEnd || !monthlyDone) {
-                Spacer(Modifier.height(8.dp))
-                Surface(
+                RowDivider()
+                ListRow(
+                    title = "本月复盘",
+                    icon = AppIcons.Calendar,
                     onClick = onOpenMonthly,
-                    shape = MaterialTheme.shapes.medium,
-                    color = if (isMonthEnd && !monthlyDone) {
-                        MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            AppIcons.Calendar,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
+                    trailing = {
+                        Text(
+                            when {
+                                monthlyDone -> "已完成"
+                                isMonthEnd -> "月底提醒"
+                                else -> "未写"
+                            },
+                            style = MaterialTheme.typography.labelMedium,
+                            color = if (monthlyDone) MaterialTheme.colorScheme.onSurfaceVariant
+                            else MaterialTheme.colorScheme.primary
                         )
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                if (monthlyDone) "本月复盘 · 已完成" else "本月复盘",
-                                style = MaterialTheme.typography.bodyLarge
-                            )
-                            Text(
-                                when {
-                                    monthlyDone && isMonthEnd -> "点击修改 · 下月 3 要事已定"
-                                    monthlyDone -> "点击查看 / 修改"
-                                    isMonthEnd -> "月底 30min 复盘:总结 · 盘点 · 下月要事"
-                                    else -> "月底写,先点开看本月自动盘点"
-                                },
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
                     }
-                }
+                )
             }
         }
     }
 }
 
 /** 每日复盘三问 Sheet:提示语与作战计划一致(计划第 04/05 节) */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DailyReviewSheet(
     initial: DailyReviewEntity?,
@@ -260,62 +187,54 @@ fun DailyReviewSheet(
     var q2 by remember { mutableStateOf(initial?.q2Weak ?: "") }
     var q3 by remember { mutableStateOf(initial?.q3Tomorrow ?: "") }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp)
+    AppSheet(title = "今日复盘 · 三问", onDismiss = onDismiss) {
+        Text(
+            "每个日模板 21:30 的固定块 · 对照日计划,诚实一点",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(16.dp))
+
+        ReviewQuestionField(
+            index = 1,
+            question = questions.getOrNull(0)?.first.orEmpty(),
+            hint = questions.getOrNull(0)?.second.orEmpty(),
+            value = q1,
+            onValueChange = { q1 = it }
+        )
+        Spacer(Modifier.height(12.dp))
+        ReviewQuestionField(
+            index = 2,
+            question = questions.getOrNull(1)?.first.orEmpty(),
+            hint = questions.getOrNull(1)?.second.orEmpty(),
+            value = q2,
+            onValueChange = { q2 = it }
+        )
+        Spacer(Modifier.height(12.dp))
+        ReviewQuestionField(
+            index = 3,
+            question = questions.getOrNull(2)?.first.orEmpty(),
+            hint = questions.getOrNull(2)?.second.orEmpty(),
+            value = q3,
+            onValueChange = { q3 = it },
+            highlight = true
+        )
+
+        Spacer(Modifier.height(20.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("今日复盘 · 三问", style = MaterialTheme.typography.headlineLarge)
-            Text(
-                "每个日模板 21:30 的固定块 · 对照日计划,诚实一点",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            SecondaryButton(
+                text = "取消",
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f)
             )
-            Spacer(Modifier.height(16.dp))
-
-            ReviewQuestionField(
-                index = 1,
-                question = questions.getOrNull(0)?.first.orEmpty(),
-                hint = questions.getOrNull(0)?.second.orEmpty(),
-                value = q1,
-                onValueChange = { q1 = it }
+            PrimaryButton(
+                text = if (initial == null) "保存复盘" else "更新复盘",
+                onClick = { onSave(q1, q2, q3); onDismiss() },
+                modifier = Modifier.weight(1f)
             )
-            Spacer(Modifier.height(12.dp))
-            ReviewQuestionField(
-                index = 2,
-                question = questions.getOrNull(1)?.first.orEmpty(),
-                hint = questions.getOrNull(1)?.second.orEmpty(),
-                value = q2,
-                onValueChange = { q2 = it }
-            )
-            Spacer(Modifier.height(12.dp))
-            ReviewQuestionField(
-                index = 3,
-                question = questions.getOrNull(2)?.first.orEmpty(),
-                hint = questions.getOrNull(2)?.second.orEmpty(),
-                value = q3,
-                onValueChange = { q3 = it },
-                highlight = true
-            )
-
-            Spacer(Modifier.height(20.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                    Text("取消")
-                }
-                Button(
-                    onClick = { onSave(q1, q2, q3); onDismiss() },
-                    modifier = Modifier.weight(2f)
-                ) {
-                    Text(if (initial == null) "保存复盘" else "更新复盘")
-                }
-            }
         }
     }
 }
@@ -355,7 +274,6 @@ private fun ReviewQuestionField(
 }
 
 /** 周复盘 Sheet:本周自动盘点 + 薄弱点 + 下周 3 要事(周日晚 30min 雷打不动) */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun WeeklyReviewSheet(
     initial: WeeklyReviewEntity?,
@@ -370,123 +288,114 @@ fun WeeklyReviewSheet(
     var t2 by remember { mutableStateOf(initial?.nextWeekTop2 ?: "") }
     var t3 by remember { mutableStateOf(initial?.nextWeekTop3 ?: "") }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp)
+    AppSheet(title = "本周复盘", onDismiss = onDismiss) {
+        Text(
+            "周日晚 30min 雷打不动 · 排下周任务表",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(14.dp))
+
+        // 本周自动盘点(完成率 / 净学习,来自本地数据,无需手填)
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Text("本周复盘", style = MaterialTheme.typography.headlineLarge)
-            Text(
-                "周日晚 30min 雷打不动 · 排下周任务表",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(14.dp))
-
-            // 本周自动盘点(完成率 / 净学习,来自本地数据,无需手填)
-            Surface(
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(
-                        "本周自动盘点",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("完成任务", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "$weekDoneTasks 个",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("净学习", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "%.1fh / 目标 ${weekGoalMin / 60}h".format(weekMinutes / 60f),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            Text("本周薄弱点", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "写进下周第一件事,别让它滑走",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(6.dp))
-            OutlinedTextField(
-                value = weak,
-                onValueChange = { weak = it },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 2
-            )
-
-            Spacer(Modifier.height(16.dp))
-            Text("下周 3 件要事", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(6.dp))
-            OutlinedTextField(
-                value = t1,
-                onValueChange = { t1 = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("① 要事 1") }
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = t2,
-                onValueChange = { t2 = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("② 要事 2") }
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = t3,
-                onValueChange = { t3 = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("③ 要事 3") }
-            )
-
-            Spacer(Modifier.height(12.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                    Text("取消")
-                }
-                Button(
-                    onClick = { onSave(weak, t1, t2, t3); onDismiss() },
-                    modifier = Modifier.weight(2f)
+            Column(Modifier.padding(12.dp)) {
+                Text(
+                    "本周自动盘点",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(if (initial == null) "保存周复盘" else "更新周复盘")
+                    Text("完成任务", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "$weekDoneTasks 个",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("净学习", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "%.1fh / 目标 ${weekGoalMin / 60}h".format(weekMinutes / 60f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Text("本周薄弱点", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "写进下周第一件事,别让它滑走",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = weak,
+            onValueChange = { weak = it },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 2
+        )
+
+        Spacer(Modifier.height(16.dp))
+        Text("下周 3 件要事", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = t1,
+            onValueChange = { t1 = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("① 要事 1") }
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = t2,
+            onValueChange = { t2 = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("② 要事 2") }
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = t3,
+            onValueChange = { t3 = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("③ 要事 3") }
+        )
+
+        Spacer(Modifier.height(12.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SecondaryButton(
+                text = "取消",
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f)
+            )
+            PrimaryButton(
+                text = if (initial == null) "保存周复盘" else "更新周复盘",
+                onClick = { onSave(weak, t1, t2, t3); onDismiss() },
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
 
 /** 月复盘 Sheet:本月自动盘点 + 总结 + 下月 3 要事(月底 30min 雷打不动) */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MonthlyReviewSheet(
     initial: MonthlyReviewEntity?,
@@ -500,117 +409,109 @@ fun MonthlyReviewSheet(
     var t2 by remember { mutableStateOf(initial?.nextMonthTop2 ?: "") }
     var t3 by remember { mutableStateOf(initial?.nextMonthTop3 ?: "") }
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp)
+    AppSheet(title = "本月复盘", onDismiss = onDismiss) {
+        Text(
+            "月底 30min 雷打不动 · 定下月作战方向",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(14.dp))
+
+        // 本月自动盘点(完成任务 / 净学习,来自本地数据,无需手填)
+        Surface(
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
+            modifier = Modifier.fillMaxWidth()
         ) {
-            Text("本月复盘", style = MaterialTheme.typography.headlineLarge)
-            Text(
-                "月底 30min 雷打不动 · 定下月作战方向",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(14.dp))
-
-            // 本月自动盘点(完成任务 / 净学习,来自本地数据,无需手填)
-            Surface(
-                shape = MaterialTheme.shapes.medium,
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(
-                        "本月自动盘点",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("完成任务", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "$monthDoneTasks 个",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                    Row(
-                        Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Text("净学习", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "%.1fh".format(monthMinutes / 60f),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            Text("本月总结", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "一句话回顾:进度如何 · 哪里卡住 · 方向要不要调",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(6.dp))
-            OutlinedTextField(
-                value = summary,
-                onValueChange = { summary = it },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 3
-            )
-
-            Spacer(Modifier.height(16.dp))
-            Text("下月 3 件要事", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(6.dp))
-            OutlinedTextField(
-                value = t1,
-                onValueChange = { t1 = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("① 要事 1") }
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = t2,
-                onValueChange = { t2 = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("② 要事 2") }
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = t3,
-                onValueChange = { t3 = it },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                placeholder = { Text("③ 要事 3") }
-            )
-
-            Spacer(Modifier.height(12.dp))
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                TextButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
-                    Text("取消")
-                }
-                Button(
-                    onClick = { onSave(summary, t1, t2, t3); onDismiss() },
-                    modifier = Modifier.weight(2f)
+            Column(Modifier.padding(12.dp)) {
+                Text(
+                    "本月自动盘点",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(if (initial == null) "保存月复盘" else "更新月复盘")
+                    Text("完成任务", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "$monthDoneTasks 个",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("净学习", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "%.1fh".format(monthMinutes / 60f),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Text("本月总结", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "一句话回顾:进度如何 · 哪里卡住 · 方向要不要调",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = summary,
+            onValueChange = { summary = it },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 3
+        )
+
+        Spacer(Modifier.height(16.dp))
+        Text("下月 3 件要事", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(6.dp))
+        OutlinedTextField(
+            value = t1,
+            onValueChange = { t1 = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("① 要事 1") }
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = t2,
+            onValueChange = { t2 = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("② 要事 2") }
+        )
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = t3,
+            onValueChange = { t3 = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("③ 要事 3") }
+        )
+
+        Spacer(Modifier.height(12.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SecondaryButton(
+                text = "取消",
+                onClick = onDismiss,
+                modifier = Modifier.weight(1f)
+            )
+            PrimaryButton(
+                text = if (initial == null) "保存月复盘" else "更新月复盘",
+                onClick = { onSave(summary, t1, t2, t3); onDismiss() },
+                modifier = Modifier.weight(1f)
+            )
         }
     }
 }
