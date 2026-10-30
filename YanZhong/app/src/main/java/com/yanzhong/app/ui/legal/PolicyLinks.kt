@@ -79,7 +79,7 @@ fun ConsentRow(
     val opener = rememberPolicyOpener()
     Row(
         modifier = modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top
+        verticalAlignment = Alignment.CenterVertically
     ) {
         Checkbox(
             checked = checked,
@@ -96,7 +96,8 @@ fun ConsentRow(
         )
     }
     Row(
-        modifier = Modifier.fillMaxWidth().padding(start = 30.dp),
+        // 与上面勾选框(48dp 触控区 + 6dp 间距)后的正文左缘对齐
+        modifier = Modifier.fillMaxWidth().padding(start = 54.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
