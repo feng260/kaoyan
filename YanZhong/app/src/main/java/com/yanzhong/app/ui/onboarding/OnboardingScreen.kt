@@ -150,10 +150,6 @@ fun OnboardingScreen(vm: OnboardingViewModel, modifier: Modifier = Modifier) {
                     else -> StepFacts(state, vm)
                 }
             }
-            if (state.message.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                OnboardingMessage(state.message, state.messageIsError)
-            }
             Spacer(Modifier.height(16.dp))
             PolicyLinksRow(prefix = "计划由服务器按你填的内容生成,依据")
             Spacer(Modifier.height(16.dp))
@@ -189,6 +185,11 @@ private fun BottomActionBar(state: OnboardingUiState, vm: OnboardingViewModel) {
                     .align(Alignment.CenterHorizontally)
                     .padding(horizontal = 20.dp, vertical = 12.dp)
             ) {
+                // 校验/保存的反馈贴着按钮:内容再长也不滚走,按下「下一步」当场看得见
+                if (state.message.isNotEmpty()) {
+                    OnboardingMessage(state.message, state.messageIsError)
+                    Spacer(Modifier.height(8.dp))
+                }
                 PrimaryButton(
                     // 末步只存档案:一份几百天的计划要先和 AI 聊清楚才排得出来,问卷这一屏不越权替 AI 落笔
                     text = if (lastStep) "保存档案,去和 AI 聊计划" else "下一步",
