@@ -211,8 +211,7 @@ fun HomeScreen(
                                         onClick = {
                                             editingTask = null
                                             showTaskEditor = true
-                                        },
-                                        modifier = Modifier.size(40.dp)
+                                        }
                                     ) {
                                         Icon(
                                             AppIcons.Add,
@@ -365,8 +364,7 @@ fun HomeScreen(
                             onClick = {
                                 editingTask = null
                                 showTaskEditor = true
-                            },
-                            modifier = Modifier.size(40.dp)
+                            }
                         ) {
                             Icon(
                                 AppIcons.Add,

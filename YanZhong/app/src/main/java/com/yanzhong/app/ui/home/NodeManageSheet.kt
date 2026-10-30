@@ -192,7 +192,7 @@ private fun NodeRow(
         onClick = onEdit,
         showChevron = false,
         trailing = {
-            IconButton(onClick = onPin, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = onPin) {
                 Icon(
                     AppIcons.Pin,
                     contentDescription = if (node.pinned) "取消置顶" else "置顶",
@@ -201,7 +201,7 @@ private fun NodeRow(
                     modifier = Modifier.size(18.dp)
                 )
             }
-            IconButton(onClick = onDelete, modifier = Modifier.size(40.dp)) {
+            IconButton(onClick = onDelete) {
                 Icon(
                     AppIcons.Delete,
                     contentDescription = "删除节点",
