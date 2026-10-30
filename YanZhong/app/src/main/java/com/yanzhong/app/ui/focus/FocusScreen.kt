@@ -27,16 +27,13 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -88,6 +85,7 @@ import com.yanzhong.app.ui.theme.StatusPill
 import com.yanzhong.app.ui.theme.SuccessGreen
 import com.yanzhong.app.ui.theme.SwitchRow
 import com.yanzhong.app.ui.theme.TextAction
+import com.yanzhong.app.ui.theme.ToggleChip
 import com.yanzhong.app.util.TimeUtils
 import kotlinx.coroutines.delay
 
@@ -567,38 +565,11 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
 
         // 学霸模式提示胶囊:严格锁定与原白名单状态文案保持不变
         if (superOn) {
-            Surface(
-                shape = RoundedCornerShape(999.dp),
-                color = if (state.settings.superModeStrict) {
-                    MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
-                } else {
-                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                }
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                ) {
-                    val pillColor = if (state.settings.superModeStrict) {
-                        MaterialTheme.colorScheme.onErrorContainer
-                    } else {
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    }
-                    Icon(
-                        imageVector = if (state.settings.superModeStrict) AppIcons.Lock else AppIcons.LockOpen,
-                        contentDescription = null,
-                        tint = pillColor,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(
-                        if (state.settings.superModeStrict) "学霸模式 · 严格锁定中"
-                        else "学霸模式 · 白名单内 $guardAllowCount 个应用可用",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = pillColor
-                    )
-                }
-            }
+            StatusPill(
+                text = if (state.settings.superModeStrict) "学霸模式 · 严格锁定中"
+                else "学霸模式 · 白名单内 $guardAllowCount 个应用可用",
+                tone = if (state.settings.superModeStrict) PillTone.WARNING else PillTone.ACCENT
+            )
             Spacer(Modifier.height(16.dp))
         }
 
@@ -804,10 +775,10 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
                 modifier = Modifier.horizontalScroll(rememberScrollState())
             ) {
                 state.subjects.forEach { subject ->
-                    FilterChip(
+                    ToggleChip(
+                        text = subject.name,
                         selected = timer.subjectId == subject.id,
-                        onClick = { vm.switchSubject(subject) },
-                        label = { Text(subject.name) }
+                        onClick = { vm.switchSubject(subject) }
                     )
                 }
             }
@@ -826,10 +797,10 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
                     Text("已专注的时长会记为中断,不计入统计。")
                     Spacer(Modifier.height(12.dp))
                     reasons.forEach { r ->
-                        FilterChip(
+                        ToggleChip(
+                            text = r,
                             selected = reason == r,
                             onClick = { reason = if (reason == r) null else r },
-                            label = { Text(r) },
                             modifier = Modifier.padding(vertical = 2.dp)
                         )
                         Spacer(Modifier.height(2.dp))

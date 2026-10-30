@@ -63,6 +63,4 @@ val AmberGoldDeep = Color(0xFFE88E1B)
 val PlanAccent = Color(0xFF4F46E5)   // --accent 靛蓝
 val PlanAccent2 = Color(0xFF7C3AED)  // --accent2 紫
 val PlanTeal = Color(0xFF0D9488)     // --c-en 青绿
-val PlanInk = Color(0xFF1C2240)      // --ink
-val PlanMuted = Color(0xFF5F6A8A)    // --muted
 val PlanBg = Color(0xFFF2F4FB)       // --bg

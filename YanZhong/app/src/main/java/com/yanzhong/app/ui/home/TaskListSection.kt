@@ -112,7 +112,7 @@ fun LazyListScope.taskListSection(
         }
     }
 
-    // 列表末尾一行批量录入入口:替代原 QuickStartBar 里的按钮
+    // 列表末尾一行批量录入入口
     item(key = "task-list-footer") {
         Row(
             Modifier.fillMaxWidth().padding(top = 4.dp),
