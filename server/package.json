@@ -13,6 +13,7 @@
     "db:studio": "prisma studio",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
     "smoke:api": "node scripts/phase0-api-smoke.mjs",
+    "eval:plan": "tsx scripts/eval-plan.ts",
     "typecheck": "tsc -p tsconfig.test.json && tsc --noEmit",
     "verify": "npm run typecheck && npm test && npm run build"
   },

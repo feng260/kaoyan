@@ -88,6 +88,28 @@ router.post('/plans/generate', requireAuth, apiLimit(), async ctx => {
   ctx.body = { plan, serverTime: Date.now() }
 })
 
+/**
+ * 异步生成计划:立刻返回 jobId,后台跑骨架/细化/校验/评审/文档全链路。
+ * 进度同时通过 WebSocket 的 planGeneration 事件推送;客户端也可以用下面的 GET 轮询兜底。
+ * 同一用户已有运行中的任务时复用同一个 jobId,连点不会产出多份草稿。
+ */
+router.post('/plans/generate/jobs', requireAuth, apiLimit(), async ctx => {
+  const userGuid = ctx.state.auth!.userGuid
+  const deviceId = ctx.state.auth!.deviceId
+  const { jobId, job } = planningService.startGeneration(userGuid, updated => {
+    hub.sendToUser(userGuid, { type: 'planGeneration', job: updated, serverTime: Date.now() }, deviceId)
+    if (updated.status === 'done') notifyPlanChanged(userGuid, deviceId)
+  })
+  ctx.status = 202
+  ctx.body = { jobId, job, serverTime: Date.now() }
+})
+
+router.get('/plans/generate/jobs/:id', requireAuth, async ctx => {
+  const job = await planningService.getGenerationJob(ctx.state.auth!.userGuid, String(ctx.params.id))
+  if (!job) throw new ApiError(404, 'GENERATION_JOB_NOT_FOUND', '生成任务不存在或已过期,请重新发起')
+  ctx.body = { job, serverTime: Date.now() }
+})
+
 router.post('/plans/:id/confirm', requireAuth, apiLimit(), async ctx => {
   const planId = Number(ctx.params.id)
   if (!Number.isInteger(planId) || planId <= 0) {

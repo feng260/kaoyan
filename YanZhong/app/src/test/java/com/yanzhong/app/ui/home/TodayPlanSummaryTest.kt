@@ -41,6 +41,24 @@ class TodayPlanSummaryTest {
         assertEquals(0, summary.remainingMinutes)
     }
 
+    @Test
+    fun tasksFollowServerStartTimeAndUnscheduledTasksGoLast() {
+        val today = 1_700_000_000_000L
+        val tasks = listOf(
+            task(id = 1, dueAt = today, planId = 10).copy(
+                planSlot = "evening", planStartTime = "19:00"),
+            task(id = 2, dueAt = today, planId = 10).copy(
+                planSlot = "morning", planStartTime = "08:00"),
+            task(id = 3, dueAt = today, planId = 10),
+            task(id = 4, dueAt = today, planId = 10).copy(
+                planSlot = "afternoon", planStartTime = "14:30"),
+        )
+
+        val summary = summarizeTodayPlanTasks(tasks, today, focusMinutes = 25)
+
+        assertEquals(listOf(2L, 4L, 1L, 3L), summary.tasks.map { it.id })
+    }
+
     private fun task(
         id: Long,
         dueAt: Long,

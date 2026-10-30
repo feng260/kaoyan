@@ -433,7 +433,12 @@ class StudyRepository(private val db: YanZhongDatabase) {
                     expanded.filter { template ->
                         allDone.none { it.repeatParentId == template.id && it.completedAt != null && it.completedAt in dayStart..dayEnd }
                     })
-                    .sortedWith(compareBy({ it.priority }, { it.dueAt ?: Long.MAX_VALUE })),
+                    // 计划项按服务端排定的开始时刻走时间轴;没有时刻的手工任务排在其后
+                    .sortedWith(
+                        compareBy<TaskEntity> { it.planStartTime ?: "99:99" }
+                            .thenBy { it.priority }
+                            .thenBy { it.dueAt ?: Long.MAX_VALUE }
+                    ),
                 done = allDone.filter {
                     !it.builtin && it.completedAt?.let { completedAt -> completedAt in dayStart..dayEnd } == true
                 }

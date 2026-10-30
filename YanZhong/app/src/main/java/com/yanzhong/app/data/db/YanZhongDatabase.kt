@@ -20,7 +20,7 @@ import java.time.ZonedDateTime
         MonthlyReviewEntity::class,
         SyncTombstoneEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class YanZhongDatabase : RoomDatabase() {
@@ -54,6 +54,7 @@ abstract class YanZhongDatabase : RoomDatabase() {
                 MIGRATION_5_6,
                 MIGRATION_6_7,
                 MIGRATION_7_8,
+                MIGRATION_8_9,
             )
             .addCallback(object : Callback() {
                 override fun onCreate(db: SupportSQLiteDatabase) {
@@ -171,6 +172,14 @@ abstract class YanZhongDatabase : RoomDatabase() {
         private val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE task ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** v9:计划项时段/开始时刻,让今日待办按服务端排定的时间轴展示;存量任务留空。 */
+        private val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE task ADD COLUMN planSlot TEXT")
+                db.execSQL("ALTER TABLE task ADD COLUMN planStartTime TEXT")
             }
         }
 

@@ -107,6 +107,10 @@ data class TaskEntity(
     val planItemId: Long? = null,
     /** 内置 468 天参考计划包导入的条目标记:仅作参考,在生成 AI 计划前不进入今日待办 */
     @ColumnInfo(defaultValue = "0") val builtin: Boolean = false,
+    /** 服务端编译的时段(morning/afternoon/evening),手工任务为空 */
+    val planSlot: String? = null,
+    /** 服务端编译的开始时刻 HH:mm,今日列表据此按时间轴排序 */
+    val planStartTime: String? = null,
     @ColumnInfo(defaultValue = "") val clientGuid: String = "",
     @ColumnInfo(defaultValue = "0") val updatedAt: Long = 0,
     @ColumnInfo(defaultValue = "1") val dirty: Boolean = true

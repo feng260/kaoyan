@@ -78,6 +78,29 @@ export const DOC_CHAPTER_PLAN = [
 
 export type DocSection = (typeof DOC_CHAPTER_PLAN)[number]['section']
 
+export interface BriefWindow {
+  start: string
+  end: string
+}
+
+export type BriefAvailability = Array<{ weekday: number; windows: BriefWindow[] }>
+export type BriefCommitment = { weekday: number; start: string; end: string; label: string }
+
+/**
+ * 日历化作息:学期、寒暑假、冲刺闭关等区间的空闲与固定占用和平时不同。
+ * 没有这一段时,服务端会把「周三晚上有课」当成一整年都成立,寒暑假的整天空闲
+ * 被白白丢掉,学期中的白天又会被误排任务。
+ */
+export interface BriefPeriod {
+  /** YYYY-MM-DD,含首尾 */
+  start: string
+  end: string
+  kind: 'term' | 'vacation' | 'summer' | 'sprint' | 'other'
+  note: string
+  availability: BriefAvailability
+  fixedCommitments: BriefCommitment[]
+}
+
 /**
  * AI 面试阶段产出的「考生画像简报」。
  * 它的作用是补上问卷问不到的信息(目标院校、专业课科目、在职与否、已有资料……),
@@ -92,8 +115,10 @@ export interface PlanBrief {
   materials: string[]
   notes: string[]
   examSubjects: Array<{ name: string; progress: string; scope: string; remainingMinutes: number; milestone: string; milestoneDate: string; milestoneMinutes: number; estimated: boolean }>
-  availability: Array<{ weekday: number; windows: Array<{ start: string; end: string }> }>
-  fixedCommitments: Array<{ weekday: number; start: string; end: string; label: string }>
+  availability: BriefAvailability
+  fixedCommitments: BriefCommitment[]
+  /** 按日期区间覆盖平时作息;旧简报没有这一段时沿用 availability */
+  periods?: BriefPeriod[]
   availabilityConfirmed: boolean
   commitmentsConfirmed: boolean
 }
@@ -108,6 +133,7 @@ export const EMPTY_BRIEF: PlanBrief = {
   examSubjects: [],
   availability: [],
   fixedCommitments: [],
+  periods: [],
   availabilityConfirmed: false,
   commitmentsConfirmed: false,
 }
@@ -250,16 +276,66 @@ export function normalizeDocument(raw: any, fallbackTitle: string): PlanDocument
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/
 const clockMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3))
 
+const isoDayPattern = /^\d{4}-\d{2}-\d{2}$/
+function isoDay(value: unknown): string {
+  if (typeof value !== 'string' || !isoDayPattern.test(value)) return ''
+  const parsed = new Date(`${value}T00:00:00.000Z`)
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value ? value : ''
+}
+
+const briefWindow = (item: any): BriefWindow | null => {
+  const start = str(item?.start, 5)
+  const end = str(item?.end, 5)
+  return timePattern.test(start) && timePattern.test(end) && clockMinutes(start) < clockMinutes(end)
+    ? { start, end } : null
+}
+const validWeekday = (value: unknown) => Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 7
+
+function normalizeAvailability(raw: unknown): BriefAvailability {
+  return (Array.isArray(raw) ? raw : []).filter((item: any) => validWeekday(item?.weekday))
+    .map((item: any) => ({
+      weekday: Number(item.weekday),
+      windows: (Array.isArray(item.windows) ? item.windows : [])
+        .map(briefWindow).filter((value: BriefWindow | null): value is BriefWindow => value !== null).slice(0, 6),
+    }))
+    .filter(item => item.windows.length > 0)
+}
+
+function normalizeCommitments(raw: unknown): BriefCommitment[] {
+  return (Array.isArray(raw) ? raw : []).filter((item: any) => validWeekday(item?.weekday))
+    .map((item: any) => {
+      const window = briefWindow(item)
+      return window ? { ...window, weekday: Number(item.weekday), label: str(item.label) } : null
+    })
+    .filter((item): item is BriefCommitment => item !== null && Boolean(item.label))
+    .slice(0, 20)
+}
+
+function normalizePeriods(raw: unknown): BriefPeriod[] {
+  const kinds = new Set(['term', 'vacation', 'summer', 'sprint', 'other'])
+  return (Array.isArray(raw) ? raw : [])
+    .map((item: any) => {
+      const start = isoDay(item?.start)
+      const end = isoDay(item?.end)
+      if (!start || !end || end < start) return null
+      const kind = kinds.has(String(item?.kind)) ? String(item.kind) as BriefPeriod['kind'] : 'other'
+      return {
+        start,
+        end,
+        kind,
+        note: str(item?.note, 80),
+        availability: normalizeAvailability(item?.availability),
+        fixedCommitments: normalizeCommitments(item?.fixedCommitments),
+      }
+    })
+    .filter((item): item is BriefPeriod => item !== null)
+    .sort((a, b) => a.start.localeCompare(b.start))
+    .slice(0, 8)
+}
+
 /** 面试简报的收敛:旧简报仍可读,但缺少结构化事实不能通过生成门槛 */
 export function normalizeBrief(raw: any): PlanBrief {
   if (!raw || typeof raw !== 'object') return { ...EMPTY_BRIEF }
-  const window = (item: any) => {
-    const start = str(item?.start, 5)
-    const end = str(item?.end, 5)
-    return timePattern.test(start) && timePattern.test(end) && clockMinutes(start) < clockMinutes(end)
-      ? { start, end } : null
-  }
-  const weekday = (value: unknown) => Number.isInteger(value) && Number(value) >= 1 && Number(value) <= 7
   return {
     summary: longText(raw.summary),
     goals: strList(raw.goals, 8, 120),
@@ -271,19 +347,13 @@ export function normalizeBrief(raw: any): PlanBrief {
       name: str(item?.name), progress: str(item?.progress, 200), scope: str(item?.scope, 200),
       remainingMinutes: Number.isSafeInteger(item?.remainingMinutes) && item.remainingMinutes > 0 ? item.remainingMinutes : 0,
       milestone: str(item?.milestone, 120),
-      milestoneDate: typeof item?.milestoneDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(item.milestoneDate)
-        && !Number.isNaN(Date.parse(`${item.milestoneDate}T00:00:00.000Z`))
-        && new Date(`${item.milestoneDate}T00:00:00.000Z`).toISOString().slice(0, 10) === item.milestoneDate
-        ? item.milestoneDate : '',
+      milestoneDate: isoDay(item?.milestoneDate),
       milestoneMinutes: Number.isSafeInteger(item?.milestoneMinutes) && item.milestoneMinutes > 0 ? item.milestoneMinutes : 0,
       estimated: item?.estimated === true,
     })).filter((item: PlanBrief['examSubjects'][number]) => item.name),
-    availability: (Array.isArray(raw.availability) ? raw.availability : []).filter((item: any) => weekday(item?.weekday))
-      .map((item: any) => ({ weekday: item.weekday, windows: (Array.isArray(item.windows) ? item.windows : []).map(window).filter((value: any) => value !== null) })),
-    fixedCommitments: (Array.isArray(raw.fixedCommitments) ? raw.fixedCommitments : [])
-      .filter((item: any) => weekday(item?.weekday))
-      .map((item: any) => ({ ...window(item), weekday: item.weekday, label: str(item.label) }))
-      .filter((item: any) => item.start && item.end && item.label),
+    availability: normalizeAvailability(raw.availability),
+    fixedCommitments: normalizeCommitments(raw.fixedCommitments),
+    periods: normalizePeriods(raw.periods),
     availabilityConfirmed: raw.availabilityConfirmed === true,
     commitmentsConfirmed: raw.commitmentsConfirmed === true,
   }
@@ -342,6 +412,13 @@ export function mergeBrief(base: PlanBrief, patch: PlanBrief): PlanBrief {
     fixedCommitments: [...base.fixedCommitments, ...patch.fixedCommitments.filter(item =>
       !base.fixedCommitments.some(existing => existing.weekday === item.weekday
         && existing.start === item.start && existing.end === item.end && existing.label === item.label))],
+    // 已确认的作息连同学期/假期区间一起锁定:面谈里改作息应该回「备考档案」,
+    // 但考生主动补一段「寒假全天有空」属于新增信息,不与旧区间冲突时仍要收下。
+    periods: mergeByKey(base.periods ?? [], patch.periods ?? [], item => `${item.start}|${item.end}`)
+      .filter(item => !base.availabilityConfirmed
+        || (base.periods ?? []).some(existing => existing.start === item.start && existing.end === item.end)
+        || !(base.periods ?? []).some(existing => existing.start <= item.end && item.start <= existing.end))
+      .sort((a, b) => a.start.localeCompare(b.start)),
     availabilityConfirmed: base.availabilityConfirmed || patch.availabilityConfirmed,
     commitmentsConfirmed: base.commitmentsConfirmed || patch.commitmentsConfirmed,
   }
@@ -370,14 +447,50 @@ export function briefIsEmpty(brief: PlanBrief): boolean {
     && brief.notes.length === 0
     && brief.examSubjects.length === 0
     && brief.availability.length === 0
+    && (brief.periods ?? []).length === 0
 }
 
-export function netAvailableMinutes(brief: Pick<PlanBrief, 'availability' | 'fixedCommitments'>, date: Date): number {
+type BriefSchedule = Pick<PlanBrief, 'availability' | 'fixedCommitments'> & { periods?: BriefPeriod[] }
+
+/** 命中的日期区间:多个区间重叠时取开始最晚的那段(更具体的安排优先) */
+export function periodForDate(brief: BriefSchedule, date: Date): BriefPeriod | null {
+  const day = date.toISOString().slice(0, 10)
+  const hits = (brief.periods ?? []).filter(period => period.start <= day && day <= period.end)
+  if (hits.length === 0) return null
+  return hits.sort((a, b) => b.start.localeCompare(a.start))[0]
+}
+
+/**
+ * 某一天的真实作息:区间内按星期覆盖平时作息,未列出的星期回落到平时。
+ * 寒暑假不再叠加学期里的固定占用(课都不上了,再扣一遍就排不出任何任务);
+ * 其它区间(冲刺/自定义)与平时固定占用取并集,因为上班/通勤不会因为放假自动消失。
+ */
+export function daySchedule(brief: BriefSchedule, date: Date): {
+  windows: BriefWindow[]
+  commitments: BriefCommitment[]
+  period: BriefPeriod | null
+} {
   const weekday = date.getUTCDay() || 7
-  const windows = brief.availability.filter(day => day.weekday === weekday).flatMap(day => day.windows)
-    .map(w => [clockMinutes(w.start), clockMinutes(w.end)] as const)
-  const occupied = brief.fixedCommitments.filter(event => event.weekday === weekday)
-    .map(event => [clockMinutes(event.start), clockMinutes(event.end)] as const)
+  const period = periodForDate(brief, date)
+  const periodDays = period ? period.availability.filter(day => day.weekday === weekday) : []
+  const windows = periodDays.flatMap(day => day.windows)
+  const fallbackWindows = brief.availability.filter(day => day.weekday === weekday).flatMap(day => day.windows)
+  const dropWeeklyCommitments = period?.kind === 'vacation' || period?.kind === 'summer'
+  const weekly = dropWeeklyCommitments
+    ? []
+    : brief.fixedCommitments.filter(event => event.weekday === weekday)
+  const inPeriod = period ? period.fixedCommitments.filter(event => event.weekday === weekday) : []
+  return {
+    windows: windows.length > 0 ? windows : fallbackWindows,
+    commitments: [...weekly, ...inPeriod],
+    period,
+  }
+}
+
+export function netAvailableMinutes(brief: BriefSchedule, date: Date): number {
+  const { windows: rawWindows, commitments: rawCommitments } = daySchedule(brief, date)
+  const windows = rawWindows.map(w => [clockMinutes(w.start), clockMinutes(w.end)] as const)
+  const occupied = rawCommitments.map(event => [clockMinutes(event.start), clockMinutes(event.end)] as const)
   const boundaries = [...new Set([...windows, ...occupied].flatMap(interval => [...interval]))].sort((a, b) => a - b)
   let minutes = 0
   for (let i = 1; i < boundaries.length; i++) {
@@ -386,6 +499,29 @@ export function netAvailableMinutes(brief: Pick<PlanBrief, 'availability' | 'fix
       && !occupied.some(([a, b]) => a <= from && b >= to)) minutes += to - from
   }
   return minutes
+}
+
+/** 某天可排任务的连续空闲段(已扣除固定占用),编译器按顺序把任务填进这些段并给出起始时刻 */
+export function freeSlots(brief: BriefSchedule, date: Date): Array<{ start: string; end: string }> {
+  const { windows: rawWindows, commitments: rawCommitments } = daySchedule(brief, date)
+  const windows = rawWindows.map(w => [clockMinutes(w.start), clockMinutes(w.end)] as const)
+  const occupied = rawCommitments.map(event => [clockMinutes(event.start), clockMinutes(event.end)] as const)
+  const boundaries = [...new Set([...windows, ...occupied].flatMap(interval => [...interval]))].sort((a, b) => a - b)
+  const slots: Array<{ start: string; end: string }> = []
+  const format = (minutes: number) => `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
+  for (let i = 1; i < boundaries.length; i++) {
+    const from = boundaries[i - 1], to = boundaries[i]
+    if (windows.some(([a, b]) => a <= from && b >= to)
+      && !occupied.some(([a, b]) => a <= from && b >= to)) slots.push({ start: format(from), end: format(to) })
+  }
+  // 相邻且首尾相接的空闲段合并,避免「19:00-20:00 + 20:00-21:00」把一条 60 分钟任务切成两半
+  const merged: Array<{ start: string; end: string }> = []
+  for (const slot of slots) {
+    const prev = merged[merged.length - 1]
+    if (prev && clockMinutes(prev.end) === clockMinutes(slot.start)) prev.end = slot.end
+    else merged.push({ ...slot })
+  }
+  return merged
 }
 
 export function assessPlanningFacts(brief: PlanBrief, startDate: Date, examDate: Date, allowCompletedMilestones = false) {
@@ -445,7 +581,15 @@ export function briefToPrompt(brief: PlanBrief): string {
   if (brief.materials.length) lines.push(`资料情况:${brief.materials.join(';')}`)
   if (brief.notes.length) lines.push(`其它补充:${brief.notes.join(';')}`)
   if (brief.examSubjects.length) lines.push(`正式考试科目与逐科事实:${JSON.stringify(brief.examSubjects)}`)
-  if (brief.availability.length) lines.push(`真实空闲时段:${JSON.stringify(brief.availability)}`)
-  if (brief.commitmentsConfirmed) lines.push(`固定占用(空数组表示确认没有):${JSON.stringify(brief.fixedCommitments)}`)
+  if (brief.availability.length) lines.push(`平时真实空闲时段:${JSON.stringify(brief.availability)}`)
+  if (brief.commitmentsConfirmed) lines.push(`平时固定占用(空数组表示确认没有):${JSON.stringify(brief.fixedCommitments)}`)
+  if ((brief.periods ?? []).length) {
+    lines.push('分日期区间的作息(区间内优先于平时作息):')
+    for (const period of brief.periods ?? []) {
+      lines.push(`  ${period.start} ~ ${period.end} ${period.kind === 'vacation' || period.kind === 'summer' ? '(假期,平时固定占用不再生效)' : ''}`
+        + `${period.note ? `[${period.note}]` : ''} 空闲:${JSON.stringify(period.availability)}`
+        + `${period.fixedCommitments.length ? ` 固定占用:${JSON.stringify(period.fixedCommitments)}` : ''}`)
+    }
+  }
   return lines.join('\n')
 }

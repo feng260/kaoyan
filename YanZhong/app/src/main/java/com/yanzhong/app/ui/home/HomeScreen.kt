@@ -156,13 +156,21 @@ fun HomeScreen(
     val rhythmRows = remember(todayTemplate, epochDay, rhythmTasks, state.focusMinutes) {
         RhythmEngine.buildTodayRhythm(todayTemplate, epochDay, rhythmTasks, state.focusMinutes)
     }
-    /** 待办任务 → 节奏计划时段(整段起止):任务卡不再用固定 dueAt,动态跟随排程 */
-    val planSlots = remember(rhythmRows) {
-        rhythmRows.filter { it.taskId != null }
+    /**
+     * 待办任务 → 展示时段。
+     * 服务端计划项自带编译好的开始时刻(随真实课表空档排定),优先用它;
+     * 手工/旧计划任务再退回本地节奏排程(整段起止),保证原有体验不退化。
+     */
+    val planSlots = remember(rhythmRows, state.today) {
+        val rhythm = rhythmRows.filter { it.taskId != null }
             .groupBy { it.taskId!! }
             .mapValues { (_, segs) ->
                 segs.first().time.substringBefore("–") + "–" + segs.last().time.substringAfterLast("–")
             }
+        val server = (state.today.open + state.today.done).mapNotNull { task ->
+            TimeUtils.planTimeLabel(task.planSlot, task.planStartTime)?.let { task.id to it }
+        }.toMap()
+        rhythm + server
     }
     /** 今日已完成任务 id:节奏卡概览行按任务真实完成态统计,与展开后的任务段一一对应 */
     val doneTaskIds = remember(state.today.done) { state.today.done.map { it.id }.toSet() }

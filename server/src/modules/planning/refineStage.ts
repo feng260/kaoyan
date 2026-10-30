@@ -2,6 +2,7 @@ import { chatComplete, extractJson } from '../../shared/llm/client'
 import { dayStart, diffDays } from './schemas'
 import type { AiWeekVariant, GeneratedStage } from './generator'
 import type { PlanBrief } from './document'
+import { topicsForSubject, type PlaybookPhase } from './playbooks'
 
 /**
  * L2 阶段细化轮:把一个阶段的每周安排交给模型细化为具体的周变体任务序列。
@@ -20,6 +21,14 @@ export type StageRefineInput = {
   confirmedSubjects: string[]
   weakSubjects: string[]
   targetType: string
+  /** 本阶段每周可投入分钟数(按真实容量算),用于约束变体的总量 */
+  weeklyTargetMinutes?: number
+  /** 各科时间占比,与 PlanSpec 的 subjectMix 同源 */
+  subjectMix?: Array<{ subject: string; share: number }>
+  /** 阶段所处环节:把该科的知识点序列注入,避免每周原地打转 */
+  phase?: PlaybookPhase
+  /** 上一轮这一阶段被校验拦下的具体原因 */
+  repairHint?: string
 }
 
 /**
@@ -87,6 +96,31 @@ function buildUserPrompt(input: StageRefineInput): string {
     }
     lines.push(`  ${WEEKDAY_NAMES[weekday - 1]}:空闲 ${windows.length ? windows.join('、') : '无'};固定占用 ${commitments.length ? commitments.join('、') : '无'}`)
   }
+  // 分区间作息:寒暑假/开学后容量不同,同一套周变体不能铺满整段
+  if ((brief.periods ?? []).length) {
+    lines.push('分日期区间的作息(区间内优先):')
+    for (const period of brief.periods ?? []) {
+      lines.push(`  ${period.start} ~ ${period.end} [${period.kind}]${period.note ? ` ${period.note}` : ''}:空闲 ${JSON.stringify(period.availability)}`)
+    }
+  }
+  if (input.weeklyTargetMinutes) {
+    lines.push(`本阶段每周实际可投入约 ${input.weeklyTargetMinutes} 分钟:每个周变体的任务总时长应接近这个值(允许 ±20%),不要明显排不满或超量。`)
+  }
+  if (input.subjectMix?.length) {
+    const mix = input.subjectMix.map(item => `${item.subject} ${Math.round(item.share * 100)}%`).join('、')
+    lines.push(`本阶段各科时间占比参考:${mix};周变体里各科的 minutes 合计应大致符合这个比例。`)
+  }
+  if (input.phase) {
+    for (const subject of confirmedSubjects) {
+      const topics = topicsForSubject(subject, input.phase)
+      if (topics.length) lines.push(`- ${subject} 本阶段知识点推进顺序:${topics.join(' → ')}`)
+    }
+    lines.push('周变体要严格按上面的知识点顺序向前推进:第 1 个变体从靠前的知识点开始,最后一个变体覆盖靠后的知识点与阶段里程碑。')
+  }
+  if (input.repairHint) {
+    lines.push('', '上一轮这个阶段的安排被服务端校验拦下,原因:', input.repairHint,
+      '请针对列出的问题重写这个阶段的周变体;其它没被点名的部分可以沿用。')
+  }
   lines.push('', `请为这个阶段输出 ${Math.min(MAX_VARIANTS, Math.max(4, weeks))} 个周变体。`)
   return lines.join('\n')
 }
@@ -99,11 +133,19 @@ export function normalizeWeekVariants(raw: unknown, confirmedSubjects: string[])
   for (const week of weeks.slice(0, MAX_VARIANTS)) {
     if (!Array.isArray(week)) continue
     const tasks: AiWeekVariant = []
+    const seen = new Set<string>()
+    const perDay = new Map<number, number>()
     for (const task of week) {
       const weekday = Math.round(Number(task?.weekday))
       const subject = String(task?.subject ?? '').trim()
       const title = String(task?.title ?? '').trim()
       if (!(weekday >= 1 && weekday <= 7) || !allowed.has(subject) || !title) continue
+      const key = `${weekday}|${subject}|${title}`
+      if (seen.has(key)) continue
+      // 单日最多 6 条:再多就会把清单刷成流水账,也超出任何真实空闲窗口
+      if ((perDay.get(weekday) ?? 0) >= 6) continue
+      seen.add(key)
+      perDay.set(weekday, (perDay.get(weekday) ?? 0) + 1)
       const minutesRaw = Math.round(Number(task?.minutes))
       const minutes = Number.isFinite(minutesRaw) && minutesRaw > 0
         ? Math.max(MIN_TASK_MINUTES, Math.min(MAX_TASK_MINUTES, minutesRaw))

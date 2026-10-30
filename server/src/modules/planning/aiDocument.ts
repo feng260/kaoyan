@@ -10,6 +10,8 @@ import {
   type PlanBrief,
   type PlanDocument,
 } from './document'
+import type { PlanSpec } from './planSpec'
+import { deriveDocument } from './specDocument'
 
 /**
  * 计划长文档生成器 —— 把 AI 生成的计划渲染成一份完整的「作战计划书」。
@@ -29,6 +31,8 @@ export type AiDocumentInput = {
   brief: PlanBrief | null
   stages: GeneratedStage[]
   startDate: Date
+  /** 计划的可复算工件;有它时 02/03/04 章与首周安排全部由服务端派生 */
+  spec?: PlanSpec | null
 }
 
 /** 少于这个章数就不值得展示:半份计划书比没有更让人困惑 */
@@ -93,12 +97,18 @@ function buildContext(input: AiDocumentInput): string {
     lines.push(`  第 ${index + 1} 阶段:${stage.name},${iso(stage.startDate)} ~ ${iso(stage.endDate)}(共 ${diffDays(stage.endDate, stage.startDate) + 1} 天)`)
     if (stage.strategy) lines.push(`    主线:${stage.strategy}`)
     if (stage.milestones?.length) lines.push(`    里程碑:${stage.milestones.join('；')}`)
+    const specStage = input.spec?.stages[index]
+    if (specStage) {
+      lines.push(`    各科时间占比:${specStage.subjectMix.map(item => `${item.subject} ${Math.round(item.share * 100)}%`).join('、')}`)
+      const first = specStage.weeks[0]
+      if (first) lines.push(`    首周实际任务(与 App 每日清单一致,写文档时不得与之矛盾):${first.tasks.slice(0, 8).map(task => `周${task.weekday} ${task.subject}·${task.title}(${task.minutes}m)`).join(' / ')}`)
+    }
     const firstWeek = stage.weekVariants?.[0]
     if (firstWeek?.length) {
       const sample = firstWeek.slice(0, 6)
         .map(task => `周${'一二三四五六日'[task.weekday - 1]} ${task.subject}·${task.title}(${task.minutes}m)`)
         .join(' / ')
-      lines.push(`    首周任务示例:${sample}`)
+      lines.push(`    细化轮首周示例:${sample}`)
     }
   })
   return lines.join('\n')
@@ -258,11 +268,19 @@ export async function generatePlanDocument(input: AiDocumentInput): Promise<Plan
     .map(item => byNo.get(sectionKey(item.no)))
     .filter((chapter): chapter is any => Boolean(chapter))
 
-  if (ordered.length < MIN_CHAPTERS) {
+  const llmDocument = ordered.length > 0
+    ? normalizeDocument({ title: input.title, hero, chapters: ordered }, input.title)
+    : null
+
+  // 有 spec 时文档的骨架/数字由服务端派生:即便 5 段调用全部失败,也能得到一份
+  // 与每日清单完全一致的 8 章计划书;模型写得好的 01/05/06/07/08 仍然会被保留。
+  if (input.spec) {
+    return deriveDocument(input.spec, llmDocument, input.title)
+  }
+
+  if (ordered.length < MIN_CHAPTERS || !llmDocument) {
     console.warn(`[planning] 计划文档有效章节只有 ${ordered.length} 章,放弃保存`)
     return null
   }
-
-  const document = normalizeDocument({ title: input.title, hero, chapters: ordered }, input.title)
-  return document
+  return llmDocument
 }

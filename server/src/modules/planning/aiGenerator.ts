@@ -5,6 +5,18 @@ import { generatePlanDocument } from './aiDocument'
 import { refineStageToWeeks } from './refineStage'
 import { KAOYAN_KNOWN_SUBJECT_NAMES, PLAN_STRUCTURE_EXEMPLAR } from './planExemplar'
 import { briefIsEmpty, briefToPrompt, documentMatchesSubjects, netAvailableMinutes, type PlanBrief, type PlanDocument } from './document'
+import { phaseOfStage, playbookPrompt } from './playbooks'
+import {
+  buildPlanSpec,
+  compilePlanSpec,
+  issuesSummary,
+  repairHintForStage,
+  repairPlanSpec,
+  verifyPlanSpec,
+  type PlanSpec,
+  type SpecVerification,
+} from './planSpec'
+import { critiquePlan } from './planCritic'
 
 /**
  * AI 版计划生成器。
@@ -22,6 +34,14 @@ import { briefIsEmpty, briefToPrompt, documentMatchesSubjects, netAvailableMinut
  * 文档是加分项:它失败只降级为 null,绝不连累每日清单。
  */
 
+export type PlanProgress = {
+  /** 0–100,客户端进度条用 */
+  percent: number
+  /** 机器可读的阶段标识 */
+  phase: 'skeleton' | 'refining' | 'compiling' | 'verifying' | 'repairing' | 'reviewing' | 'documenting' | 'done'
+  message: string
+}
+
 export type AiPlanningInput = ProfileInput & {
   startDate: Date
   /** 面谈得到的考生画像;没聊过就是 null,生成器退化为只看问卷 */
@@ -31,6 +51,10 @@ export type AiPlanningInput = ProfileInput & {
    * 让模型带着「哪里被拦了」重新出骨架,而不是盲掷骰子。
    */
   repairHint?: string
+  /** 生成进度(骨架/细化/校验/修复/评审/文档);同步接口可以不传 */
+  onProgress?: (progress: PlanProgress) => void
+  /** 关掉 LLM 评审(测试/低预算部署用);默认开启 */
+  critic?: boolean
 }
 
 type AiWeeklySlot = {
@@ -103,6 +127,7 @@ const SYSTEM_PROMPT = `你是一位资深的中国备考全程规划师,只根�
 硬性要求:
 1. stages 2-6 个,按时间顺序排列,首尾相接、不重叠。startDate 为今天,endDate 为考前一天。
 2. 各阶段的相对长度要符合该考试的一般备考规律:基础期最长,强化期次之,冲刺期最短。若考期在半年内则压缩为基础/强化/冲刺三段。
+   每个阶段都要覆盖全部已确认科目(政治可在基础期少排,但不能整段消失);阶段主线要写清这一阶段各科分别推进到什么程度。
 3. weeklySlots 是按科目和星期匹配的任务队列:同一科目的后续条目在后续周推进,不可每周重放已完成的标题。
    - weekdays 用 1-7 表示周一到周日;weekParity 用 odd/even 区分从本阶段起点算起的奇周/偶周,省略表示不限定;任务完成后不循环重播;
    - 每个阶段提供足够覆盖实际空闲时段的任务,按先修顺序排列;
@@ -138,6 +163,8 @@ function buildUserPrompt(input: AiPlanningInput): string {
   // 优秀计划的结构范例只对考研注入:考公/法考有自己的阶段逻辑,硬塞考研范例只有干扰
   if (input.targetType === '考研') {
     lines.push('', PLAN_STRUCTURE_EXEMPLAR)
+    lines.push('', playbookPrompt(input.brief?.examSubjects.map(subject => subject.name) ?? [],
+      input.targetType, Math.min(5, Math.max(2, Math.ceil(totalDays / 120)))))
   }
   lines.push('', `请输出从 ${fmt(today)} 到 ${fmt(addDays(exam, -1))} 的备考计划骨架。`)
   return lines.join('\n')
@@ -412,12 +439,22 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
   title: string
   plan: GeneratedPlan
   document: PlanDocument | null
+  spec: PlanSpec
+  verification: SpecVerification
 }> {
   const today = dayStart(new Date())
   const exam = dayStart(input.examDate)
   const brief = input.brief
   // 每日容量以课表净空闲为准,没有已确认的空闲时段就无法排计划
   if (!brief) throw new AiUnavailable('缺少已确认的空闲时段(课表/固定占用),无法排计划')
+  const report = (percent: number, phase: PlanProgress['phase'], message: string) => {
+    try {
+      input.onProgress?.({ percent, phase, message })
+    } catch {
+      // 进度回调只是旁路,客户端断开也不能影响生成
+    }
+  }
+  report(5, 'skeleton', '正在根据档案与面谈结果规划阶段骨架')
 
   let content: string
   try {
@@ -452,53 +489,158 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
   // 临考时冲刺/模考的模板比基础段的更有用,也避免「每段至少 1 天」把计划推到考后。
   const usable = stages.slice(-Math.max(1, diffDays(exam, today)))
   const ranges = layoutStages(usable, today, exam)
+  const confirmedSubjects = brief.examSubjects.map(subject => subject.name)
+  const title = typeof parsed.title === 'string' && parsed.title.trim()
+    ? parsed.title.trim().slice(0, 32)
+    : `${input.targetType}备考计划`
 
+  // 先用「没有周变体」的草稿 spec 算出每个阶段的科目配额与周容量,
+  // 再把这两个数字喂给细化轮 —— 模型知道这一周大概能排多少分钟后,才不会排出
+  // 一周 40 小时这种根本执行不了的安排。
+  const draftSpec = buildPlanSpec({
+    title, targetType: input.targetType, startDate: today, examDate: exam,
+    brief, weakSubjects: input.weakSubjects.filter(Boolean), stages: ranges,
+  })
+
+  report(25, 'refining', `正在细化 ${ranges.length} 个阶段的每周任务(并行)`)
   // L2 阶段细化轮:每个阶段并行调一次模型,产出 4-8 个周变体任务序列(累计数万字的
   // 生成预算主要花在这里)——这是追平人工规划密度的关键一步。任一阶段失败只降级为
-  // 该阶段的 weeklySlots 模板展开,绝不阻塞整份计划。
-  const confirmedSubjects = brief.examSubjects.map(subject => subject.name)
-  const refineResults = await Promise.allSettled(ranges.map(stage => refineStageToWeeks({
-    stage,
-    brief,
-    confirmedSubjects,
-    weakSubjects: input.weakSubjects.filter(Boolean),
-    targetType: input.targetType,
-  })))
+  // 该阶段的知识库兜底排课,绝不阻塞整份计划。
+  const refineResults = await Promise.allSettled(ranges.map((stage, index) => {
+    const stageSpec = draftSpec.stages[index]
+    const weeklyTargetMinutes = Math.round(
+      stageSpec.weeks.reduce((sum, week) => sum + week.targetMinutes, 0) / Math.max(1, stageSpec.weeks.length))
+    return refineStageToWeeks({
+      stage,
+      brief,
+      confirmedSubjects,
+      weakSubjects: input.weakSubjects.filter(Boolean),
+      targetType: input.targetType,
+      weeklyTargetMinutes,
+      subjectMix: stageSpec.subjectMix,
+      phase: stageSpec.phase,
+    })
+  }))
   refineResults.forEach((result, index) => {
     if (result.status === 'fulfilled' && result.value.length > 0) {
       ranges[index].weekVariants = result.value
     } else {
       const reason = result.status === 'rejected' ? (result.reason as Error)?.message : '细化结果为空'
-      console.warn(`[planning] 阶段「${ranges[index].name}」细化失败,回退模板展开:`, reason)
+      console.warn(`[planning] 阶段「${ranges[index].name}」细化失败,回退知识库排课:`, reason)
     }
   })
 
-  const items: GeneratedItem[] = []
-  usable.forEach((stage, index) => {
-    items.push(...expandStage(stage, ranges[index], brief))
-  })
-  // 刻意不做旧任务搬运(用户反馈:每生成一次每日任务就累积一轮旧任务)。
-  // 重新生成就是全新计划;旧计划的未完成任务随投影切换被 stalePlanTaskIds 清掉,
-  // 进度语义由 brief 的逐科剩余量承载,不在任务级携带。
-  const scheduledItems = items
+  const rebuild = () => {
+    const nextSpec = buildPlanSpec({
+      title, targetType: input.targetType, startDate: today, examDate: exam,
+      brief, weakSubjects: input.weakSubjects.filter(Boolean), stages: ranges,
+    })
+    const nextPlan = compilePlanSpec(nextSpec)
+    return { spec: nextSpec, plan: nextPlan, verification: verifyPlanSpec(nextSpec, nextPlan) }
+  }
 
+  report(60, 'compiling', '正在把每周任务编译成逐日计划')
+  let { spec, plan, verification } = rebuild()
+  console.log(`[planning] 初版计划:${plan.items.length} 条计划项,校验问题 ${verification.issues.length} 个`)
+
+  // 迭代闭环:确定性校验 → 定向修复 → LLM 评审 → 只重写被点名的阶段。
+  // 最多两轮,避免模型/网络抖动把一次生成拖成无限循环。
+  const maxRounds = 2
+  for (let round = 1; round <= maxRounds; round++) {
+    report(65 + round * 3, 'verifying', `第 ${round} 轮校验:容量、科目覆盖与任务递进`)
+    const actionable = verification.issues.some(issue => issue.severity === 'error'
+      || ['WEEK_PATTERN', 'MISSING_SUBJECT', 'THIN_DAY', 'SUBJECT_MIX', 'TASK_TOO_LONG', 'DUPLICATE_TITLE', 'SYLLABUS_THIN'].includes(issue.code))
+    if (actionable) {
+      report(70 + round * 3, 'repairing', '正在修复校验发现的问题(只改失败的部分)')
+      const repaired = repairPlanSpec(spec, verification)
+      if (repaired.actions.length > 0) {
+        spec = repaired.spec
+        plan = compilePlanSpec(spec)
+        verification = verifyPlanSpec(spec, plan)
+        console.log(`[planning] 第 ${round} 轮定向修复:${repaired.actions.slice(0, 6).join('；')}`)
+      }
+    }
+
+    if (input.critic === false) break
+    if (!verification.ok) {
+      console.warn(`[planning] 仍有未修好的硬问题,跳过评审:${issuesSummary(verification)}`)
+      continue
+    }
+    report(80, 'reviewing', 'AI 评审正在复核阶段逻辑与任务质量')
+    const verdict = await critiquePlan({ spec, plan, verification, confirmedSubjects })
+    if (!verdict) break
+    console.log(`[planning] 计划评审 ${verdict.score} 分 ${verdict.approved ? '通过' : '需要修改'}:${verdict.summary}`)
+    if (verdict.approved) break
+
+    const fixIndexes = [...new Set(verdict.issues
+      .map(issue => (issue.stage ?? 0) - 1)
+      .filter(index => index >= 0 && index < ranges.length))]
+    if (fixIndexes.length === 0) break
+
+    // 只重跑被点名的阶段:把确定性校验与评审意见合成该阶段的 repairHint
+    report(84, 'repairing', `按评审意见重写 ${fixIndexes.length} 个阶段`)
+    const refined = await Promise.allSettled(fixIndexes.map(async index => {
+      const hint = [
+        repairHintForStage(verification, index),
+        ...verdict.issues.filter(issue => (issue.stage ?? 0) - 1 === index).map(issue => `- ${issue.fix}`),
+      ].filter(Boolean).join('\n')
+      const stageSpec = spec.stages[index]
+      const weeklyTarget = Math.round(stageSpec.weeks.reduce((sum, week) => sum + week.targetMinutes, 0)
+        / Math.max(1, stageSpec.weeks.length))
+      const variants = await refineStageToWeeks({
+        stage: ranges[index],
+        brief,
+        confirmedSubjects,
+        weakSubjects: input.weakSubjects.filter(Boolean),
+        targetType: input.targetType,
+        weeklyTargetMinutes: weeklyTarget,
+        subjectMix: stageSpec.subjectMix,
+        phase: stageSpec.phase,
+        repairHint: hint || verdict.summary || '请提升这一阶段的递进与任务具体度',
+      })
+      return { index, variants }
+    }))
+    let changed = false
+    for (const result of refined) {
+      if (result.status === 'fulfilled' && result.value.variants.length > 0) {
+        ranges[result.value.index].weekVariants = result.value.variants
+        changed = true
+      } else if (result.status === 'rejected') {
+        console.warn('[planning] 阶段重写失败,保留原安排:', (result.reason as Error)?.message ?? result.reason)
+      }
+    }
+    if (!changed) break
+    report(88, 'compiling', '正在重新编译逐日计划')
+    ;({ spec, plan, verification } = rebuild())
+  }
+
+  const scheduledItems: GeneratedItem[] = plan.items
   if (scheduledItems.length === 0) {
     throw new AiUnavailable('模型给出的模板无法展开出任何计划项')
   }
+  if (verification.issues.length > 0) {
+    console.warn(`[planning] 成稿仍带 ${verification.issues.length} 个校验提示:${issuesSummary(verification)}`)
+  }
 
-  const title = typeof parsed.title === 'string' && parsed.title.trim()
-    ? parsed.title.trim().slice(0, 32)
-    : `${input.targetType}备考计划`
-
-  // 长文档是加分项:任何异常都只降级为 null,绝不能把已经成型的每日清单一起废掉
+  // 长文档是加分项:任何异常都只降级为 null,绝不能把已经成型的每日清单一起废掉。
+  // 传入 spec 后,阶段总览/各科时间线/每日作息由服务端按真实计划项派生,不再和清单打架。
   let document: PlanDocument | null = null
+  report(92, 'documenting', '正在撰写全程作战计划书')
   try {
     const generatedDocument = await generatePlanDocument({
       title,
       profile: input,
       brief,
-      stages: ranges,
+      stages: spec.stages.map(stage => ({
+        name: stage.name,
+        strategy: stage.strategy,
+        milestones: stage.milestones,
+        startDate: new Date(`${stage.startDate}T00:00:00.000Z`),
+        endDate: new Date(`${stage.endDate}T00:00:00.000Z`),
+        sortOrder: stage.sortOrder,
+      })),
       startDate: today,
+      spec,
     })
     if (generatedDocument && documentMatchesSubjects(
       generatedDocument,
@@ -512,5 +654,10 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
     console.warn('[planning] 生成计划长文档失败,仅保留每日清单:', (error as Error)?.message ?? error)
   }
 
-  return { title, plan: { stages: ranges, items: scheduledItems }, document }
+  report(100, 'done', '计划草稿已生成')
+  return { title, plan: { stages: spec.stages.map(stage => ({
+    name: stage.name, strategy: stage.strategy, milestones: stage.milestones,
+    startDate: new Date(`${stage.startDate}T00:00:00.000Z`),
+    endDate: new Date(`${stage.endDate}T00:00:00.000Z`), sortOrder: stage.sortOrder,
+  })), items: scheduledItems }, document, spec, verification }
 }

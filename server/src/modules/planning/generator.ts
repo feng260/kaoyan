@@ -60,6 +60,10 @@ export type GeneratedItem = {
   minutes: number
   priority: number
   sortOrder: number
+  /** 时段:morning/afternoon/evening;由编译器按当天真实空闲窗口给出 */
+  slot?: string
+  /** 建议开始时刻 HH:mm;客户端按它排序并在任务卡上展示 */
+  startTime?: string
 }
 
 export type GeneratedPlan = {

@@ -83,6 +83,9 @@ const SYSTEM_PROMPT = `你是一位资深的中国考研全程规划师,正在�
    自命题范围不明时 scope 留空,不得补写章节。
 7. 时间一律以提示里给出的「今天」为基准:考生说「明天/后天/下周/下个月/还剩多久」时,先按今天换算出 YYYY-MM-DD 再确认。
    不要凭训练记忆里的日期作答,也不要用「下个月」「年底」这类模糊说法代替具体日期。
+8. 如果考生主动提到学期/寒暑假/实习期作息与平时不同(如「暑假全天有空」「九月开学后只有晚上」),
+   在 brief.periods 里用日期区间记录那段作息的空闲与固定占用;考生没提就给空数组,不要编造假期。
+   区间内没写的星期会沿用平时作息,所以只写变化的部分即可。
 
 严格只输出一个 JSON 对象,不要任何解释文字、不要 Markdown 代码块:
 {
@@ -107,9 +110,11 @@ brief 形如:{
   "examSubjects": [{"name":"考生确认的正式科目","progress":"当前具体进度或按经验估计","scope":"已知考试范围,未知留空","remainingMinutes":120,"milestone":"待完成的具体里程碑","milestoneDate":"YYYY-MM-DD","milestoneMinutes":60,"estimated":false}],
   "availability": [{"weekday":1,"windows":[{"start":"19:00","end":"21:00"}]}],
   "fixedCommitments": [{"weekday":1,"start":"19:00","end":"20:00","label":"固定工作"}],
+  "periods": [{"start":"2026-07-01","end":"2026-08-31","kind":"summer","note":"暑假","availability":[{"weekday":1,"windows":[{"start":"08:00","end":"12:00"},{"start":"14:00","end":"18:00"}]}],"fixedCommitments":[]}],
   "availabilityConfirmed": true,
   "commitmentsConfirmed": true
 }
+periods 的 kind 只能取 term/vacation/summer/sprint/other;考生没提就给 []。
 brief 里的科目名称、真实空闲时段、固定占用必须来自考生确认,严禁编造;
 逐科进度/范围/剩余量/里程碑:考生说了就照实写 estimated=false,没说就按考研常识合理估计并标 estimated=true,数字要贴考研实际。`
 
@@ -169,6 +174,9 @@ function profileContext(profile: ProfileInput | null, brief: PlanBrief | null): 
   }
   if (brief && brief.commitmentsConfirmed) {
     lines.push(`- 固定占用(已确认,空数组表示考生确认没有):${JSON.stringify(brief.fixedCommitments)}`)
+  }
+  if (brief && (brief.periods ?? []).length) {
+    lines.push(`- 分区间作息(已记录,不要重复问):${JSON.stringify(brief.periods)}`)
   }
   return lines.join('\n')
 }

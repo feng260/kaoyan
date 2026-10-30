@@ -86,6 +86,24 @@ class PlanProjectorTest {
     }
 
     @Test
+    fun projectionCarriesServerSlotAndStartTime() {
+        val scheduled = plan(1001L, "数学 · 晨读").let { p ->
+            p.copy(items = listOf(p.items.single().copy(slot = "morning", startTime = "08:00")))
+        }
+
+        val projected = projectPlanTasks(
+            existing = emptyList(),
+            plan = scheduled,
+            accountGuid = "account-a",
+            subjectIds = mapOf("数学" to 7L),
+            now = 100L,
+        ).single()
+
+        assertEquals("morning", projected.planSlot)
+        assertEquals("08:00", projected.planStartTime)
+    }
+
+    @Test
     fun serverCompletionTimeOverridesPlanDayAndLocalTime() {
         val completedAt = 1_790_000_000_000L
         val completedPlan = plan(1001L, "数学").copy(

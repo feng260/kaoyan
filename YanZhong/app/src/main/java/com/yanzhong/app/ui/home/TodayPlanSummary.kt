@@ -32,7 +32,12 @@ fun summarizeTodayPlanTasks(
                 task.dueAt != null &&
                 Instant.ofEpochMilli(task.dueAt).atZone(zone).toLocalDate() == date
         }
-        .sortedWith(compareBy<TaskEntity> { it.dueAt }.thenBy { it.id })
+        // 服务端排定了开始时刻就按时间轴走;没有时刻的旧计划退回原排序
+        .sortedWith(
+            compareBy<TaskEntity> { it.planStartTime ?: "99:99" }
+                .thenBy { it.priority }
+                .thenBy { it.id }
+        )
 
     val total = todayPlanTasks.sumOf { it.pomodoroEstimate.coerceAtLeast(0) * focusMinutes.coerceAtLeast(0) }
     val completed = todayPlanTasks

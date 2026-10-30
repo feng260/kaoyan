@@ -3,7 +3,9 @@ import { ApiError } from '../../middlewares/error'
 import { llmConfigured, visionConfigured } from '../../config/env'
 import { addDays, dayStart, diffDays, profileInputSchema, MIN_DAILY_MINUTES, MAX_DAILY_MINUTES, type ProfileInput } from './schemas'
 import type { GeneratedPlan, GeneratedStage } from './generator'
-import { AiUnavailable, generateAiPlan, type AiPlanningInput } from './aiGenerator'
+import { AiUnavailable, generateAiPlan, type AiPlanningInput, type PlanProgress } from './aiGenerator'
+import type { PlanSpec } from './planSpec'
+import { GenerationJobStore, type PlanGenerationJob } from './generationJobs'
 import { generatePlanDocument } from './aiDocument'
 import { runPlanInterview, type InterviewInput, type InterviewResult } from './aiCoach'
 import { parseTimetableImage, type TimetableImage, type TimetableResult } from './timetable'
@@ -85,6 +87,10 @@ export interface PublicPlanItem {
   status: string
   sortOrder: number
   completedAt: number | null
+  /** 时段 morning/afternoon/evening;旧计划没有这一列时为 null */
+  slot: string | null
+  /** 建议开始时刻 HH:mm */
+  startTime: string | null
 }
 
 export interface PublicPlan {
@@ -293,6 +299,8 @@ function serializePlan(row: any, stages: any[], items: any[], stale: boolean): P
       status: i.status,
       sortOrder: Number(i.sortOrder ?? 0),
       completedAt: ms(i.completedAt),
+      slot: i.slot ?? null,
+      startTime: i.startTime ?? null,
     })),
     progress: {
       totalItems: items.length,
@@ -582,7 +590,7 @@ function assertGeneratedPlanValid(generated: GeneratedPlan, examDate: Date, brie
  */
 export interface PlanningAi {
   configured: () => boolean
-  generate: (input: AiPlanningInput) => Promise<{ title: string; plan: GeneratedPlan; document?: PlanDocument | null }>
+  generate: (input: AiPlanningInput) => Promise<{ title: string; plan: GeneratedPlan; document?: PlanDocument | null; spec?: PlanSpec }>
   interview?: (input: InterviewInput) => Promise<InterviewResult>
   parseTimetable?: (input: TimetableImage) => Promise<TimetableResult>
   adjustIntent?: (input: AdjustIntentInput) => Promise<AdjustIntent>
@@ -600,6 +608,8 @@ export function createPlanningService(
     adjustL2: runAdjustL2,
   },
 ) {
+  const generationJobs = new GenerationJobStore()
+
   async function requireProfileRow(userGuid: string) {
     const row = await db.userProfile.findUnique({ where: { userGuid } })
     if (!row) {
@@ -709,6 +719,9 @@ export function createPlanningService(
 
       const briefRaw = jsonObject(profileRow.briefJson)
       const brief: PlanBrief | null = briefRaw ? normalizeBrief(briefRaw) : null
+      // 有 spec 就交给文档派生器:阶段日期、各科分钟、首周安排直接取计划工件,
+      // 保证「补生成」出来的文档与每日清单仍然一致。旧计划没有 spec 时退回原逻辑。
+      const spec = row.specJson ? (jsonObject(row.specJson) as unknown as PlanSpec | null) : null
       const generatedStages: GeneratedStage[] = stages.map(stage => {
         const startDate = toDay(stage.startDate)
         const stageItems = items.filter(item => {
@@ -740,6 +753,7 @@ export function createPlanningService(
           brief,
           stages: generatedStages,
           startDate: toDay(row.startDate),
+          spec,
         })
         if (generated && documentMatchesSubjects(
           generated,
@@ -798,6 +812,37 @@ export function createPlanningService(
 
     async generatePlanDraft(userGuid: string): Promise<PublicPlan> {
       return buildPlan(userGuid)
+    },
+
+    /**
+     * 异步生成:立刻返回 jobId,后台跑完整条生成链路。
+     * onUpdate 会在每次进度变化/结束/失败时被调用,路由用它推 WS 事件。
+     * 同一用户已有运行中的任务时直接复用,避免连点生成产出多份草稿。
+     */
+    startGeneration(userGuid: string, onUpdate?: (job: PlanGenerationJob) => void): { jobId: string; job: PlanGenerationJob } {
+      const running = generationJobs.runningFor(userGuid)
+      if (running) return { jobId: running.id, job: running }
+      const job = generationJobs.create(userGuid)
+      const push = (patch: Partial<PlanGenerationJob>) => {
+        const updated = generationJobs.update(job.id, patch)
+        if (updated) onUpdate?.(updated)
+      }
+      void (async () => {
+        try {
+          const plan = await buildPlan(userGuid, progress => push({ progress }))
+          push({ status: 'done', planId: plan.id, progress: { percent: 100, phase: 'done', message: '计划草稿已生成' } })
+        } catch (error) {
+          const code = error instanceof ApiError ? error.code : 'PLAN_GENERATION_FAILED'
+          const message = error instanceof Error ? error.message : '计划生成失败'
+          console.warn(`[planning] 异步生成失败(${code}):${message}`)
+          push({ status: 'failed', error: { code, message }, progress: { percent: 100, phase: 'done', message: '生成失败' } })
+        }
+      })()
+      return { jobId: job.id, job }
+    },
+
+    async getGenerationJob(userGuid: string, id: string): Promise<PlanGenerationJob | null> {
+      return generationJobs.get(userGuid, id)
     },
 
     async confirmPlan(userGuid: string, planId: number): Promise<PublicPlan> {
@@ -1194,7 +1239,7 @@ export function createPlanningService(
     },
   }
 
-  async function buildPlan(userGuid: string): Promise<PublicPlan> {
+  async function buildPlan(userGuid: string, onProgress?: (progress: PlanProgress) => void): Promise<PublicPlan> {
     const profileRow = await requireProfileRow(userGuid)
       const initialSnapshot = profileSnapshot(profileRow)
       const profile = serializeProfile(profileRow)
@@ -1254,6 +1299,7 @@ export function createPlanningService(
       let generated: GeneratedPlan
       let title: string
       let document: PlanDocument | null = null
+      let spec: PlanSpec | null = null
       // 校验不过不直接放弃:模型输出有随机性,同一份 prompt 盲掷骰子大概率还是失败。
       // 把上一轮被拦的原因作为 repairHint 喂回去,模型知道「哪里错了」再重出骨架,
       // 两三次内基本能自愈。事实性缺口(容量真不够)重试无意义,直接上报。
@@ -1266,6 +1312,7 @@ export function createPlanningService(
             startDate: dayStart(new Date()),
             brief: remainingBrief,
             ...(lastFailure ? { repairHint: lastFailure.message } : {}),
+            ...(onProgress ? { onProgress } : {}),
           })
           assertGeneratedPlanValid(result.plan, examDate, brief)
           if (brief) {
@@ -1294,6 +1341,7 @@ export function createPlanningService(
           generated = result.plan
           title = result.title
           document = result.document ?? null
+          spec = result.spec ?? null
           lastFailure = null
           break
         } catch (error) {
@@ -1343,6 +1391,8 @@ export function createPlanningService(
             examDate,
             version,
             documentJson: document ? JSON.stringify(document) : null,
+            // spec 是后续补生成文档、审计「为什么这样排」的唯一来源;旧客户端不受影响
+            specJson: spec ? JSON.stringify(spec) : null,
             profileSnapshotJson: initialSnapshot,
             progressSnapshotJson: initialProgress,
             createdAt: new Date(),
@@ -1376,6 +1426,8 @@ export function createPlanningService(
             priority: item.priority,
             status: 'pending',
             sortOrder: item.sortOrder,
+            slot: item.slot ?? null,
+            startTime: item.startTime ?? null,
           })),
         })
         return planRow

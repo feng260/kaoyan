@@ -114,6 +114,8 @@ private fun projectedTask(
         planItemId = item.id,
         status = if (item.status == "done") TaskStatus.DONE else TaskStatus.TODO,
         completedAt = if (item.status == "done") item.completedAt ?: base.completedAt ?: dueAt else null,
+        planSlot = item.slot,
+        planStartTime = item.startTime,
         updatedAt = now,
         dirty = false,
     )

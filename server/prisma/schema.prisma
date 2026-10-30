@@ -241,6 +241,9 @@ model Plan {
   examDate   DateTime
   version    Int      @default(1)
   documentJson String? @db.Text // 计划长文档(PlanDocument);旧版本计划可能为空
+  // PlanSpec:生成计划的中间工件(阶段/周任务/科目配额/作息快照)。
+  // 用 MediumText:一份 400+ 天的计划按周存任务会超过 MySQL TEXT 的 64KB 上限。
+  specJson String? @db.MediumText
   profileSnapshotJson String? @db.Text // 草稿生成时档案与面谈事实的快照,确认时防止过期激活
   progressSnapshotJson String? @db.Text // 草稿生成时生效计划的完成状态快照
   createdAt  DateTime @default(now())
@@ -286,6 +289,8 @@ model PlanItem {
   status    String   @default("pending") @db.VarChar(16) // pending/done/skipped
   completedAt DateTime?
   sortOrder Int      @default(0)
+  slot      String?  @db.VarChar(16) // morning/afternoon/evening:由编译器按空闲窗口给出
+  startTime String?  @db.VarChar(5) // 建议开始时刻 HH:mm;App 按它排序并展示
 
   plan  Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
   stage PlanStage @relation(fields: [stageId], references: [id], onDelete: Cascade)

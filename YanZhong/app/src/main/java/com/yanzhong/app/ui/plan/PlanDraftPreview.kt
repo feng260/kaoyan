@@ -49,7 +49,10 @@ internal fun renderDraftHtml(draft: PlanDto, diff: TodayItemDiff, today: LocalDa
             append("<ul class='tasks'>")
             items.forEach { item ->
                 append("<li><strong>"); text(item.subject); append("</strong><span>"); text(item.title)
-                append("</span><small>"); text("${item.minutes} 分钟"); append("</small></li>")
+                append("</span><small>")
+                val time = com.yanzhong.app.util.TimeUtils.planTimeLabel(item.slot, item.startTime)
+                text(listOfNotNull(time, "${item.minutes} 分钟").joinToString(" · "))
+                append("</small></li>")
             }
             append("</ul>")
         }
