@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -63,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.data.remote.PeerState
 import com.yanzhong.app.timer.Phase
@@ -186,216 +188,230 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
     }
     val ringTrack = MaterialTheme.colorScheme.surfaceVariant
 
-    Column(
+    // 模式 → 开始的唯一映射:主按钮(task = null)与任务行(带任务)共用,防止两处 when 各自漂移
+    val startByMode: (TaskEntity?) -> Unit = { task ->
+        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+        when (mode) {
+            TimerMode.POMODORO ->
+                if (task == null) vm.quickFocus() else vm.startForTask(task)
+            TimerMode.STOPWATCH ->
+                if (task == null) vm.quickStopwatch() else vm.startForTaskStopwatch(task)
+            TimerMode.COUNTDOWN ->
+                if (task == null) vm.quickCountdown(countdownMin)
+                else vm.startForTaskCountdown(task, countdownMin)
+        }
+    }
+
+    BoxWithConstraints(
         Modifier
             .widthIn(max = CONTENT_MAX_WIDTH)
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Spacer(Modifier.height(12.dp))
-        PageHeader(title = "专注", meta = "选一个任务，或直接开始")
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = maxHeight)
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Spacer(Modifier.height(12.dp))
+            PageHeader(title = "专注", meta = "选一个任务，或直接开始")
 
-        // 专注接力:同账号主机设备正在专注,可一键跟随同步状态与倒计时
-        if (activePeers.isNotEmpty()) {
-            Spacer(Modifier.height(16.dp))
-            activePeers.forEach { peer ->
-                PeerFocusCard(peer = peer, onFollow = { vm.followPeer(peer) })
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-
-        Spacer(Modifier.height(24.dp))
-
-        // 中央圆环:模式 → 时长 → 当前任务
-        Box(Modifier.size(240.dp), contentAlignment = Alignment.Center) {
-            Canvas(Modifier.fillMaxSize()) {
-                val stroke = 12.dp.toPx()
-                drawCircle(
-                    color = ringTrack,
-                    radius = size.minDimension / 2f - stroke / 2f,
-                    style = Stroke(stroke)
-                )
-            }
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.widthIn(max = 200.dp)
-            ) {
-                Text(
-                    modeLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(ringTime, style = CountdownNumberStyle)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "自由专注",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-
-        Spacer(Modifier.height(20.dp))
-        PrimaryButton(
-            text = startLabel,
-            onClick = {
-                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                when (mode) {
-                    TimerMode.POMODORO -> vm.quickFocus()
-                    TimerMode.STOPWATCH -> vm.quickStopwatch()
-                    TimerMode.COUNTDOWN -> vm.quickCountdown(countdownMin)
+            // 专注接力:同账号主机设备正在专注,可一键跟随同步状态与倒计时
+            if (activePeers.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
+                activePeers.forEach { peer ->
+                    PeerFocusCard(peer = peer, onFollow = { vm.followPeer(peer) })
+                    Spacer(Modifier.height(8.dp))
                 }
-            },
-            modifier = Modifier.widthIn(max = 320.dp)
-        )
+            }
 
-        Spacer(Modifier.height(20.dp))
-        RowGroup {
-            ListRow(
-                title = "选择任务",
-                icon = AppIcons.ClipboardList,
-                subtitle = if (hasTasks) "从今日待办中选一个" else "今日没有待办",
-                onClick = if (hasTasks) ({ showTaskSheet = true }) else null,
-                showChevron = hasTasks,
-                enabled = hasTasks
+            Spacer(Modifier.height(24.dp))
+
+            // 中央圆环:模式 → 时长 → 当前任务
+            Box(Modifier.size(240.dp), contentAlignment = Alignment.Center) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val stroke = 12.dp.toPx()
+                    drawCircle(
+                        color = ringTrack,
+                        radius = size.minDimension / 2f - stroke / 2f,
+                        style = Stroke(stroke)
+                    )
+                }
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.widthIn(max = 200.dp)
+                ) {
+                    Text(
+                        modeLabel,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(ringTime, style = CountdownNumberStyle)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "自由专注",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(20.dp))
+            PrimaryButton(
+                text = startLabel,
+                onClick = { startByMode(null) },
+                modifier = Modifier.widthIn(max = 320.dp)
             )
-        }
 
-        Spacer(Modifier.height(20.dp))
-        SegmentedChips(
-            options = listOf("番茄钟", "正计时", "倒计时"),
-            selectedIndex = mode.ordinal,
-            onSelect = { index ->
-                mode = when (index) {
-                    0 -> TimerMode.POMODORO
-                    1 -> TimerMode.STOPWATCH
-                    else -> TimerMode.COUNTDOWN
-                }
+            Spacer(Modifier.height(20.dp))
+            RowGroup {
+                ListRow(
+                    title = "选择任务",
+                    icon = AppIcons.ClipboardList,
+                    subtitle = if (hasTasks) "从今日待办中选一个" else "今日没有待办",
+                    onClick = if (hasTasks) ({ showTaskSheet = true }) else null,
+                    showChevron = hasTasks,
+                    enabled = hasTasks
+                )
             }
-        )
 
-        when (mode) {
-            TimerMode.POMODORO -> {
-                Spacer(Modifier.height(20.dp))
-                SectionHeader(title = "番茄方案")
-                Spacer(Modifier.height(8.dp))
-                RowGroup {
-                    state.settings.plans.forEachIndexed { index, planOption ->
-                        if (index > 0) RowDivider(startIndent = 16.dp)
-                        val selected = planOption.name == state.settings.currentPlanName
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .clip(MaterialTheme.shapes.large)
-                                .background(
-                                    if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
-                                    else Color.Transparent
-                                )
-                        ) {
-                            ListRow(
-                                title = "${planOption.name} 分钟",
-                                subtitle = "专注 ${planOption.focusMin} 分钟 · 短休 ${planOption.shortBreakMin} 分钟",
-                                onClick = { vm.selectPlan(planOption.name) },
-                                showChevron = false,
-                                trailing = {
-                                    if (selected) {
-                                        Icon(
-                                            AppIcons.Check,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(18.dp)
-                                        )
+            Spacer(Modifier.height(20.dp))
+            SegmentedChips(
+                options = listOf("番茄钟", "正计时", "倒计时"),
+                selectedIndex = mode.ordinal,
+                onSelect = { index ->
+                    mode = when (index) {
+                        0 -> TimerMode.POMODORO
+                        1 -> TimerMode.STOPWATCH
+                        else -> TimerMode.COUNTDOWN
+                    }
+                }
+            )
+
+            when (mode) {
+                TimerMode.POMODORO -> {
+                    Spacer(Modifier.height(20.dp))
+                    SectionHeader(title = "番茄方案")
+                    Spacer(Modifier.height(8.dp))
+                    RowGroup {
+                        state.settings.plans.forEachIndexed { index, planOption ->
+                            if (index > 0) RowDivider(startIndent = 16.dp)
+                            val selected = planOption.name == state.settings.currentPlanName
+                            Box(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(MaterialTheme.shapes.large)
+                                    .background(
+                                        if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                        else Color.Transparent
+                                    )
+                            ) {
+                                ListRow(
+                                    title = "${planOption.name} 分钟",
+                                    subtitle = "专注 ${planOption.focusMin} 分钟 · 短休 ${planOption.shortBreakMin} 分钟",
+                                    onClick = { vm.selectPlan(planOption.name) },
+                                    showChevron = false,
+                                    trailing = {
+                                        if (selected) {
+                                            Icon(
+                                                AppIcons.Check,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 }
+
+                TimerMode.COUNTDOWN -> {
+                    Spacer(Modifier.height(20.dp))
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "倒计时时长",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            "$countdownMin 分钟",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    Slider(
+                        value = countdownMin.toFloat(),
+                        onValueChange = { countdownMin = it.toInt().coerceIn(5, 180) },
+                        valueRange = 5f..180f,
+                        steps = 34,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    SegmentedChips(
+                        options = quickMinutes.map { "$it 分" },
+                        selectedIndex = quickMinutes.indexOf(countdownMin),
+                        onSelect = { countdownMin = quickMinutes[it] }
+                    )
+                }
+
+                TimerMode.STOPWATCH -> Unit
             }
 
-            TimerMode.COUNTDOWN -> {
-                Spacer(Modifier.height(20.dp))
+            // 更多设置:默认收起,降低首屏密度;与模式无关的开关集中在此
+            Spacer(Modifier.height(24.dp))
+            RowGroup {
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp)
+                        .clickable { settingsExpanded = !settingsExpanded }
+                        .padding(horizontal = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "倒计时时长",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        "更多设置",
+                        style = MaterialTheme.typography.bodyMedium,
                         modifier = Modifier.weight(1f)
                     )
-                    Text(
-                        "$countdownMin 分钟",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
+                    Icon(
+                        if (settingsExpanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
+                        contentDescription = if (settingsExpanded) "收起" else "展开",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
-                Slider(
-                    value = countdownMin.toFloat(),
-                    onValueChange = { countdownMin = it.toInt().coerceIn(5, 180) },
-                    valueRange = 5f..180f,
-                    steps = 34,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                SegmentedChips(
-                    options = quickMinutes.map { "$it 分" },
-                    selectedIndex = quickMinutes.indexOf(countdownMin),
-                    onSelect = { countdownMin = quickMinutes[it] }
-                )
+                if (settingsExpanded) {
+                    RowDivider(startIndent = 16.dp)
+                    SwitchRow(
+                        title = "自动串联",
+                        checked = state.settings.autoChain,
+                        onCheckedChange = vm::toggleAutoChain,
+                        subtitle = "休息结束自动开始下一个"
+                    )
+                    RowDivider(startIndent = 16.dp)
+                    SwitchRow(
+                        title = "连续专注",
+                        checked = state.settings.continuousFocus,
+                        onCheckedChange = vm::toggleContinuous,
+                        subtitle = "跳过休息，一路专注下去"
+                    )
+                }
             }
-
-            TimerMode.STOPWATCH -> Unit
+            // 底部导航的中央 FAB 会向上探出,预留它的高度避免最后一行被压住
+            Spacer(Modifier.height(40.dp))
         }
-
-        // 更多设置:默认收起,降低首屏密度;与模式无关的开关集中在此
-        Spacer(Modifier.height(24.dp))
-        RowGroup {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 48.dp)
-                    .clickable { settingsExpanded = !settingsExpanded }
-                    .padding(horizontal = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "更多设置",
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.weight(1f)
-                )
-                Icon(
-                    if (settingsExpanded) AppIcons.ChevronUp else AppIcons.ChevronDown,
-                    contentDescription = if (settingsExpanded) "收起" else "展开",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-            if (settingsExpanded) {
-                RowDivider(startIndent = 16.dp)
-                SwitchRow(
-                    title = "自动串联",
-                    checked = state.settings.autoChain,
-                    onCheckedChange = vm::toggleAutoChain,
-                    subtitle = "休息结束自动开始下一个"
-                )
-                RowDivider(startIndent = 16.dp)
-                SwitchRow(
-                    title = "连续专注",
-                    checked = state.settings.continuousFocus,
-                    onCheckedChange = vm::toggleContinuous,
-                    subtitle = "跳过休息，一路专注下去"
-                )
-            }
-        }
-        // 底部导航的中央 FAB 会向上探出,预留它的高度避免最后一行被压住
-        Spacer(Modifier.height(40.dp))
     }
 
     if (showTaskSheet) {
@@ -417,12 +433,7 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
                             subtitle = "${subject?.name ?: "未分类"} · $pomodoro",
                             onClick = {
                                 showTaskSheet = false
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                when (mode) {
-                                    TimerMode.POMODORO -> vm.startForTask(task)
-                                    TimerMode.STOPWATCH -> vm.startForTaskStopwatch(task)
-                                    TimerMode.COUNTDOWN -> vm.startForTaskCountdown(task, countdownMin)
-                                }
+                                startByMode(task)
                             }
                         )
                     }
@@ -537,7 +548,7 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
         timer.phase == Phase.PAUSED -> "累计上限 5 分钟"
         isBreak && willContinue -> "结束后自动继续"
         timer.isFocusing && timer.mode == TimerMode.POMODORO && taskEstimate > 0 ->
-            "番茄 ${taskDoneTotal + 1}/$taskEstimate"
+            "番茄 $taskDoneTotal/$taskEstimate"
         timer.isFocusing && timer.mode == TimerMode.POMODORO ->
             "本任务第 ${state.taskPomodoroToday + 1} 个番茄"
         else -> null
@@ -636,7 +647,8 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
                 Text(text = TimeUtils.mmss(timer.remainingMs), style = FocusTimerStyle)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    text = timer.taskTitle.ifBlank { "自由专注" },
+                    // 休息中任务名没有意义:按 spec 显示“休息一下”
+                    text = if (isBreak) "休息一下" else timer.taskTitle.ifBlank { "自由专注" },
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -712,11 +724,12 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
                 }
 
                 isBreak -> {
-                    // 休息态主按钮与文字操作统一用 SuccessGreen(与圆环同色)
+                    // 休息态主按钮保持 SuccessGreen(与圆环同色);内容色取方案深靛
+                    // (与 onPrimaryContainer 同值 #10144A),在绿色底上约 5.0:1,深浅模式一致
                     MaterialTheme(
                         colorScheme = MaterialTheme.colorScheme.copy(
                             primary = SuccessGreen,
-                            onPrimary = Color.White
+                            onPrimary = Color(0xFF10144A)
                         )
                     ) {
                         PrimaryButton(
@@ -728,15 +741,16 @@ private fun RunningContent(vm: FocusViewModel, state: FocusUiState) {
                             modifier = Modifier.width(200.dp),
                             icon = AppIcons.SkipForward
                         )
-                        Spacer(Modifier.height(4.dp))
-                        TextAction(
-                            text = "结束专注 · 休息中,不消耗次数",
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                vm.endDuringBreak()
-                            }
-                        )
                     }
+                    Spacer(Modifier.height(4.dp))
+                    // 结束专注不属于绿色休息操作:留在常规主题内,避免绿字落在浅色背景上
+                    TextAction(
+                        text = "结束专注 · 休息中,不消耗次数",
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            vm.endDuringBreak()
+                        }
+                    )
                 }
             }
         }
