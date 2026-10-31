@@ -98,65 +98,71 @@ fun OnboardingScreen(vm: OnboardingViewModel, modifier: Modifier = Modifier) {
     // 换一步就回到题头:上一屏停在最底下时,"下一步"后不该让人从半截开始读
     LaunchedEffect(state.step) { scrollState.scrollTo(0) }
 
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
+    // 根容器必须是 Surface:裸 Column 不会提供 LocalContentColor,
+    // 深色主题下页头标题和返回箭头会落回默认黑色,直接隐进背景里。
+    Surface(
+        modifier = modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background
     ) {
-        // 步进指示:第 x / y 步 + 细进度线,进度不单靠颜色表达;无路可退的第一步不显示返回
         Column(
-            Modifier
-                .fillMaxWidth()
-                .widthIn(max = 520.dp)
-                .align(Alignment.CenterHorizontally)
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
         ) {
-            SubPageHeader(
-                title = stepTitle(state.step),
-                onBack = if (state.step > 0) vm::back else null,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
-            )
-            Column(Modifier.padding(horizontal = 20.dp)) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "第 ${state.step + 1} / $ONBOARDING_STEPS 步",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            // 步进指示:第 x / y 步 + 细进度线,进度不单靠颜色表达;无路可退的第一步不显示返回
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .widthIn(max = 520.dp)
+                    .align(Alignment.CenterHorizontally)
+            ) {
+                SubPageHeader(
+                    title = stepTitle(state.step),
+                    onBack = if (state.step > 0) vm::back else null,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)
                 )
-                Spacer(Modifier.height(6.dp))
-                ProgressLine(progress = (state.step + 1f) / ONBOARDING_STEPS)
-            }
-        }
-
-        Column(
-            Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .widthIn(max = 520.dp)
-                .align(Alignment.CenterHorizontally)
-                .padding(horizontal = 20.dp)
-                .verticalScroll(scrollState)
-        ) {
-            Spacer(Modifier.height(12.dp))
-            Text(
-                stepSubtitle(state.step),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(12.dp))
-            AppCard {
-                when (state.step) {
-                    0 -> StepTarget(state, vm)
-                    1 -> StepRhythm(state, vm)
-                    else -> StepFacts(state, vm)
+                Column(Modifier.padding(horizontal = 20.dp)) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "第 ${state.step + 1} / $ONBOARDING_STEPS 步",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    ProgressLine(progress = (state.step + 1f) / ONBOARDING_STEPS)
                 }
             }
-            Spacer(Modifier.height(16.dp))
-            PolicyLinksRow(prefix = "计划由服务器按你填的内容生成,依据")
-            Spacer(Modifier.height(16.dp))
-        }
 
-        BottomActionBar(state, vm)
+            Column(
+                Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+                    .widthIn(max = 520.dp)
+                    .align(Alignment.CenterHorizontally)
+                    .padding(horizontal = 20.dp)
+                    .verticalScroll(scrollState)
+            ) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    stepSubtitle(state.step),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(12.dp))
+                AppCard {
+                    when (state.step) {
+                        0 -> StepTarget(state, vm)
+                        1 -> StepRhythm(state, vm)
+                        else -> StepFacts(state, vm)
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
+                PolicyLinksRow(prefix = "计划由服务器按你填的内容生成,依据")
+                Spacer(Modifier.height(16.dp))
+            }
+
+            BottomActionBar(state, vm)
+        }
     }
 }
 

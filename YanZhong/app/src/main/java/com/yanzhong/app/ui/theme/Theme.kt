@@ -1,5 +1,8 @@
 package com.yanzhong.app.ui.theme
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
@@ -7,9 +10,12 @@ import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.core.view.WindowCompat
 import com.yanzhong.app.data.prefs.ThemeMode
 
 /** 圆角体系(参考番茄ToDo):卡片大圆角 20dp → 控件 14dp → 标签 8dp */
@@ -101,12 +107,31 @@ fun YanZhongTheme(
         ThemeMode.DARK -> true
         else -> isSystemInDarkTheme()
     }
+    // 系统栏图标跟随「App 内实际主题」,而不是系统深浅。
+    // enableEdgeToEdge() 只在启动时按系统 uiMode 定一次色;用户在「我的」里切浅色后,
+    // 透明状态栏上的图标仍是白色,浅色背景上几乎看不见。
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = view.context.findActivity()?.window ?: return@SideEffect
+            WindowCompat.getInsetsController(window, view).apply {
+                isAppearanceLightStatusBars = !dark
+                isAppearanceLightNavigationBars = !dark
+            }
+        }
+    }
     MaterialTheme(
         colorScheme = if (dark) DarkScheme else LightScheme,
         typography = AppTypography,
         shapes = AppShapes,
         content = content
     )
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 /**

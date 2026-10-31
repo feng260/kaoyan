@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -73,7 +74,6 @@ import com.yanzhong.app.ui.theme.SkeletonBlock
 import com.yanzhong.app.ui.theme.StatusPill
 import com.yanzhong.app.ui.theme.SubjectCsColor
 import com.yanzhong.app.ui.theme.TextAction
-import com.yanzhong.app.util.TimeUtils
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -262,6 +262,7 @@ private fun ServerPlanSummary(
     val stageLabel = current?.let { "第 $dayInStage / $stageTotalDays 天" } ?: "当前日期不在计划阶段内"
     val (done, total) = plan.dailyProgress(selectedDate)
     val dayItems = plan.dailyItems(selectedDate)
+    val agenda = remember(dayItems) { buildDayAgenda(dayItems) }
     val busy = updatingItemId != null
     if (showDatePicker) {
         val picker = rememberDatePickerState(
@@ -409,48 +410,147 @@ private fun ServerPlanSummary(
             }
             Spacer(Modifier.height(6.dp))
             Text(
-                "$selectedDate · 完成 $done / $total",
+                "$selectedDate ${weekdayLabel(selectedDate)} · 完成 $done / $total",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(Modifier.height(6.dp))
             ProgressLine(progress = if (total == 0) 0f else done.toFloat() / total)
-            Spacer(Modifier.height(8.dp))
+            if (dayItems.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                DayAgendaSummary(agenda)
+            }
+            Spacer(Modifier.height(4.dp))
             if (dayItems.isEmpty()) {
                 EmptyState(icon = AppIcons.Calendar, title = "这一天没有安排", compact = true)
-            }
-            dayItems.forEachIndexed { index, item ->
-                if (index > 0) RowDivider(startIndent = 48.dp)
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .clickable(enabled = !busy) { onToggle(item) },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CompletionCircle(
-                        checked = item.status == "done",
-                        onClick = { onToggle(item) },
-                        enabled = !busy
-                    )
-                    Box(
-                        Modifier
-                            .size(8.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(planSubjectColor(item.subject))
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
-                        Text(item.title, style = MaterialTheme.typography.bodyMedium)
-                        val time = TimeUtils.planTimeLabel(item.slot, item.startTime)
-                        Text(
-                            listOfNotNull(time, item.subject, "${item.minutes} 分钟").joinToString(" · "),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+            } else {
+                agenda.slots.forEachIndexed { slotIndex, slot ->
+                    if (slotIndex > 0) Spacer(Modifier.height(6.dp))
+                    AgendaSlotHeader(slot)
+                    slot.items.forEachIndexed { index, entry ->
+                        if (index > 0) RowDivider(startIndent = 48.dp)
+                        AgendaTaskRow(entry = entry, busy = busy, onToggle = onToggle)
                     }
                 }
+            }
+        }
+    }
+}
+
+/** 全天时间跨度与总计划时长:先给一个整体轮廓,再由下面的时段逐段展开 */
+@Composable
+private fun DayAgendaSummary(agenda: DayAgenda) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "计划 ${formatMinutesCn(agenda.totalMinutes)}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.weight(1f))
+        agenda.rangeLabel?.let { range ->
+            Text(
+                range,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+/** 时段小标题:上午/下午/晚上 + 本段时间跨度、休息与任务量 */
+@Composable
+private fun AgendaSlotHeader(slot: AgendaSlot) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            slot.label,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.primary
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            listOfNotNull(
+                slot.rangeLabel,
+                slot.breakMinutes?.takeIf { it >= 5 }?.let { "休息 ${formatMinutesCn(it)}" }
+            ).joinToString(" · "),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Text(
+            "${slot.items.size} 项 · ${formatMinutesCn(slot.minutes)}",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** 单条计划:精确起止时间用主色突出,科目与时长退到次级信息 */
+@Composable
+private fun AgendaTaskRow(
+    entry: AgendaItem,
+    busy: Boolean,
+    onToggle: (PlanItemDto) -> Unit
+) {
+    val item = entry.item
+    val done = item.status == "done"
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !busy) { onToggle(item) },
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        CompletionCircle(
+            checked = done,
+            onClick = { onToggle(item) },
+            enabled = !busy
+        )
+        Box(
+            Modifier
+                .size(8.dp)
+                .clip(RoundedCornerShape(4.dp))
+                .background(planSubjectColor(item.subject))
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+            Text(
+                item.title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                textDecoration = if (done) TextDecoration.LineThrough else null,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Spacer(Modifier.height(2.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                entry.timeRange?.let { range ->
+                    Text(
+                        range,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        " · ",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    listOfNotNull(
+                        item.subject,
+                        item.minutes.takeIf { it > 0 }?.let { "$it 分钟" }
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }

@@ -9,6 +9,7 @@ import com.yanzhong.app.data.remote.DEFAULT_SERVER_URL
 import com.yanzhong.app.data.remote.LoginReq
 import com.yanzhong.app.data.remote.RegisterReq
 import com.yanzhong.app.data.remote.TokenStore
+import com.yanzhong.app.data.remote.apiErrorMessage
 import com.yanzhong.app.data.remote.effectiveServerUrl
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -138,7 +139,7 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
                         )
                     }
                 }, { e ->
-                    _ui.update { it.copy(busy = false, message = "注册失败:${e.userMessage()}", messageIsError = true) }
+                    _ui.update { it.copy(busy = false, message = "注册失败:${e.apiErrorMessage()}", messageIsError = true) }
                 })
             } else {
                 runCatching {
@@ -158,23 +159,15 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
                     TokenStore.saveUsername(resp.user.username)
                     _ui.update { it.copy(busy = false) }
                 }, { e ->
-                    _ui.update { it.copy(busy = false, message = "登录失败:${e.userMessage()}", messageIsError = true) }
+                    _ui.update {
+                        it.copy(
+                            busy = false,
+                            message = "登录失败:${e.apiErrorMessage(unauthorized = "用户名或密码错误")}",
+                            messageIsError = true
+                        )
+                    }
                 })
             }
-        }
-    }
-
-    private fun Throwable.userMessage(): String {
-        val http = this as? retrofit2.HttpException
-        return when {
-            this is java.net.SocketTimeoutException -> "连接超时，请检查服务器地址和网络"
-            this is java.net.ConnectException -> "无法连接服务器，请确认服务已启动"
-            this is java.net.UnknownHostException -> "找不到服务器，请检查地址"
-            http != null -> {
-                val body = http.response()?.errorBody()?.string().orEmpty().take(80)
-                "HTTP ${http.code()} $body".ifBlank { "HTTP ${http.code()}" }
-            }
-            else -> message ?: "未知错误"
         }
     }
 }

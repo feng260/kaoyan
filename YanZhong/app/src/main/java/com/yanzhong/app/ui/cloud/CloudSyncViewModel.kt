@@ -64,7 +64,7 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
             result.fold({
                 _ui.update { it.copy(busy = false, message = "注册成功,请登录") }
             }, { e ->
-                _ui.update { it.copy(busy = false, message = "注册失败:${e.userMessage()}") }
+                _ui.update { it.copy(busy = false, message = "注册失败:${e.apiErrorMessage()}") }
             })
         }
     }
@@ -95,7 +95,12 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(busy = false, loggedIn = true, username = resp.user.username) }
                 refreshDevices()
             }, { e ->
-                _ui.update { it.copy(busy = false, message = "登录失败:${e.userMessage()}") }
+                _ui.update {
+                    it.copy(
+                        busy = false,
+                        message = "登录失败:${e.apiErrorMessage(unauthorized = "用户名或密码错误")}"
+                    )
+                }
             })
         }
     }
@@ -114,7 +119,7 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
             runCatching { ApiClient.api().devices() }.fold({
                 _ui.update { s -> s.copy(devices = it.devices) }
             }, {
-                _ui.update { s -> s.copy(message = "设备列表获取失败:${it.userMessage()}") }
+                _ui.update { s -> s.copy(message = "设备列表获取失败:${it.apiErrorMessage()}") }
             })
         }
     }
@@ -123,17 +128,6 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             runCatching { ApiClient.api().revokeDevice(id) }
             refreshDevices()
-        }
-    }
-
-    private fun Throwable.userMessage(): String {
-        val retrofitHttp = this as? retrofit2.HttpException
-        return when {
-            retrofitHttp != null -> {
-                val body = retrofitHttp.response()?.errorBody()?.string().orEmpty().take(80)
-                "HTTP ${retrofitHttp.code()} $body"
-            }
-            else -> message ?: "未知错误"
         }
     }
 }

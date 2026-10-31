@@ -481,7 +481,10 @@ class StudyRepository(private val db: YanZhongDatabase) {
                     db.taskDao().deleteRepeatDoneInstance(task.repeatParentId, from, to)
                 }
             }
-            task.repeatRule == RepeatRule.NONE && task.status == TaskStatus.DONE -> {
+            // 撤销来自完成前捕获的旧快照(status 仍是 PENDING),
+            // 只能按库里最新状态判断,否则「撤销」会静默失效。
+            task.repeatRule == RepeatRule.NONE &&
+                db.taskDao().getById(task.id)?.status == TaskStatus.DONE -> {
                 db.taskDao().uncomplete(task.id, now)
             }
         }

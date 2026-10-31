@@ -245,9 +245,9 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                     s.copy(
                         phase = OnboardingPhase.FALLBACK,
                         message = if (manage) {
-                            "暂时连不上服务器(${e.userMessage()}),档案没能调出来。网络好了再试一次就行,你自己的计划没受影响"
+                            "暂时连不上服务器(${e.apiErrorMessage()}),档案没能调出来。网络好了再试一次就行,你自己的计划没受影响"
                         } else {
-                            "暂时连不上服务器(${e.userMessage()})。你本机的计划不受影响,可以照常学,回头在「我的」里重试就行"
+                            "暂时连不上服务器(${e.apiErrorMessage()})。你本机的计划不受影响,可以照常学,回头在「我的」里重试就行"
                         },
                         messageIsError = false
                     )
@@ -336,7 +336,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                     st.copy(
                         phase = OnboardingPhase.EDITING,
                         step = ONBOARDING_STEPS - 1,
-                        message = "档案没存上:${e.userMessage()}。你填的内容都还在,网络好了再点一次就好",
+                        message = "档案没存上:${e.apiErrorMessage()}。你填的内容都还在,网络好了再点一次就好",
                         messageIsError = true
                     )
                 }
@@ -572,7 +572,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                     val http = e as? retrofit2.HttpException
                     val notice = when {
                         http?.code() == 503 -> "服务端还没配认课表的模型,先手动把占用补上就行"
-                        else -> "课表没认出来(${e.userMessage()})。手动补几条,或者先跳过"
+                        else -> "课表没认出来(${e.apiErrorMessage()})。手动补几条,或者先跳过"
                     }
                     _ui.update { it.copy(timetableBusy = false, timetableNotice = notice, timetableNoticeIsError = true) }
                 })
@@ -619,17 +619,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         if (!date.isAfter(today)) return "考试日期得晚于今天,至少给自己留一天"
         if (date.toEpochDay() - today.toEpochDay() > 365L * 3) return "这个日期有点远,先填三年以内的目标"
         return null
-    }
-
-    private fun Throwable.userMessage(): String {
-        val retrofitHttp = this as? retrofit2.HttpException
-        return when {
-            retrofitHttp != null -> {
-                val body = retrofitHttp.response()?.errorBody()?.string().orEmpty().take(80)
-                "HTTP ${retrofitHttp.code()} $body"
-            }
-            else -> message ?: "未知错误"
-        }
     }
 
     // ---------------- 载荷与图片 ----------------
