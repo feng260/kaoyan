@@ -136,6 +136,68 @@ test('planSpec: 每天排入的分钟数不超过当天真实空闲', () => {
   }
 })
 
+/** 每天上午/下午/晚上各一个窗口:用来验证编译器有没有把任务摊到全天 */
+function multiWindowSpec(tasks: AiWeekVariant): PlanSpec {
+  const start = new Date(Date.UTC(2026, 0, 5)) // 周一
+  const exam = addDays(start, 21)
+  const brief = sampleBrief(start)
+  brief.availability = [1, 2, 3, 4, 5, 6, 7].map(weekday => ({
+    weekday,
+    windows: [
+      { start: '08:30', end: '11:30' },
+      { start: '14:00', end: '17:00' },
+      { start: '19:00', end: '21:30' },
+    ],
+  }))
+  return buildPlanSpec({
+    title: '多窗口测试计划',
+    targetType: '考研',
+    startDate: start,
+    examDate: exam,
+    brief,
+    weakSubjects: [],
+    stages: stagesFor(start, exam, () => [tasks]),
+  })
+}
+
+function firstDayItems(spec: PlanSpec) {
+  const day = spec.stages[0].startDate
+  return compilePlanSpec(spec).items.filter(item => iso(item.planDate) === day)
+}
+
+test('planSpec: 多空闲窗口时任务分摊到上午/下午/晚上,不再全部堆在第一个窗口', () => {
+  const items = firstDayItems(multiWindowSpec([
+    { weekday: 1, subject: '数学二', title: '高数极限专项', minutes: 60 },
+    { weekday: 1, subject: '英语二', title: '阅读精读一篇', minutes: 45 },
+    { weekday: 1, subject: '政治', title: '马原选择题 30 题', minutes: 45 },
+  ]))
+
+  assert.equal(items.length, 3)
+  assert.deepEqual(items.map(item => item.slot), ['morning', 'afternoon', 'evening'])
+  assert.deepEqual(items.map(item => item.startTime), ['08:30', '14:00', '19:00'])
+})
+
+test('planSpec: 任务数多于窗口数时按容量比例摊销,每个窗口都有安排', () => {
+  const items = firstDayItems(multiWindowSpec(
+    ['高数极限专项', '线代矩阵专项', '阅读精读一篇', '翻译长难句', '马原选择题 30 题', '史纲时间线梳理']
+      .map((title, index) => ({
+        weekday: 1,
+        subject: SUBJECTS[index % SUBJECTS.length],
+        title,
+        minutes: 45,
+      }))
+  ))
+
+  assert.equal(items.length, 6)
+  const perSlot = new Map<string, number>()
+  for (const item of items) perSlot.set(item.slot!, (perSlot.get(item.slot!) ?? 0) + 1)
+  assert.deepEqual([...perSlot.entries()].sort(), [['afternoon', 2], ['evening', 2], ['morning', 2]])
+  for (const item of items) {
+    const [hour, minute] = item.startTime!.split(':').map(Number)
+    assert.ok(hour * 60 + minute + item.minutes <= 21 * 60 + 30, `${item.startTime} + ${item.minutes} 超出窗口`)
+  }
+})
+
 test('planSpec: 单周变体铺满长阶段时不原样重放,第二周起换轮次与知识点', () => {
   const spec = baseSpec({ days: 150 })
   const stage = spec.stages[0]

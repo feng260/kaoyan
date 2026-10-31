@@ -372,11 +372,34 @@ function slotName(startMinutes: number): string {
   return hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'
 }
 
+type OpenSlot = { start: number; end: number; used: number }
+
+/**
+ * 选任务要落进的窗口:优先选已用比例最低的窗口,让任务在上午/下午/晚上之间摊开,
+ * 而不是像旧实现那样先把第一个窗口塞满(4 条任务全挤进 08:30-11:30)。
+ * 能整条放下的窗口优先;都放不下时才挑剩余最多的窗口截短,避免把任务拆碎。
+ */
+function pickSlot(slots: OpenSlot[], taskMinutes: number): OpenSlot | null {
+  const open = slots.filter(slot => slot.end - slot.start - slot.used >= MIN_TASK_MINUTES)
+  if (open.length === 0) return null
+  const fitting = open.filter(slot => slot.end - slot.start - slot.used >= taskMinutes)
+  const pool = fitting.length > 0 ? fitting : open
+  return pool.reduce((best, slot) => {
+    if (fitting.length === 0) {
+      return slot.end - slot.start - slot.used > best.end - best.start - best.used ? slot : best
+    }
+    const ratio = slot.used / (slot.end - slot.start)
+    const bestRatio = best.used / (best.end - best.start)
+    return ratio < bestRatio - 1e-9 ? slot : best
+  })
+}
+
 /**
  * 把一天的周任务填进真实空闲窗口:
  * - 任务按「先难后易」排序(分钟数降序);
- * - 单条任务不跨固定占用拆成两半:窗口放不下就按窗口剩余缩短,短于 15 分钟则换下一个窗口;
- * - 每条计划项带上开始时刻与时段,客户端不再把一天的任务全部显示成「晚上」。
+ * - 按窗口容量比例分摊,任务不会全部堆在上午;
+ * - 单条任务不跨固定占用拆成两半:窗口放不下就按窗口剩余缩短,短于 15 分钟则换窗口;
+ * - 每条计划项带上开始时刻与时段,客户端按真实作息分组展示。
  */
 function compileDay(
   stage: SpecStage,
@@ -393,49 +416,39 @@ function compileDay(
     .sort((a, b) => b.minutes - a.minutes)
     .slice(0, MAX_TASKS_PER_DAY)
   if (tasks.length === 0) return []
-  const slots = freeSlots(brief, date)
+  const slots: OpenSlot[] = freeSlots(brief, date)
+    .map(slot => ({ start: clockMinutes(slot.start), end: clockMinutes(slot.end), used: 0 }))
+    .filter(slot => slot.end - slot.start >= MIN_TASK_MINUTES)
   if (slots.length === 0) return []
 
-  const items: GeneratedItem[] = []
-  let slotIndex = 0
-  let usedInSlot = 0
+  const picked: GeneratedItem[] = []
   let budget = capacity
   for (const task of tasks) {
-    while (slotIndex < slots.length && budget >= MIN_TASK_MINUTES) {
-      const slot = slots[slotIndex]
-      const start = clockMinutes(slot.start)
-      const end = clockMinutes(slot.end)
-      const remaining = end - start - usedInSlot
-      if (remaining < MIN_TASK_MINUTES) {
-        slotIndex++
-        usedInSlot = 0
-        continue
-      }
-      const minutes = Math.min(task.minutes, remaining, budget)
-      if (minutes < MIN_TASK_MINUTES) {
-        slotIndex++
-        usedInSlot = 0
-        continue
-      }
-      const startMinutes = start + usedInSlot
-      items.push({
-        stageOrder: stage.sortOrder,
-        subject: task.subject,
-        title: task.title,
-        planDate: fromIso(day),
-        minutes,
-        priority: stage.phase === 'foundation' ? 0 : stage.phase === 'strengthen' ? 1 : 2,
-        sortOrder: items.length,
-        slot: slotName(startMinutes),
-        startTime: formatMinutes(startMinutes),
-      })
-      usedInSlot += minutes
-      budget -= minutes
-      break
-    }
     if (budget < MIN_TASK_MINUTES) break
+    const slot = pickSlot(slots, task.minutes)
+    if (!slot) break
+    const remaining = slot.end - slot.start - slot.used
+    const minutes = Math.min(task.minutes, remaining, budget)
+    if (minutes < MIN_TASK_MINUTES) break
+    const startMinutes = slot.start + slot.used
+    slot.used += minutes
+    budget -= minutes
+    picked.push({
+      stageOrder: stage.sortOrder,
+      subject: task.subject,
+      title: task.title,
+      planDate: fromIso(day),
+      minutes,
+      priority: stage.phase === 'foundation' ? 0 : stage.phase === 'strengthen' ? 1 : 2,
+      sortOrder: 0,
+      slot: slotName(startMinutes),
+      startTime: formatMinutes(startMinutes),
+    })
   }
-  return items
+  // 选窗口的顺序按任务时长,展示顺序按钟表时间
+  return picked
+    .sort((a, b) => clockMinutes(a.startTime!) - clockMinutes(b.startTime!))
+    .map((item, index) => ({ ...item, sortOrder: index }))
 }
 
 export function compilePlanSpec(spec: PlanSpec): GeneratedPlan {

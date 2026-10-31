@@ -971,12 +971,12 @@ export function createPlanningService(
       if (status === 'done') {
         await db.planItem.updateMany({
           where: { id: itemId, planId: planRow.id, status: 'pending' },
-          data: { status: 'done', completedAt: new Date(), updatedAt: new Date() },
+          data: { status: 'done', completedAt: new Date() },
         })
       } else {
         await db.planItem.updateMany({
           where: { id: itemId, planId: planRow.id },
-          data: { status: 'pending', completedAt: null, updatedAt: new Date() },
+          data: { status: 'pending', completedAt: null },
         })
       }
       const current = (await db.planItem.findMany({ where: { id: itemId, planId: planRow.id } }))[0]

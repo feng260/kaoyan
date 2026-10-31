@@ -426,6 +426,20 @@ test('setItemStatus persists completion time and clears it when reopened', async
   assert.equal(reopened.items.find(i => i.id === itemId)!.completedAt, null)
 })
 
+test('setItemStatus only writes columns declared on PlanItem', async () => {
+  const fake = createFakeDb()
+  const service = serviceWithConfirmedSubject(fake)
+  await service.upsertProfile(USER, validProfile() as any)
+  const plan = await confirmGeneratedPlan(service, fake)
+  const itemId = plan.items[0].id
+
+  // PlanItem 没有 updatedAt 列;带上它 Prisma 会整条写入失败,PATCH 直接 500。
+  await service.setItemStatus(USER, itemId, 'done')
+  assert.equal('updatedAt' in fake.state.items.find(i => i.id === itemId)!, false)
+  await service.setItemStatus(USER, itemId, 'pending')
+  assert.equal('updatedAt' in fake.state.items.find(i => i.id === itemId)!, false)
+})
+
 test('a stale completion cannot restore its old timestamp after another device reopens it', async () => {
   let release!: () => void
   const blocked = new Promise<void>(resolve => { release = resolve })

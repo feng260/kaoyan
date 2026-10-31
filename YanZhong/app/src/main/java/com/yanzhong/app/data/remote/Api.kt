@@ -663,7 +663,7 @@ interface YanzhongApi {
     @retrofit2.http.PATCH("api/v1/plans/items/{id}")
     suspend fun patchPlanItemSlim(
         @Path("id") id: Long,
-        @retrofit2.http.Query("slim") slim: Boolean = true,
+        @retrofit2.http.Query("slim") slim: Int = 1,
         @Body body: PlanItemStatusReq
     ): SlimToggleResp
 

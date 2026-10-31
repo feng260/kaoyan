@@ -147,7 +147,7 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                     val current = _serverPlan.value?.items?.firstOrNull { it.id == item.id } ?: return@withLock
                     val status = if (current.status == "done") "pending" else "done"
                     // slim:服务端只回被改的那一项与进度(~1KB),本地合并进缓存的 plan 得到完整新计划
-                    val slim = ApiClient.aiApi().patchPlanItemSlim(item.id, slim = true, body = PlanItemStatusReq(status))
+                    val slim = ApiClient.aiApi().patchPlanItemSlim(item.id, body = PlanItemStatusReq(status))
                     val basePlan = _serverPlan.value ?: throw IllegalStateException("本地计划缓存丢失")
                     val plan = basePlan.copy(
                         items = basePlan.items.map { if (it.id == slim.item.id) slim.item else it },

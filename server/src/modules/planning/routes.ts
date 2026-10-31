@@ -272,7 +272,8 @@ router.patch('/plans/items/:id', requireAuth, apiLimit(), async ctx => {
   const plan = await planningService.setItemStatus(ctx.state.auth!.userGuid, itemId, parsed.data.status)
   // slim=1 时只回被改的那一项与进度:全量 plan 数百 KB,而勾选是高频操作;
   // 客户端用本地缓存的 plan 合并该项即可,省掉 ~99% 的下行体积。默认仍回全量(兼容旧客户端)
-  if (ctx.query.slim === '1') {
+  // 同时接受 true:Retrofit 的 Boolean @Query 会序列化成 slim=true,兼容这类调用方。
+  if (ctx.query.slim === '1' || ctx.query.slim === 'true') {
     const slim = slimToggleResponse(plan, itemId) ?? { item: plan.items.find(i => i.id === itemId)!, progress: plan.progress }
     ctx.body = { ...slim, serverTime: Date.now() }
   } else {
