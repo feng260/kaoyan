@@ -19,6 +19,7 @@ import retrofit2.http.GET
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
+import retrofit2.http.Query
 import java.util.concurrent.TimeUnit
 
 // ---------- DTO ----------
@@ -106,6 +107,20 @@ data class SyncResult(
     val skipped: Int = 0,
     val rejected: List<RejectedSyncRow>? = null,
     val truncated: Int? = null,
+    val serverTime: Long = 0
+)
+
+@Serializable
+data class RestoreResourceStat(
+    val applied: Int = 0,
+    val skipped: Int = 0,
+    val rejected: List<RejectedSyncRow> = emptyList()
+)
+
+@Serializable
+data class RestoreResp(
+    val restored: Boolean = false,
+    val resources: Map<String, RestoreResourceStat> = emptyMap(),
     val serverTime: Long = 0
 )
 
@@ -530,16 +545,47 @@ data class AdjustResp(
 data class LatestAdjustmentResp(val adjustment: AdjustmentDto? = null, val serverTime: Long = 0)
 
 @Serializable
+data class CheckupOverloadDayDto(
+    val date: String = "",
+    val planned: Long = 0,
+    val capacity: Long = 0
+)
+
+@Serializable
 data class CheckupResp(
     val behindMinutes: Long = 0,
     val overdueCount: Long = 0,
     val suggestion: String = "",
+    val weekPlanDone: Long = 0,
+    val weekPlanTotal: Long = 0,
+    val weekFocusMinutes: Long = 0,
+    val lastWeekFocusMinutes: Long = 0,
+    val weekActiveDays: Long = 0,
+    val next7dPlannedMinutes: Long = 0,
+    val next7dCapacityMinutes: Long = 0,
+    val overloadedDays: List<CheckupOverloadDayDto> = emptyList(),
     val serverTime: Long = 0
+)
+
+// ---------- 健康探针 ----------
+
+@Serializable
+data class HealthFeatures(val emailReset: Boolean? = null)
+
+@Serializable
+data class HealthResp(
+    val ok: Boolean = false,
+    val serverTime: Long = 0,
+    val features: HealthFeatures? = null
 )
 
 // ---------- API 接口 ----------
 
 interface YanzhongApi {
+    /** 健康探针:无需登录即可调,告知服务端时间与可用能力(如邮件重置开关) */
+    @GET("healthz")
+    suspend fun health(): HealthResp
+
     @POST("api/v1/auth/register")
     suspend fun register(@Body body: RegisterReq): RegisterResp
 
@@ -574,7 +620,7 @@ interface YanzhongApi {
     suspend fun backup(): BackupDownload
 
     @POST("api/v1/backup/restore")
-    suspend fun restoreBackup(@Body payload: BackupUpload): SyncResult
+    suspend fun restoreBackup(@Body payload: BackupUpload): RestoreResp
 
     /** 增量拉取:updated_at > since 的行(含墓碑);since=0 全量 */
     @GET("api/v1/sync")
@@ -584,7 +630,8 @@ interface YanzhongApi {
     @POST("api/v1/sync/{resource}")
     suspend fun pushResource(
         @retrofit2.http.Path("resource") resource: String,
-        @Body rows: List<kotlinx.serialization.json.JsonElement>
+        // Kotlin 的 List 是协变的,不加 @JvmSuppressWildcards 会生成 List<? extends JsonElement>,Retrofit 直接拒收
+        @Body rows: List<@kotlin.jvm.JvmSuppressWildcards kotlinx.serialization.json.JsonElement>
     ): SyncResult
 
     @GET("api/v1/settings")
@@ -695,7 +742,10 @@ interface YanzhongApi {
 
     /** 计划体检:落后分钟数/过期任务数/一句话建议(suggestion 为空表示不用提醒) */
     @GET("api/v1/plans/checkup")
-    suspend fun planCheckup(): CheckupResp
+    suspend fun planCheckup(
+        @Query("tzOffset") tzOffset: Int = 480,
+        @Query("notify") notify: Int = 1
+    ): CheckupResp
 
     /**
      * 全量导出账号数据。直接返回服务端 JSON（含账号、档案、计划、同步数据），
@@ -744,6 +794,7 @@ class AuthInterceptor : Interceptor {
 object ApiClient {
     @Volatile private var cached: Pair<String, YanzhongApi>? = null
     @Volatile private var cachedAi: Pair<String, YanzhongApi>? = null
+    @Volatile private var cachedTransfer: Pair<String, YanzhongApi>? = null
     private val refreshLock = Any()
 
     /** 普通接口：20s 内必须出结果，卡住就尽快失败给用户反馈 */
@@ -769,6 +820,18 @@ object ApiClient {
         // call 7 分钟 / read 6.5 分钟,确保客户端不会先于服务端掐断
         val api = build(server, callSeconds = 420, connectSeconds = 10, readSeconds = 390, writeSeconds = 60)
         cachedAi = server to api
+        return api
+    }
+
+    /**
+     * 大包传输接口:导出/备份/恢复都是 7.5MB 级 JSON,20s 全局上限会把正常请求掐死,
+     * 服务端恢复还要逐行重插。给足 2 分钟,避免"服务端已提交、客户端先超时"的假失败。
+     */
+    fun transferApi(): YanzhongApi {
+        val server = runBlocking { effectiveServerUrl() }
+        cachedTransfer?.let { (s, api) -> if (s == server) return api }
+        val api = build(server, callSeconds = 120, connectSeconds = 10, readSeconds = 110, writeSeconds = 60)
+        cachedTransfer = server to api
         return api
     }
 

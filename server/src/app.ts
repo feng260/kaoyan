@@ -5,6 +5,7 @@ import path from 'path'
 import { errorMiddleware, ApiError } from './middlewares/error'
 import { securityMiddleware } from './middlewares/security'
 import { env } from './config/env'
+import { healthPayload } from './shared/health'
 import authRoutes from './modules/auth/routes'
 import userRoutes from './modules/user/routes'
 import syncRoutes from './modules/sync/routes'
@@ -83,7 +84,7 @@ export function createApp(): Koa {
   // 健康检查
   app.use(async ctx => {
     if (ctx.path === '/healthz') {
-      ctx.body = { ok: true, serverTime: Date.now() }
+      ctx.body = healthPayload()
       return
     }
     throw new ApiError(404, 'NOT_FOUND', '接口不存在')

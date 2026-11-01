@@ -1291,7 +1291,9 @@ class StudyRepository(private val db: YanZhongDatabase) {
     // ---------- WebDAV 备份 ----------
 
     /** 本地全量 → 备份 JSON(与云同步同一行格式,含日/周/月复盘) */
-    suspend fun exportBackupJson(): String {
+    suspend fun exportBackupJson(
+        settings: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap()
+    ): String {
         val upload = buildBackupUpload()
         val download = BackupDownload(
             version = 2,
@@ -1302,7 +1304,8 @@ class StudyRepository(private val db: YanZhongDatabase) {
             sessions = upload.sessions,
             dailyReviews = upload.dailyReviews,
             weeklyReviews = upload.weeklyReviews,
-            monthlyReviews = upload.monthlyReviews
+            monthlyReviews = upload.monthlyReviews,
+            settings = settings
         )
         return Json.encodeToString(download)
     }

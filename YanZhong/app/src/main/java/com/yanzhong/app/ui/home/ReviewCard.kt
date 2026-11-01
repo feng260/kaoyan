@@ -280,6 +280,8 @@ fun WeeklyReviewSheet(
     weekDoneTasks: Int,
     weekMinutes: Int,
     weekGoalMin: Int,
+    /** 服务端体检给出的本周执行一句话(来自 /plans/checkup);null/空串不展示 */
+    serverHint: String? = null,
     onSave: (weakPoints: String, top1: String, top2: String, top3: String) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -332,6 +334,15 @@ fun WeeklyReviewSheet(
                     )
                 }
             }
+        }
+
+        if (!serverHint.isNullOrBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "服务端执行：$serverHint",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
 
         Spacer(Modifier.height(16.dp))

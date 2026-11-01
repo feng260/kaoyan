@@ -18,6 +18,10 @@ import {
 } from './adjust'
 import { buildLedger, compressPendingToFit, expandL2, normalizeL2Tasks, runAdjustL2, validateL2, type L2Input, type L2Task } from './adjustL2'
 import { runAdjustIntent, type AdjustIntent, type AdjustIntentInput } from './adjustIntent'
+import {
+  buildCheckup, emptyCheckup, normalizeTzOffset, DEFAULT_TZ_OFFSET,
+  type CheckupSummary,
+} from './checkup'
 
 /**
  * 备考档案与计划的持久化(Phase 0)。
@@ -58,6 +62,9 @@ export interface PlanningDb {
     findMany(args?: AnyArgs): Promise<any[]>
     create(args: AnyArgs): Promise<any>
     updateMany(args: AnyArgs): Promise<any>
+  }
+  pomodoroSession: {
+    findMany(args?: AnyArgs): Promise<any[]>
   }
   $transaction<T>(fn: (tx: PlanningDb) => Promise<T>): Promise<T>
 }
@@ -1227,15 +1234,37 @@ export function createPlanningService(
       return loadPlan(userGuid, planRow)
     },
 
-    /** 主动体检:数一数落在过去还没完成的任务,给出一句话建议(纯计算,无副作用) */
-    async checkup(userGuid: string): Promise<{ behindMinutes: number; overdueCount: number; suggestion: string }> {
-      const planRow = await db.plan.findFirst({ where: { userGuid, status: 'active' }, orderBy: { version: 'desc' } })
-      if (!planRow) return { behindMinutes: 0, overdueCount: 0, suggestion: '' }
-      const items = await db.planItem.findMany({ where: { planId: planRow.id } })
-      const today = dayStart(new Date()).toISOString().slice(0, 10)
-      const overdue = items.filter(item => item.status !== 'done' && dateOnly(item.planDate) < today)
-      const behindMinutes = overdue.reduce((sum, item) => sum + Number(item.minutes ?? 0), 0)
-      return { behindMinutes, overdueCount: overdue.length, suggestion: overdueSuggestion(overdue.length, behindMinutes) }
+    /** 主动体检:本周执行、落后任务与未来 7 天负荷(纯计算,无副作用) */
+    async checkup(
+      userGuid: string,
+      options: { tzOffset?: number; now?: Date } = {},
+    ): Promise<CheckupSummary> {
+      const now = options.now ?? new Date()
+      const tzOffset = normalizeTzOffset(options.tzOffset ?? DEFAULT_TZ_OFFSET)
+      const planRow = await db.plan.findFirst({
+        where: { userGuid, status: 'active' },
+        orderBy: { version: 'desc' },
+      })
+      if (!planRow) return emptyCheckup()
+      const [items, profileRow, sessions] = await Promise.all([
+        db.planItem.findMany({ where: { planId: planRow.id } }),
+        db.userProfile.findUnique({ where: { userGuid } }),
+        db.pomodoroSession.findMany({
+          where: {
+            userGuid,
+            valid: true,
+            isDeleted: false,
+            startedAt: { gte: BigInt(now.getTime() - 15 * 24 * 60 * 60 * 1000) },
+          },
+        }),
+      ])
+      return buildCheckup({
+        now,
+        tzOffset,
+        items,
+        sessions,
+        brief: briefFromRow(profileRow),
+      })
     },
   }
 

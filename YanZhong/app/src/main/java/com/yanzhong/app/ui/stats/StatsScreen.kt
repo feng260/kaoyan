@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,6 +46,8 @@ private const val METHOD_NOTE =
 fun StatsScreen(padding: PaddingValues) {
     val vm: StatsViewModel = viewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
+    val server by vm.server.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { vm.refreshServer() }
 
     // 平板:限宽 720dp 居中
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -63,7 +66,7 @@ fun StatsScreen(padding: PaddingValues) {
         ) {
             item(key = "header") {
                 Column {
-                    PageHeader(title = "统计", meta = "数据全部来自本机")
+                    PageHeader(title = "统计", meta = "图表来自本机，执行情况来自服务端")
                     Spacer(Modifier.height(12.dp))
                     SegmentedChips(
                         options = StatsRange.entries.map { it.label },
@@ -74,6 +77,10 @@ fun StatsScreen(padding: PaddingValues) {
             }
 
             item(key = "kpi") { KpiBanner(state) }
+
+            item(key = "server-execution") {
+                ServerExecutionCard(state = server, onRetry = vm::refreshServer)
+            }
 
             item(key = "subject") {
                 AppCard {

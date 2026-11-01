@@ -9,6 +9,9 @@ import com.yanzhong.app.data.db.SubjectDuration
 import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.data.db.DayDuration
 import com.yanzhong.app.data.db.HourDuration
+import com.yanzhong.app.data.remote.ApiClient
+import com.yanzhong.app.data.remote.CheckupResp
+import com.yanzhong.app.data.remote.TokenStore
 import com.yanzhong.app.timer.streakDays
 import com.yanzhong.app.util.TimeUtils
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -21,6 +24,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 
@@ -75,6 +80,14 @@ data class StatsUiState(
     )
 )
 
+/** 服务端本周执行情况:未登录/失败/成功三态;失败只影响这张卡,本机图表照常 */
+data class ServerExecutionState(
+    val loading: Boolean = true,
+    val checkup: CheckupResp? = null,
+    val error: String = "",
+    val loggedOut: Boolean = false
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class StatsViewModel(app: Application) : AndroidViewModel(app) {
     private val container = app as YanZhongApp
@@ -82,6 +95,9 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _range = MutableStateFlow(StatsRange.TODAY)
     val range = _range.asStateFlow()
+
+    private val _server = MutableStateFlow(ServerExecutionState())
+    val server: StateFlow<ServerExecutionState> = _server.asStateFlow()
 
     private fun windowOf(range: StatsRange): Pair<Long, Long> = when (range) {
         StatsRange.TODAY -> TimeUtils.dayStartOf() to TimeUtils.dayEndOf()
@@ -273,5 +289,29 @@ class StatsViewModel(app: Application) : AndroidViewModel(app) {
 
     fun selectRange(range: StatsRange) {
         _range.value = range
+    }
+
+    /** 拉取服务端本周执行情况;未登录直接给引导文案,不发起请求 */
+    fun refreshServer() {
+        viewModelScope.launch {
+            if (TokenStore.currentAccess() == null) {
+                _server.value = ServerExecutionState(loading = false, loggedOut = true)
+                return@launch
+            }
+            _server.update { it.copy(loading = true, error = "", loggedOut = false) }
+            runCatching {
+                ApiClient.api().planCheckup(
+                    tzOffset = TimeUtils.currentTzOffsetMinutes(),
+                    notify = 0
+                )
+            }.fold({ checkup ->
+                _server.value = ServerExecutionState(loading = false, checkup = checkup)
+            }, { _ ->
+                _server.value = ServerExecutionState(
+                    loading = false,
+                    error = "暂时读不到服务端执行情况"
+                )
+            })
+        }
     }
 }

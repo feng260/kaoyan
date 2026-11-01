@@ -14,6 +14,13 @@ object TimeUtils {
 
     fun now(): Long = System.currentTimeMillis()
 
+    /** 指定时区在某一时刻相对 UTC 的偏移(分钟),东八区为 480 */
+    fun tzOffsetMinutesAt(zone: ZoneId, instant: Instant): Int =
+        zone.rules.getOffset(instant).totalSeconds / 60
+
+    fun currentTzOffsetMinutes(): Int =
+        tzOffsetMinutesAt(zone, Instant.now())
+
     /**
      * 毫秒时间戳 → 本地日期。
      *
@@ -87,6 +94,7 @@ object TimeUtils {
     private val mdFormat = DateTimeFormatter.ofPattern("M月d日", Locale.CHINA)
     private val ymdFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.CHINESE)
     private val ymdHmFormat = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm", Locale.CHINESE)
+    private val fileStampFormat = DateTimeFormatter.ofPattern("yyyyMMdd-HHmm", Locale.CHINESE)
     private val hmFormat = DateTimeFormatter.ofPattern("HH:mm", Locale.CHINESE)
     private val monthKeyFormat = DateTimeFormatter.ofPattern("yyyy-MM", Locale.CHINA)
 
@@ -102,6 +110,10 @@ object TimeUtils {
 
     fun formatYmdHm(epochMilli: Long): String =
         LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMilli), zone).format(ymdHmFormat)
+
+    /** 文件名用的紧凑时间戳:同一天多次导出不会互相覆盖 */
+    fun fileStamp(epochMilli: Long = now()): String =
+        LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMilli), zone).format(fileStampFormat)
 
     fun formatHm(epochMilli: Long): String =
         LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMilli), zone).format(hmFormat)

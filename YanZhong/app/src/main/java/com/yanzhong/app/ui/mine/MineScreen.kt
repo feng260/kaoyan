@@ -19,8 +19,10 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -776,13 +779,19 @@ private fun PomodoroGoalEditorDialog(
             )
         },
         text = {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Column(
+                Modifier
+                    .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.7f).dp)
+                    .verticalScroll(rememberScrollState())
             ) {
-                TextButton(onClick = { if (count > 1) count-- }) { Text("− 1") }
-                Text("$count", style = MaterialTheme.typography.headlineSmall)
-                TextButton(onClick = { if (count < 30) count++ }) { Text("+ 1") }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = { if (count > 1) count-- }) { Text("− 1") }
+                    Text("$count", style = MaterialTheme.typography.headlineSmall)
+                    TextButton(onClick = { if (count < 30) count++ }) { Text("+ 1") }
+                }
             }
         },
         confirmButton = {
@@ -813,7 +822,11 @@ private fun GoalEditorDialog(
             )
         },
         text = {
-            Column {
+            Column(
+                Modifier
+                    .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.7f).dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it.filter { c -> c.isDigit() }.take(2) },
@@ -943,7 +956,11 @@ private fun PlanEditorDialog(
         onDismissRequest = onDismiss,
         title = { Text("编辑番茄方案", style = MaterialTheme.typography.titleMedium) },
         text = {
-            Column {
+            Column(
+                Modifier
+                    .heightIn(max = (LocalConfiguration.current.screenHeightDp * 0.7f).dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 edited.forEachIndexed { idx, plan ->
                     Column(Modifier.padding(vertical = 6.dp)) {
                         OutlinedTextField(

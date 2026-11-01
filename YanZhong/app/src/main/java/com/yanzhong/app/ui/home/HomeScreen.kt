@@ -74,7 +74,7 @@ import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
 
-/** 首页:倒计时置顶 → 今日进度 → 今日待办 → 番茄快捷栏(PRD 4.2 ①) */
+/** 首页:倒计时置顶 → 阶段 → 计划体检 → 今日进度 → 今日待办 → 今日节奏 → 复盘(PRD 4.2 ①) */
 @Composable
 fun HomeScreen(
     padding: PaddingValues,
@@ -85,6 +85,12 @@ fun HomeScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val expanded = isExpanded()
+    // 计划体检:有生效计划才拉;未登录时 refresh() 内部直接返回,不展示
+    val checkupVm: CheckupViewModel = viewModel()
+    val checkupState by checkupVm.ui.collectAsStateWithLifecycle()
+    LaunchedEffect(state.hasActivePlan) {
+        if (state.hasActivePlan) checkupVm.refresh()
+    }
 
     /** 完成后可撤销(一次性任务);误触右滑不再造成"看不见"的完成 */
     fun completeWithUndo(task: TaskEntity) {
@@ -181,7 +187,7 @@ fun HomeScreen(
 
     Box(Modifier.fillMaxSize()) {
         if (expanded) {
-            // 平板双栏:左主列表(倒计时→阶段→进度→复盘→待办),右常驻今日节奏,横屏同屏可见
+            // 平板双栏:左主列表(倒计时→阶段→体检→进度→待办→复盘),右常驻今日节奏,横屏同屏可见
             val showRhythmColumn = state.hasActivePlan
             Row(
                 Modifier
@@ -251,6 +257,23 @@ fun HomeScreen(
                             state.phase?.let { info ->
                                 item(key = "phase-strip") { PhaseStrip(info = info) }
                             }
+                            val checkup = checkupState.checkup
+                            if (checkup != null && !checkupState.dismissed) {
+                                item(key = "plan-checkup") {
+                                    PlanCheckupCard(
+                                        checkup = checkup,
+                                        onAdjust = {
+                                            navController.navigate(
+                                                Routes.planInterview(
+                                                    mode = "adjust",
+                                                    prefill = CheckupFormat.adjustPrefill(checkup)
+                                                )
+                                            ) { launchSingleTop = true }
+                                        },
+                                        onDismiss = { checkupVm.dismissForToday() }
+                                    )
+                                }
+                            }
                             item(key = "today-progress") {
                                 TodayProgress(
                                     done = state.doneCount,
@@ -262,22 +285,6 @@ fun HomeScreen(
                                     dailyPomodoroGoal = derivedDailyGoal(state)
                                 )
                             }
-                        }
-                        item(key = "review-card") {
-                            ReviewCard(
-                                yesterdayReview = state.yesterdayReview,
-                                todayReview = state.todayReview,
-                                weeklyReview = state.weeklyReview,
-                                isSunday = isSunday,
-                                weekDoneTasks = state.weekDoneTasks,
-                                weekMinutes = state.weekMinutes,
-                                weekGoalMin = state.weekGoalMin,
-                                monthlyReview = state.monthlyReview,
-                                isMonthEnd = isMonthEnd,
-                                onOpenDaily = { showDailyReview = true },
-                                onOpenWeekly = { showWeeklyReview = true },
-                                onOpenMonthly = { showMonthlyReview = true }
-                            )
                         }
                         taskListSection(
                             openTasks = state.today.open,
@@ -306,6 +313,23 @@ fun HomeScreen(
                             },
                             onBatchImport = { showBatchImport = true }
                         )
+
+                        item(key = "review-card") {
+                            ReviewCard(
+                                yesterdayReview = state.yesterdayReview,
+                                todayReview = state.todayReview,
+                                weeklyReview = state.weeklyReview,
+                                isSunday = isSunday,
+                                weekDoneTasks = state.weekDoneTasks,
+                                weekMinutes = state.weekMinutes,
+                                weekGoalMin = state.weekGoalMin,
+                                monthlyReview = state.monthlyReview,
+                                isMonthEnd = isMonthEnd,
+                                onOpenDaily = { showDailyReview = true },
+                                onOpenWeekly = { showWeeklyReview = true },
+                                onOpenMonthly = { showMonthlyReview = true }
+                            )
+                        }
                     }
                 }
 
@@ -412,14 +436,22 @@ fun HomeScreen(
             }
 
             if (state.hasActivePlan) {
-                item(key = "rhythm-strip") {
-                    TodayRhythmCard(
-                        tpl = todayTemplate,
-                        rows = rhythmRows,
-                        now = state.now,
-                        focusMinutes = state.focusMinutes,
-                        doneTaskIds = doneTaskIds
-                    )
+                val checkup = checkupState.checkup
+                if (checkup != null && !checkupState.dismissed) {
+                    item(key = "plan-checkup") {
+                        PlanCheckupCard(
+                            checkup = checkup,
+                            onAdjust = {
+                                navController.navigate(
+                                    Routes.planInterview(
+                                        mode = "adjust",
+                                        prefill = CheckupFormat.adjustPrefill(checkup)
+                                    )
+                                ) { launchSingleTop = true }
+                            },
+                            onDismiss = { checkupVm.dismissForToday() }
+                        )
+                    }
                 }
             }
 
@@ -465,6 +497,18 @@ fun HomeScreen(
                 },
                 onBatchImport = { showBatchImport = true }
             )
+
+            if (state.hasActivePlan) {
+                item(key = "rhythm-strip") {
+                    TodayRhythmCard(
+                        tpl = todayTemplate,
+                        rows = rhythmRows,
+                        now = state.now,
+                        focusMinutes = state.focusMinutes,
+                        doneTaskIds = doneTaskIds
+                    )
+                }
+            }
 
             item(key = "review-card") {
                 ReviewCard(
@@ -579,6 +623,13 @@ fun HomeScreen(
             weekDoneTasks = state.weekDoneTasks,
             weekMinutes = state.weekMinutes,
             weekGoalMin = state.weekGoalMin,
+            serverHint = checkupState.checkup?.let { c ->
+                if (c.weekPlanTotal > 0) {
+                    "本周计划完成 ${c.weekPlanDone}/${c.weekPlanTotal} · 专注 ${c.weekFocusMinutes} 分钟"
+                } else {
+                    "本周还没有云端计划任务"
+                }
+            },
             onSave = { weak, t1, t2, t3 -> vm.saveWeeklyReview(weak, t1, t2, t3) },
             onDismiss = { showWeeklyReview = false }
         )

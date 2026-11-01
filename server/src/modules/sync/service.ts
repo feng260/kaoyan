@@ -1,6 +1,7 @@
 import { prisma, num } from '../../shared/prisma'
 import { ApiError } from '../../middlewares/error'
 import { schemas, table, parseResource, ResourceName } from './resources'
+import { parseSettingsRows, settingsEntries } from './settings'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 
@@ -123,7 +124,7 @@ export async function exportBackup(userGuid: string) {
     dailyReviews: strip(dailyReviews),
     weeklyReviews: strip(weeklyReviews),
     monthlyReviews: strip(monthlyReviews),
-    settings: Object.fromEntries(settings.map((s: { key: string; value: string }) => [s.key, JSON.parse(s.value)])),
+    settings: parseSettingsRows(settings),
   }
 }
 
@@ -132,6 +133,7 @@ export async function restoreBackup(userGuid: string, payload: any) {
   if (!payload || typeof payload !== 'object') {
     throw new ApiError(400, 'INVALID_PARAMS', '备份包格式错误')
   }
+  const settings = settingsEntries(payload.settings)
   const stats: Record<string, {
     applied: number
     skipped: number
@@ -147,8 +149,11 @@ export async function restoreBackup(userGuid: string, payload: any) {
       tx.dailyReview.deleteMany({ where: { userGuid } }),
       tx.weeklyReview.deleteMany({ where: { userGuid } }),
       tx.monthlyReview.deleteMany({ where: { userGuid } }),
-      tx.userSetting.deleteMany({ where: { userGuid } }),
     ])
+    // 没有携带设置的旧备份不清空现有设置:恢复只覆盖备份里真正存在的部分
+    if (settings.length > 0) {
+      await tx.userSetting.deleteMany({ where: { userGuid } })
+    }
     // 重插(经与增量 upsert 相同的校验/映射)
     const res: Array<[string, any[]]> = [
       ['subjects', payload.subjects ?? []],
@@ -192,14 +197,12 @@ export async function restoreBackup(userGuid: string, payload: any) {
       stats[resource] = { applied, skipped, rejected }
     }
     // 设置 KV
-    if (payload.settings && typeof payload.settings === 'object') {
-      for (const [key, value] of Object.entries(payload.settings)) {
-        await tx.userSetting.create({
-          data: { userGuid, key: key.slice(0, 64), value: JSON.stringify(value), updatedAt: now() },
-        })
-      }
+    for (const [key, value] of settings) {
+      await tx.userSetting.create({
+        data: { userGuid, key: key.slice(0, 64), value: JSON.stringify(value), updatedAt: now() },
+      })
     }
-  })
+  }, { maxWait: 10_000, timeout: 120_000 })
   return { restored: true, resources: stats, serverTime: now() }
 }
 
@@ -207,11 +210,7 @@ export async function restoreBackup(userGuid: string, payload: any) {
 
 export async function getSettings(userGuid: string) {
   const rows = await prisma.userSetting.findMany({ where: { userGuid } })
-  const settings: Record<string, unknown> = {}
-  for (const r of rows) {
-    try { settings[r.key] = JSON.parse(r.value) } catch { settings[r.key] = r.value }
-  }
-  return { settings, serverTime: now() }
+  return { settings: parseSettingsRows(rows), serverTime: now() }
 }
 
 export async function putSettings(userGuid: string, body: { settings: Record<string, unknown> }) {

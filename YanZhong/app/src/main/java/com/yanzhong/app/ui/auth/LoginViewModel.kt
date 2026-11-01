@@ -4,8 +4,10 @@ import android.app.Application
 import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.remote.ApiClient
 import com.yanzhong.app.data.remote.DEFAULT_SERVER_URL
+import com.yanzhong.app.data.remote.ForgotReq
 import com.yanzhong.app.data.remote.LoginReq
 import com.yanzhong.app.data.remote.RegisterReq
 import com.yanzhong.app.data.remote.TokenStore
@@ -30,7 +32,12 @@ data class LoginUiState(
      * 注册时必须勾选,登录不需要。默认不勾——同意这种事不能被默认选中,
      * 那是替用户做决定,也是最容易被投诉的写法。
      */
-    val consentChecked: Boolean = false
+    val consentChecked: Boolean = false,
+    val forgotMode: Boolean = false,
+    val forgotAccount: String = "",
+    val forgotBusy: Boolean = false,
+    val forgotMessage: String = "",
+    val emailResetAvailable: Boolean? = null
 )
 
 /** 登录和注册使用 ApiClient 的内置地址或设备上已保存的地址。 */
@@ -44,6 +51,23 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
             val server = effectiveServerUrl()
             _ui.update { it.copy(serverUrl = server) }
         }
+        // 能力探测:决定「忘记密码」发送后给用户哪种解释文案
+        viewModelScope.launch {
+            val available = runCatching { ApiClient.api().health() }.getOrNull()
+                ?.features?.emailReset
+            if (available != null) _ui.update { it.copy(emailResetAvailable = available) }
+        }
+        // 退出/被踢回登录页的这一跳只发生一次:顺手清掉上次提交留在输入框里的密码。
+        // 用登录态而不是 LoginScreen 的 LaunchedEffect——后者每次 Activity 重建都会跑,
+        // 用户转屏就会把正在输入的密码抹掉。
+        viewModelScope.launch {
+            (getApplication<Application>() as YanZhongApp).authState.collect { signedIn ->
+                if (signedIn == false) {
+                    val notice = LogoutNoticeBus.consume()
+                    _ui.update { it.copy(password = "", message = notice.orEmpty(), messageIsError = false) }
+                }
+            }
+        }
     }
 
     fun update(transform: (LoginUiState) -> LoginUiState) = _ui.update(transform)
@@ -55,6 +79,45 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
             confirm = "",
             message = ""
         )
+    }
+
+    fun openForgot() {
+        _ui.update {
+            it.copy(
+                forgotMode = true,
+                forgotAccount = it.username,
+                forgotBusy = false,
+                forgotMessage = ""
+            )
+        }
+    }
+
+    fun closeForgot() = _ui.update { it.copy(forgotMode = false, forgotMessage = "") }
+
+    fun updateForgotAccount(value: String) = _ui.update { it.copy(forgotAccount = value) }
+
+    fun submitForgot() {
+        if (_ui.value.forgotBusy) return
+        val account = _ui.value.forgotAccount.trim()
+        if (account.isEmpty()) {
+            _ui.update { it.copy(forgotMessage = "请输入用户名或邮箱") }
+            return
+        }
+        viewModelScope.launch {
+            _ui.update { it.copy(forgotBusy = true, forgotMessage = "") }
+            runCatching { ApiClient.api().forgotPassword(ForgotReq(account)) }.fold({
+                // 服务端有意不透露账号是否存在;这里也只给统一结果,
+                // 文案按「服务器是否配置邮件」分三档,能力未知时不替服务器下结论。
+                val message = when (_ui.value.emailResetAvailable) {
+                    true -> "如果这个账号绑定了邮箱，重置链接已经发出，30 分钟内有效。"
+                    false -> "已提交。当前服务器未配置邮件发送，请联系管理员获取重置链接；链接 30 分钟内有效。"
+                    null -> "已提交。若账号绑定了邮箱，重置链接会发出，30 分钟内有效；未收到请联系管理员。"
+                }
+                _ui.update { it.copy(forgotBusy = false, forgotMessage = message) }
+            }, { e ->
+                _ui.update { it.copy(forgotBusy = false, forgotMessage = "提交失败:${e.apiErrorMessage()}") }
+            })
+        }
     }
 
     fun saveServer(rawUrl: String) {

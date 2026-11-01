@@ -107,7 +107,8 @@ data class BackupUpload(
     val sessions: List<SessionSyncRow>,
     val dailyReviews: List<DailyReviewSyncRow> = emptyList(),
     val weeklyReviews: List<WeeklyReviewSyncRow> = emptyList(),
-    val monthlyReviews: List<MonthlyReviewSyncRow> = emptyList()
+    val monthlyReviews: List<MonthlyReviewSyncRow> = emptyList(),
+    val settings: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap()
 )
 
 /** GET /backup 返回的负载(客户端恢复用) */
@@ -121,7 +122,8 @@ data class BackupDownload(
     val sessions: List<SessionSyncRow> = emptyList(),
     val dailyReviews: List<DailyReviewSyncRow> = emptyList(),
     val weeklyReviews: List<WeeklyReviewSyncRow> = emptyList(),
-    val monthlyReviews: List<MonthlyReviewSyncRow> = emptyList()
+    val monthlyReviews: List<MonthlyReviewSyncRow> = emptyList(),
+    val settings: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap()
 )
 
 /** GET /sync?since= 返回的增量变更包(行内含服务端额外字段,ignoreUnknownKeys 兼容) */

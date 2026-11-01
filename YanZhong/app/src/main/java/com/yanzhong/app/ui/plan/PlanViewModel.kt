@@ -132,6 +132,10 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun clearPlanError() {
+        _planError.value = null
+    }
+
     fun toggleItem(item: PlanItemDto) {
         if (_planLoading.value || _updatingItemId.value != null || _serverPlan.value?.items?.none { it.id == item.id } != false) return
         _updatingItemId.value = item.id

@@ -19,4 +19,18 @@ class TimeUtilsTest {
         assertNull(TimeUtils.planTimeLabel(null, null))
         assertNull(TimeUtils.planTimeLabel("unknown", "  "))
     }
+
+    @Test
+    fun `时区偏移按指定时区计算`() {
+        val zone = java.time.ZoneId.of("Asia/Shanghai")
+        val instant = java.time.Instant.parse("2026-11-01T00:00:00Z")
+        org.junit.Assert.assertEquals(480, TimeUtils.tzOffsetMinutesAt(zone, instant))
+    }
+
+    @Test
+    fun `文件名时间戳紧凑且含时分`() {
+        val stamp = TimeUtils.fileStamp(0L)
+        org.junit.Assert.assertEquals(13, stamp.length)
+        org.junit.Assert.assertTrue(stamp.matches(Regex("""\d{8}-\d{4}""")))
+    }
 }

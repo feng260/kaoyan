@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createPlanningService, overdueSuggestion, slimToggleResponse, PlanningDb } from './service'
+import { emptyCheckup } from './checkup'
 import { dayStart, addDays, profileInputSchema } from './schemas'
 import { generateRulePlan as generateRulePlanRaw } from './generator'
 import { normalizeBrief } from './document'
@@ -57,6 +58,7 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean; beforeItemUpdat
     stages: [] as Row[],
     items: [] as Row[],
     adjustments: [] as Row[],
+    sessions: [] as Row[],
   }
   let seq = { plan: 0, stage: 0, item: 0, adjustment: 0 }
   let failNextItemInsert = options.failOnItemInsertOnce ?? false
@@ -67,6 +69,7 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean; beforeItemUpdat
     stages: structuredClone(state.stages),
     items: structuredClone(state.items),
     adjustments: structuredClone(state.adjustments),
+    sessions: structuredClone(state.sessions),
     seq: { ...seq },
     failNextItemInsert,
   })
@@ -76,15 +79,22 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean; beforeItemUpdat
     state.stages = snap.stages
     state.items = snap.items
     state.adjustments = snap.adjustments
+    state.sessions = snap.sessions
     seq = snap.seq
     failNextItemInsert = snap.failNextItemInsert
   }
 
   const whereMatch = (row: Row, where: Row) =>
     Object.entries(where).every(([key, value]) => {
-      // 支持 { in: [...] }:历史列表用一条 groupBy 聚合多份计划的进度
-      if (value && typeof value === 'object' && Array.isArray((value as Row).in)) {
-        return (value as Row).in.includes(row[key])
+      if (value && typeof value === 'object') {
+        // 支持 { in: [...] }:历史列表用一条 groupBy 聚合多份计划的进度
+        if (Array.isArray((value as Row).in)) {
+          return (value as Row).in.includes(row[key])
+        }
+        // 支持 { gte: ... }:体检只回捞最近 15 天的番茄记录
+        if ((value as Row).gte !== undefined) {
+          return row[key] >= (value as Row).gte
+        }
       }
       return row[key] === value
     })
@@ -206,6 +216,10 @@ function createFakeDb(options: { failOnItemInsertOnce?: boolean; beforeItemUpdat
         for (const row of hit) Object.assign(row, structuredClone(data))
         return { count: hit.length }
       },
+    },
+    pomodoroSession: {
+      findMany: async ({ where }: any = {}) =>
+        state.sessions.filter(r => !where || whereMatch(r, where)),
     },
     $transaction: async (fn: (tx: any) => Promise<any>) => {
       const snap = snapshot()
@@ -1438,7 +1452,50 @@ test('checkup:数出过去未完成的任务;没有计划返回全零', async ()
   assert.ok(checkup.suggestion.includes('1 项'))
 
   const none = await serviceWith(createFakeDb()).checkup('other-guid')
-  assert.deepEqual(none, { behindMinutes: 0, overdueCount: 0, suggestion: '' })
+  assert.deepEqual(none, emptyCheckup())
 
   assert.equal(overdueSuggestion(0, 0), '')
+})
+
+test('checkup 汇总本周完成、上周专注与未来负荷', async () => {
+  const fake = createFakeDb()
+  fake.state.profiles.push({
+    id: 1, userGuid: USER, targetType: '考研', examDate: dayIso(120), dailyMinutes: 180,
+    studyWindowsJson: '["上午","晚上"]', foundation: '一般', weakSubjectsJson: '[]',
+    briefJson: JSON.stringify(qualityBrief()), updatedAt: new Date(),
+  })
+  fake.state.plans.push({
+    id: 900, userGuid: USER, profileId: 1, title: '测试计划', targetType: '考研',
+    source: 'rule', status: 'active', version: 1,
+    startDate: new Date('2026-03-01T00:00:00.000Z'),
+    examDate: new Date('2026-06-01T00:00:00.000Z'),
+    updatedAt: new Date(),
+  })
+  fake.state.items.push(
+    { id: 1, planId: 900, planDate: new Date('2026-03-09T00:00:00.000Z'), minutes: 60, status: 'done' },
+    { id: 2, planId: 900, planDate: new Date('2026-03-10T00:00:00.000Z'), minutes: 90, status: 'pending' },
+    { id: 3, planId: 900, planDate: new Date('2026-03-11T00:00:00.000Z'), minutes: 30, status: 'pending' },
+    { id: 4, planId: 900, planDate: new Date('2026-03-12T00:00:00.000Z'), minutes: 300, status: 'pending' },
+  )
+  fake.state.sessions.push(
+    { userGuid: USER, startedAt: BigInt(Date.parse('2026-03-09T20:00:00.000Z')), durationMin: 50, valid: true, isDeleted: false },
+    { userGuid: USER, startedAt: BigInt(Date.parse('2026-03-10T20:00:00.000Z')), durationMin: 25, valid: true, isDeleted: false },
+    { userGuid: USER, startedAt: BigInt(Date.parse('2026-03-04T20:00:00.000Z')), durationMin: 40, valid: true, isDeleted: false },
+  )
+
+  const summary = await serviceWith(fake).checkup(USER, {
+    tzOffset: 0,
+    now: new Date('2026-03-11T12:00:00.000Z'),
+  })
+
+  assert.equal(summary.weekPlanTotal, 4)
+  assert.equal(summary.weekPlanDone, 1)
+  assert.equal(summary.weekFocusMinutes, 75)
+  assert.equal(summary.lastWeekFocusMinutes, 40)
+  assert.equal(summary.weekActiveDays, 2)
+  assert.equal(summary.overdueCount, 1)
+  assert.equal(summary.behindMinutes, 90)
+  assert.equal(summary.next7dPlannedMinutes, 300)
+  assert.equal(summary.overloadedDays.length, 1)
+  assert.match(summary.suggestion, /去调整一下。$/)
 })

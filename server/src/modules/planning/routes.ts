@@ -7,6 +7,7 @@ import { hub } from '../../shared/ws/Hub'
 import { profileInputSchema, type ProfileInput } from './schemas'
 import { PLAN_ITEM_STATUSES, planningService, slimToggleResponse } from './service'
 import { maybeNotifyPlanReminder } from './planReminder'
+import { normalizeTzOffset, shouldNotifyPlanReminder } from './checkup'
 
 const router = new Router({ prefix: '/api/v1' })
 
@@ -182,10 +183,12 @@ router.get('/plans/adjustments/latest', requireAuth, async ctx => {
   ctx.body = { adjustment, serverTime: Date.now() }
 })
 
-/** 计划体检:落后分钟数/过期任务数/一句话建议。App 周期轮询;服务端顺手触发在线提醒( fire-and-forget ) */
+/** 计划体检:周执行/落后任务/未来负荷。App 周期轮询;服务端按 notify 开关顺手触发提醒 */
 router.get('/plans/checkup', requireAuth, async ctx => {
-  const checkup = await planningService.checkup(ctx.state.auth!.userGuid)
-  void maybeNotifyPlanReminder(ctx.state.auth!.userGuid)
+  const tzOffset = normalizeTzOffset(ctx.query.tzOffset)
+  const notify = shouldNotifyPlanReminder(ctx.query.notify)
+  const checkup = await planningService.checkup(ctx.state.auth!.userGuid, { tzOffset })
+  if (notify) void maybeNotifyPlanReminder(ctx.state.auth!.userGuid)
   ctx.body = { ...checkup, serverTime: Date.now() }
 })
 

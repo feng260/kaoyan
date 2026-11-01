@@ -3,6 +3,7 @@ package com.yanzhong.app.data.remote
 import android.content.Context
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.service.FocusService
+import com.yanzhong.app.util.TimeUtils
 import java.time.LocalDate
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -195,7 +196,12 @@ class DataSyncer(private val app: YanZhongApp) {
     /** 计划体检轮询:命中且当天没提醒过 → 本地通知(spec §3.10 本地通道;无 WorkManager,复用 15 分钟周期循环) */
     private suspend fun pullCheckupOnce() {
         if (!started || TokenStore.currentAccess() == null) return
-        val checkup = runCatching { ApiClient.api().planCheckup() }.getOrNull() ?: return
+        val checkup = runCatching {
+            ApiClient.api().planCheckup(
+                tzOffset = TimeUtils.currentTzOffsetMinutes(),
+                notify = 1
+            )
+        }.getOrNull() ?: return
         if (checkup.suggestion.isBlank() || !claimDailyReminder()) return
         FocusService.postPlanReminder(app, checkup.suggestion)
     }
@@ -256,7 +262,7 @@ class DataSyncer(private val app: YanZhongApp) {
                 }
             }, { e ->
                 _state.update {
-                    it.copy(running = false, lastError = e.message ?: "同步失败", pushed = pushed)
+                    it.copy(running = false, lastError = e.apiErrorMessage(), pushed = pushed)
                 }
             })
         }

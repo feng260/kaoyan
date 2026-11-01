@@ -72,11 +72,17 @@ fun PlanInterviewScreen(
     padding: PaddingValues,
     navController: NavHostController,
     /** 入口写进路由的模式意图,见 Routes.planInterview;空串=由本页自行判断 */
-    mode: String = ""
+    mode: String = "",
+    /** 从首页体检卡带过来的调整描述;空串表示不预填 */
+    prefill: String = ""
 ) {
     val vm: PlanInterviewViewModel = viewModel()
     val state by vm.state.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
+    // 体检卡的一句话建议只做预填,绝不覆盖考生已经输入的内容
+    LaunchedEffect(prefill) {
+        if (prefill.isNotBlank() && input.isBlank()) input = prefill
+    }
     var fullscreen by rememberSaveable { mutableStateOf(false) }
     var adjustPreview by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()

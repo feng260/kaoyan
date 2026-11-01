@@ -138,22 +138,33 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
 
             item(key = "server-plan") {
                 when (selectPlanDisplayState(loggedIn, serverPlan, planError != null, planLoading)) {
-                    PlanDisplayState.READY -> ServerPlanSummary(
-                        plan = serverPlan!!,
-                        today = todayDate,
-                        updatingItemId = updatingItemId,
-                        latestAdjustment = latestAdjustment,
-                        undoing = undoing,
-                        onUndo = vm::undoLatestAdjustment,
-                        onToggle = vm::toggleItem,
-                        onOpenSetup = { navController.navigate(Routes.planSetup()) },
-                        onOpenAssistant = {
-                            // 显式声明「调整模式」:面谈页只看有没有生效计划的话,这条入口也会被猜成制定
-                            navController.navigate(Routes.planInterview("adjust"))
-                        },
-                        onOpenDocument = { navController.navigate(Routes.PLAN_DOCUMENT) },
-                        onOpenHistory = { navController.navigate(Routes.PLAN_HISTORY) }
-                    )
+                    PlanDisplayState.READY -> Column(
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        planError?.let { message ->
+                            PlanErrorBanner(
+                                message = message,
+                                onRetry = vm::refreshPlan,
+                                onDismiss = vm::clearPlanError
+                            )
+                        }
+                        ServerPlanSummary(
+                            plan = serverPlan!!,
+                            today = todayDate,
+                            updatingItemId = updatingItemId,
+                            latestAdjustment = latestAdjustment,
+                            undoing = undoing,
+                            onUndo = vm::undoLatestAdjustment,
+                            onToggle = vm::toggleItem,
+                            onOpenSetup = { navController.navigate(Routes.planSetup()) },
+                            onOpenAssistant = {
+                                // 显式声明「调整模式」:面谈页只看有没有生效计划的话,这条入口也会被猜成制定
+                                navController.navigate(Routes.planInterview("adjust"))
+                            },
+                            onOpenDocument = { navController.navigate(Routes.PLAN_DOCUMENT) },
+                            onOpenHistory = { navController.navigate(Routes.PLAN_HISTORY) }
+                        )
+                    }
                     PlanDisplayState.LOGIN_REQUIRED -> PlanActionCard(
                         icon = AppIcons.CloudUpload,
                         title = "登录后就有了云端计划",
@@ -570,4 +581,31 @@ private fun stageDayInfo(stage: PlanStageDto?, today: LocalDate): Pair<Int, Int>
 private fun planSubjectColor(subject: String): Color {
     val palette = listOf(MathColor, SubjectCsColor, EnglishColor, PoliticsColor, MintGreen, CoralRed, PlanAccent, PlanAccent2)
     return palette[abs(subject.hashCode()) % palette.size]
+}
+
+@Composable
+private fun PlanErrorBanner(
+    message: String,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Text(message, style = MaterialTheme.typography.bodySmall)
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextAction(text = "重试", onClick = onRetry)
+                Spacer(Modifier.width(8.dp))
+                TextAction(text = "关闭", onClick = onDismiss)
+            }
+        }
+    }
 }

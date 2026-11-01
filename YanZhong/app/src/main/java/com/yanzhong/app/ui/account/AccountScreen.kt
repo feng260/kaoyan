@@ -1,6 +1,8 @@
 package com.yanzhong.app.ui.account
 
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +34,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +47,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.yanzhong.app.data.remote.DeviceFullDto
+import com.yanzhong.app.ui.cloud.CloudDataViewModel
 import com.yanzhong.app.ui.cloud.CloudSyncViewModel
 import com.yanzhong.app.ui.legal.ConsentRow
 import com.yanzhong.app.ui.legal.PolicyLinksRow
@@ -66,8 +70,9 @@ import com.yanzhong.app.util.TimeUtils
 /**
  * 账号子页:一个账号多设备登录,共用同一份服务端计划。
  *
- * 只做三件事 —— 登录注册、查看/登出其他设备、退出与注销。
- * 服务器地址、增量同步、备份恢复、专注接力等实现细节一律不在此出现:
+ * 页面上的分组 —— 登录/注册、同步状态与手动同步、云端数据(导出/下载/恢复)、
+ * 账号安全、设备管理、退出与注销。
+ * 服务器地址、增量同步、专注接力等实现细节一律不在此出现:
  * 同步是后台常驻行为,用户不需要理解,也不该被要求操作。
  */
 @Composable
@@ -76,6 +81,28 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
     val mineVm: MineViewModel = viewModel()
     val state by vm.ui.collectAsStateWithLifecycle()
     val context = LocalContext.current
+
+    val dataVm: CloudDataViewModel = viewModel()
+    val dataState by dataVm.ui.collectAsStateWithLifecycle()
+    // SAF 创建文档是异步的:点哪一行先记在 pendingWrite 里,回调时再知道要写什么。
+    // 系统文件选择器可能让 Activity 重建,所以用 rememberSaveable 存住这一格
+    var pendingWrite by rememberSaveable { mutableStateOf<WriteAction?>(null) }
+    val createDoc = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        val action = pendingWrite
+        pendingWrite = null
+        if (uri != null && action != null) {
+            when (action) {
+                WriteAction.EXPORT_ACCOUNT -> dataVm.exportAccountTo(uri)
+                WriteAction.CLOUD_BACKUP -> dataVm.downloadBackupTo(uri)
+                WriteAction.SNAPSHOT -> dataVm.downloadSnapshotTo(uri)
+            }
+        }
+    }
+    val openDoc = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri -> if (uri != null) dataVm.prepareRestore(uri) }
 
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -96,6 +123,13 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
         if (state.message.isNotBlank()) {
             Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
             vm.clearMessage()
+        }
+    }
+
+    LaunchedEffect(dataState.message) {
+        if (dataState.message.isNotBlank()) {
+            Toast.makeText(context, dataState.message, Toast.LENGTH_SHORT).show()
+            dataVm.clearMessage()
         }
     }
 
@@ -212,6 +246,39 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    Spacer(Modifier.height(16.dp))
+                    SyncStatusCard(
+                        lastSyncAt = state.lastSyncAt,
+                        syncing = state.syncing,
+                        lastError = state.lastSyncError,
+                        onSyncNow = { vm.syncNow() }
+                    )
+                    Spacer(Modifier.height(20.dp))
+
+                    AccountDataSection(
+                        state = dataState,
+                        onExportAccount = {
+                            pendingWrite = WriteAction.EXPORT_ACCOUNT
+                            createDoc.launch(
+                                "yanzhong-export-${TimeUtils.fileStamp()}.json"
+                            )
+                        },
+                        onDownloadBackup = {
+                            pendingWrite = WriteAction.CLOUD_BACKUP
+                            createDoc.launch(
+                                "yanzhong-backup-${TimeUtils.fileStamp()}.json"
+                            )
+                        },
+                        onPickRestore = { openDoc.launch(arrayOf("application/json", "text/plain", "*/*")) },
+                        onDownloadSnapshot = {
+                            pendingWrite = WriteAction.SNAPSHOT
+                            createDoc.launch(
+                                "yanzhong-pre-restore-${TimeUtils.fileStamp()}.json"
+                            )
+                        },
+                        onConfirmRestore = { dataVm.confirmRestore() },
+                        onCancelRestore = { dataVm.clearPendingRestore() }
+                    )
                     Spacer(Modifier.height(20.dp))
 
                     SectionHeader(title = "登录的设备", meta = "可登出不再使用的设备")
@@ -241,7 +308,17 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
                         onClick = { vm.refreshDevices() },
                         modifier = Modifier.align(Alignment.CenterHorizontally)
                     )
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(20.dp))
+                    AccountSecuritySection(
+                        changing = state.changingPassword,
+                        error = state.securityError,
+                        onClearError = { vm.clearSecurityError() },
+                        onChangePassword = { old, new, confirm ->
+                            vm.changePassword(old, new, confirm)
+                        },
+                        onRevokeAll = { vm.revokeAllDevices() }
+                    )
+                    Spacer(Modifier.height(20.dp))
 
                     SecondaryButton(
                         text = "退出登录",
@@ -384,3 +461,6 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
         )
     }
 }
+
+/** 点下按钮到 SAF 回调之间要记住「这次要写哪份文件」 */
+private enum class WriteAction { EXPORT_ACCOUNT, CLOUD_BACKUP, SNAPSHOT }

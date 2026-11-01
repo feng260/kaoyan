@@ -133,6 +133,14 @@ fun LoginScreen() {
                         onDone = { if (!state.registerMode) vm.submit() }
                     )
 
+                    // 找回入口贴在密码框正下方、表单之内;注册模式没有可找回的密码,故只出现在登录侧
+                    if (!state.registerMode) {
+                        TextButton(
+                            onClick = { vm.openForgot() },
+                            modifier = Modifier.align(Alignment.End)
+                        ) { Text("忘记密码？") }
+                    }
+
                     if (state.registerMode) {
                         Spacer(Modifier.height(12.dp))
                         AuthTextField(
@@ -257,6 +265,57 @@ fun LoginScreen() {
                 },
                 dismissButton = {
                     TextButton(onClick = { showServerDialog = false }) { Text("取消") }
+                }
+            )
+        }
+
+        if (state.forgotMode) {
+            // 能力探测中/探测失败时既不能承诺发信,也不能断言服务器没配置邮件,只能用中性说法
+            val intro = when (state.emailResetAvailable) {
+                true -> "填写注册时绑定的邮箱，我们会发一封重置链接，30 分钟内有效。"
+                false -> "填写账号提交后，需要联系管理员获取重置链接；链接 30 分钟内有效。"
+                null -> "填写用户名或邮箱提交，我们会按服务器配置发送重置链接。"
+            }
+            AlertDialog(
+                onDismissRequest = { if (!state.forgotBusy) vm.closeForgot() },
+                title = {
+                    Text(
+                        if (state.emailResetAvailable == false) "找回密码（邮件未开通）" else "找回密码"
+                    )
+                },
+                text = {
+                    Column {
+                        Text(
+                            intro,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = state.forgotAccount,
+                            onValueChange = vm::updateForgotAccount,
+                            label = { Text("用户名或邮箱") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        if (state.forgotMessage.isNotBlank()) {
+                            Spacer(Modifier.height(10.dp))
+                            Text(state.forgotMessage, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { vm.submitForgot() },
+                        enabled = !state.forgotBusy && state.forgotAccount.isNotBlank()
+                    ) { Text(if (state.forgotBusy) "提交中…" else "提交") }
+                },
+                dismissButton = {
+                    TextButton(
+                        onClick = { vm.closeForgot() },
+                        // 提交在途时关窗会丢掉结果提示,这里不允许关
+                        enabled = !state.forgotBusy
+                    ) { Text("关闭") }
                 }
             )
         }

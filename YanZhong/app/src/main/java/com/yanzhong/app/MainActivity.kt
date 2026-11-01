@@ -1,6 +1,7 @@
 package com.yanzhong.app
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -29,6 +30,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yanzhong.app.data.prefs.ThemeMode
 import com.yanzhong.app.service.FocusService
 import com.yanzhong.app.ui.auth.LoginScreen
+import com.yanzhong.app.ui.auth.PasswordResetBus
+import com.yanzhong.app.ui.auth.PasswordResetHost
 import com.yanzhong.app.ui.nav.YanZhongAppRoot
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.BrandGradient
@@ -44,6 +47,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         requestNotificationPermissionIfNeeded()
+        // 只有全新启动才消费深链:旋转/进程重建会带着同一个 intent 回来,
+        // 再分发一次等于把已经用过的 token 又递上来一遍。
+        if (savedInstanceState == null) handleDeepLink(intent)
         val app = application as YanZhongApp
         setContent {
             // Flow 操作符必须待在 remember 里:否则每次重组都会新建一条 Flow,
@@ -54,14 +60,31 @@ class MainActivity : ComponentActivity() {
             val themeMode by themeModeFlow
                 .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
             YanZhongTheme(themeMode = themeMode) {
-                // 启动两道门:①登录 ②备考档案。两段都过完才进主界面
-                val auth by app.authState.collectAsStateWithLifecycle()
-                when (auth) {
-                    null -> AuthChecking()
-                    false -> LoginScreen()
-                    else -> ProfileGate()
+                // 重置密码弹窗要盖在两道门之上:未登录收到邮件深链也能直接改密码
+                Box(Modifier.fillMaxSize()) {
+                    // 启动两道门:①登录 ②备考档案。两段都过完才进主界面
+                    val auth by app.authState.collectAsStateWithLifecycle()
+                    when (auth) {
+                        null -> AuthChecking()
+                        false -> LoginScreen()
+                        else -> ProfileGate()
+                    }
+                    PasswordResetHost()
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLink(intent)
+    }
+
+    private fun handleDeepLink(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme == "yanzhong" && data.host == "password-reset") {
+            PasswordResetBus.offer(data.getQueryParameter("token"))
         }
     }
 

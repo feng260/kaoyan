@@ -1,5 +1,6 @@
 package com.yanzhong.app.ui.nav
 
+import android.net.Uri
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -84,10 +85,11 @@ object Routes {
      * AI 备考面谈页:聊几轮问清情况,再据此排全程计划。
      *
      * mode 由入口在导航时写进路由:"build"=制定/重新生成,"adjust"=行程小助手,空=由面谈页自行判断。
+     * prefill 是首页体检卡带过去的一句话调整描述(空串表示不预填输入框)。
      * 用路由参数而不是 savedStateHandle:后者要在 navigate() 之后回写 currentBackStackEntry,
      * 时机不受控,写不进去就会退化成「有生效计划就猜成行程小助手」。
      */
-    const val PLAN_INTERVIEW = "plan_interview?mode={mode}"
+    const val PLAN_INTERVIEW = "plan_interview?mode={mode}&prefill={prefill}"
     /** 全程规划长文档页:AI 排出的 8 章文档,按参考计划的样子分段渲染 */
     const val PLAN_DOCUMENT = "plan_document"
     /** 历史计划页:按版本回看已归档的旧计划(只读) */
@@ -103,7 +105,8 @@ object Routes {
     fun planSetup(profileOnly: Boolean = false) = "plan_setup?profileOnly=$profileOnly"
 
     /** 面谈页的具体去向;mode 为空表示不指定,由面谈页按「有没有生效计划」自行判断 */
-    fun planInterview(mode: String = "") = "plan_interview?mode=$mode"
+    fun planInterview(mode: String = "", prefill: String = "") =
+        "plan_interview?mode=$mode&prefill=${Uri.encode(prefill)}"
 }
 
 private data class TabSpec(
@@ -278,13 +281,18 @@ fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
                             androidx.navigation.navArgument("mode") {
                                 type = androidx.navigation.NavType.StringType
                                 defaultValue = ""
+                            },
+                            androidx.navigation.navArgument("prefill") {
+                                type = androidx.navigation.NavType.StringType
+                                defaultValue = ""
                             }
                         )
                     ) { entry ->
                         com.yanzhong.app.ui.plan.PlanInterviewScreen(
                             padding,
                             navController,
-                            mode = entry.arguments?.getString("mode").orEmpty()
+                            mode = entry.arguments?.getString("mode").orEmpty(),
+                            prefill = entry.arguments?.getString("prefill").orEmpty()
                         )
                     }
                     composable(Routes.PLAN_DOCUMENT) {
