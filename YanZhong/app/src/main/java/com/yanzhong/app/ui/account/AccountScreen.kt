@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import com.yanzhong.app.data.remote.DeviceFullDto
 import com.yanzhong.app.ui.cloud.CloudSyncViewModel
 import com.yanzhong.app.ui.legal.ConsentRow
 import com.yanzhong.app.ui.legal.PolicyLinksRow
@@ -82,6 +83,10 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
     var rememberMe by remember { mutableStateOf(false) }
     var consentChecked by remember { mutableStateOf(false) }
 
+    // 退出与登出都不可撤销,先确认再执行
+    var logoutConfirm by remember { mutableStateOf(false) }
+    var revokeCandidate by remember { mutableStateOf<DeviceFullDto?>(null) }
+
     // 注销账号:两步确认(第一步说明后果,第二步用户名 + 密码)
     var deleteStep by remember { mutableIntStateOf(0) }
     var deleteConfirmName by remember { mutableStateOf("") }
@@ -90,6 +95,7 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
     LaunchedEffect(state.message) {
         if (state.message.isNotBlank()) {
             Toast.makeText(context, state.message, Toast.LENGTH_SHORT).show()
+            vm.clearMessage()
         }
     }
 
@@ -222,7 +228,7 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
                                     trailing = {
                                         TextAction(
                                             text = "登出",
-                                            onClick = { vm.revokeDevice(device.id) },
+                                            onClick = { revokeCandidate = device },
                                             danger = true
                                         )
                                     }
@@ -239,7 +245,7 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
 
                     SecondaryButton(
                         text = "退出登录",
-                        onClick = { vm.logout() },
+                        onClick = { logoutConfirm = true },
                         danger = true
                     )
                     Spacer(Modifier.height(4.dp))
@@ -263,6 +269,50 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
                 }
             }
         }
+    }
+
+    if (logoutConfirm) {
+        AlertDialog(
+            onDismissRequest = { logoutConfirm = false },
+            title = { Text("要退出登录吗?") },
+            text = {
+                Text(
+                    "退出后这台设备停止同步,本机学习记录不会删除;" +
+                        "计划与进度仍保存在服务端,重新登录即可继续。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        logoutConfirm = false
+                        vm.logout()
+                    }
+                ) { Text("退出登录", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { logoutConfirm = false }) { Text("取消") } }
+        )
+    }
+
+    revokeCandidate?.let { device ->
+        AlertDialog(
+            onDismissRequest = { revokeCandidate = null },
+            title = { Text("登出这台设备?") },
+            text = {
+                Text(
+                    "「${device.name}」会立即停止同步,需要重新登录才能恢复;" +
+                        "计划与进度仍保存在服务端。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        revokeCandidate = null
+                        vm.revokeDevice(device.id)
+                    }
+                ) { Text("登出", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { revokeCandidate = null }) { Text("取消") } }
+        )
     }
 
     /** 注销第一步:把后果讲清楚,别用红字吓人,也别轻描淡写 */

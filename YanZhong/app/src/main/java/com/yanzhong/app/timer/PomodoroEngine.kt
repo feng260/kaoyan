@@ -14,6 +14,7 @@ import com.yanzhong.app.data.prefs.PersistedTimer
 import com.yanzhong.app.data.prefs.PomodoroPlan
 import com.yanzhong.app.data.prefs.SettingsRepository
 import com.yanzhong.app.service.FocusService
+import com.yanzhong.app.service.StrictGuardPolicy
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -653,8 +654,12 @@ class PomodoroEngine(
     private fun armGuard(subjectId: Long?, snap: AppSettings) {
         if (!snap.superModeOn) return
         val allow = subjectId?.let { snap.subjectWhitelist[it] } ?: snap.whitelist
-        // 严格模式依赖紧急退出密码兜底;未设密码时降级为标准模式,避免无逃生口被锁死
-        val strict = snap.superModeStrict && snap.emergencyPinHash.isNotEmpty()
+        // 严格模式依赖紧急退出密码兜底，且必须有悬浮窗权限才能覆盖桌面、拉回前台；
+        // 任一条件不满足就降级为标准模式：宁可不锁死，也不假装已经锁死。
+        val strict = StrictGuardPolicy.canStartStrict(
+            overlayGranted = FocusService.hasOverlayPermission(app),
+            pinConfigured = snap.emergencyPinHash.isNotEmpty()
+        )
         FocusService.startGuard(app, strict, allow)
     }
 

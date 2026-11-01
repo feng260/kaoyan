@@ -114,6 +114,11 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** 消费一次性提示,让同样的操作重复发生时仍能再次提醒 */
+    fun clearMessage() {
+        _ui.update { it.copy(message = "") }
+    }
+
     fun refreshDevices() {
         viewModelScope.launch {
             runCatching { ApiClient.api().devices() }.fold({
@@ -126,8 +131,12 @@ class CloudSyncViewModel(app: Application) : AndroidViewModel(app) {
 
     fun revokeDevice(id: Long) {
         viewModelScope.launch {
-            runCatching { ApiClient.api().revokeDevice(id) }
-            refreshDevices()
+            runCatching { ApiClient.api().revokeDevice(id) }.fold({
+                refreshDevices()
+                _ui.update { s -> s.copy(message = "已登出该设备") }
+            }, {
+                _ui.update { s -> s.copy(message = "登出失败:${it.apiErrorMessage()}") }
+            })
         }
     }
 }

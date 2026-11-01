@@ -52,8 +52,9 @@ import com.yanzhong.app.util.TimeUtils
  * - 标准模式:轮询识别前台应用,白名单内放行,否则锁屏拦截;
  * - 严格模式:任何离开研钟的行为都被立即拉回,仅计时结束或 6 位紧急退出密码可解除;
  * - 拦截优先走全屏覆盖层(TYPE_APPLICATION_OVERLAY):非白名单应用直接被覆盖层锁定触摸,
- *   消掉按 Home 后的最大逃逸口;未授予「显示在其他应用上层」时回退为轮询拉回方案;
- * - 前台服务身份使本应用具备后台启动 Activity 豁免,覆盖层按钮拉回在 Android 10+ 生效;
+ *   消掉按 Home 后的最大逃逸口;
+ * - 严格模式必须有「显示在其他应用上层」:没有覆盖层时既盖不住桌面,也无法可靠地从后台拉回;
+ *   因此开钟与设置页都会在缺权限时阻止进入严格模式,而不是假装锁定;
  * - 覆盖层局限:拦不住下拉状态栏(需配合无障碍才完整)。
  */
 class FocusService : Service() {
@@ -106,7 +107,7 @@ class FocusService : Service() {
                 if (guardStrict) {
                     toast(
                         if (hasOverlayPermission(this)) "学霸模式已激活 · 严格锁定,覆盖层拦截已开启"
-                        else "学霸模式已激活 · 严格锁定,计时结束前无法离开"
+                        else "学霸模式已激活 · 缺少悬浮窗权限，严格锁定未生效"
                     )
                 } else if (hasUsageAccess(this)) {
                     toast(
@@ -351,6 +352,9 @@ class FocusService : Service() {
         }
 
         fun backToYanZhong() {
+            // 先撤覆盖层:未授予「使用情况访问」时守护循环识别不到前台应用,
+            // 覆盖层会一直盖住研钟自己,用户连紧急退出都点不到
+            hideOverlay()
             runCatching {
                 startActivity(
                     Intent(applicationContext, MainActivity::class.java)
@@ -431,7 +435,7 @@ class FocusService : Service() {
         return root
     }
 
-    /** 拉回研钟:前台服务具备后台启动 Activity 豁免;限频防止风暴 */
+    /** 拉回研钟:覆盖层已获授权时后台启动 Activity 才可靠;限频防止风暴 */
     private fun pullBack(reason: String) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastPullAt < PULL_MIN_INTERVAL_MS) return

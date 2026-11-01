@@ -1,6 +1,9 @@
 package com.yanzhong.app.ui.focus
 
 import android.app.Activity
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
@@ -52,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.input.KeyboardType
@@ -64,6 +68,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.data.remote.PeerState
+import com.yanzhong.app.service.FocusService
+import com.yanzhong.app.service.StrictGuardPolicy
 import com.yanzhong.app.timer.Phase
 import com.yanzhong.app.timer.TimerMode
 import com.yanzhong.app.ui.theme.AppCard
@@ -161,10 +167,12 @@ fun FocusScreen(padding: PaddingValues) {
 @Composable
 private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: List<PeerState>) {
     val haptic = LocalHapticFeedback.current
+    val context = LocalContext.current
     var mode by remember { mutableStateOf(TimerMode.POMODORO) }
     var countdownMin by remember { mutableStateOf(25) }
     var showTaskSheet by remember { mutableStateOf(false) }
     var settingsExpanded by remember { mutableStateOf(false) }
+    var showStrictOverlayRequired by remember { mutableStateOf(false) }
 
     val plan = state.settings.currentPlan
     val hasTasks = state.todayTasks.isNotEmpty()
@@ -187,7 +195,18 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
     val ringTrack = MaterialTheme.colorScheme.surfaceVariant
 
     // 模式 → 开始的唯一映射:主按钮(task = null)与任务行(带任务)共用,防止两处 when 各自漂移
-    val startByMode: (TaskEntity?) -> Unit = { task ->
+    val startByMode: (TaskEntity?) -> Unit = start@{ task ->
+        val strictRequested = state.settings.superModeOn &&
+            state.settings.superModeStrict &&
+            state.settings.emergencyPinHash.isNotEmpty()
+        if (StrictGuardPolicy.needsOverlayPrompt(
+                strict = strictRequested,
+                overlayGranted = FocusService.hasOverlayPermission(context)
+            )
+        ) {
+            showStrictOverlayRequired = true
+            return@start
+        }
         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
         when (mode) {
             TimerMode.POMODORO ->
@@ -438,6 +457,37 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
                 }
             }
         }
+    }
+
+    if (showStrictOverlayRequired) {
+        AlertDialog(
+            onDismissRequest = { showStrictOverlayRequired = false },
+            title = { Text("严格模式需要悬浮窗权限") },
+            text = {
+                Text(
+                    "没有「显示在其他应用上层」权限时，按 Home 键仍可离开研钟，严格锁定不会生效。\n" +
+                        "去系统设置开启权限后，再回来开始专注。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showStrictOverlayRequired = false
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:${context.packageName}")
+                                )
+                            )
+                        }
+                    }
+                ) { Text("去开启") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStrictOverlayRequired = false }) { Text("取消") }
+            }
+        )
     }
 }
 

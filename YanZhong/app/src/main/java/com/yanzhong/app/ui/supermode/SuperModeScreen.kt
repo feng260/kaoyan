@@ -51,6 +51,7 @@ import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.service.FocusService
+import com.yanzhong.app.service.StrictGuardPolicy
 import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
@@ -123,6 +124,7 @@ fun SuperModeScreen(padding: PaddingValues, navController: androidx.navigation.N
     val vm: SuperModeViewModel = viewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     var showPinEditor by remember { mutableStateOf(false) }
+    var showStrictOverlayRequired by remember { mutableStateOf(false) }
 
     // 从系统授权页返回时刷新权限状态
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -162,7 +164,13 @@ fun SuperModeScreen(padding: PaddingValues, navController: androidx.navigation.N
                 if (state.settings.superModeOn) {
                     StrictLevelSection(
                         strict = state.settings.superModeStrict,
-                        onSelect = { vm.setStrict(it) }
+                        onSelect = { strict ->
+                            if (StrictGuardPolicy.needsOverlayPrompt(strict, state.overlayAccess)) {
+                                showStrictOverlayRequired = true
+                            } else {
+                                vm.setStrict(strict)
+                            }
+                        }
                     )
                     OverlaySection(granted = state.overlayAccess)
 
@@ -190,6 +198,38 @@ fun SuperModeScreen(padding: PaddingValues, navController: androidx.navigation.N
                 vm.savePin(pin) { showPinEditor = false }
             },
             onDismiss = { showPinEditor = false }
+        )
+    }
+
+    if (showStrictOverlayRequired) {
+        val context = LocalContext.current
+        AlertDialog(
+            onDismissRequest = { showStrictOverlayRequired = false },
+            title = { Text("严格模式需要悬浮窗权限") },
+            text = {
+                Text(
+                    "严格锁定依赖全屏覆盖层阻止按 Home 键回到桌面。\n" +
+                        "没有「显示在其他应用上层」权限时，严格模式无法兑现“无法离开”的承诺。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showStrictOverlayRequired = false
+                        runCatching {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    android.net.Uri.parse("package:${context.packageName}")
+                                )
+                            )
+                        }
+                    }
+                ) { Text("去开启") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showStrictOverlayRequired = false }) { Text("取消") }
+            }
         )
     }
 }
@@ -281,7 +321,7 @@ private fun OverlaySection(granted: Boolean) {
     AppCard {
         Text(
             if (granted) "已授权 · 专注期间非白名单应用被全屏锁定层拦截。"
-            else "未授权 · 专注期间以 1 秒轮询拉回代替，体验较差。",
+            else "未授权 · 严格模式无法锁定 Home 键，请开启后再选严格模式。",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface
         )
@@ -292,7 +332,7 @@ private fun OverlaySection(granted: Boolean) {
                     "「显示在其他应用上层」生效中:专注期间对非白名单应用渲染全屏锁定层,直接拦截触摸,消除按 Home 键后的最大逃逸口。"
                 else
                     "开启「显示在其他应用上层」后,专注期间对非白名单应用渲染全屏锁定层直接拦截触摸;" +
-                        "未授权时回退为 1 秒轮询拉回方案(体验较差)。注意:覆盖层无法拦截下拉状态栏。",
+                        "未授权时,严格模式入口和开钟按钮都会先要求授权,不会假装已经锁定。注意:覆盖层无法拦截下拉状态栏。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
