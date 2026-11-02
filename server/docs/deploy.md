@@ -81,7 +81,7 @@ ADMIN_TOKEN=换成一段随机串
 | `PORT` | 由 compose 固定为 3000，无需修改 |
 | `CORS_ORIGINS` | 留空即可。App 是原生客户端不受同源策略限制；将来做 Web 管理端再填 |
 | `SMTP_*` | 找回密码用。留空时重置链接会降级输出到服务端日志，功能仍可用 |
-| `TRUST_PROXY` | compose 已固定为 `false`，不要改（见第七节） |
+| `TRUST_PROXY` | compose 已固定为 `false`，不要改（见第八节） |
 
 ## 五、启动服务
 
@@ -123,7 +123,47 @@ curl http://81.71.14.219:3000/healthz
 App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接登录即可；
 也可在「我的 → 云同步 → 服务器地址」手动覆盖。
 
-## 七、安全说明
+## 七、发布 App 更新（管理后台）
+
+发布只用 `/admin` 管理后台，不需要把 APK 拷到服务器，也不需要旧的一键发布脚本。
+
+1. **改版本号**：`YanZhong/app/build.gradle.kts` 中 `versionCode` 加 1，`versionName` 同步修改。
+2. **打 release 包**（签名与上次发布保持一致）：
+
+   ```powershell
+   cd F:\kaoyan-app-prd\YanZhong
+   .\gradlew.bat :app:assembleRelease '-Dorg.gradle.jvmargs=-Xmx1536m'
+   ```
+
+   产物：`app/build/outputs/apk/release/app-release.apk`。
+
+3. **上传**：浏览器打开 `http://81.71.14.219:3000/admin`，用 `ADMIN_TOKEN` 登录，
+   在「版本发布」选 APK、按需勾选「强制更新」、填写更新说明后上传。
+   服务端会直接从 APK 的 AndroidManifest 解析包名与版本，不读表单：
+   - 包名必须是 `com.yanzhong.app`，否则拒绝；
+   - `versionCode` 必须大于当前最新版本，否则拒绝；
+   - 上传带进度，成功后列表第一行标「最新」。
+
+4. **验证**：
+
+   ```bash
+   curl -s "http://81.71.14.219:3000/api/v1/app/latest?current=1"
+   # 期望 updateAvailable 为 true,并返回 latest.versionCode / downloadUrl / sha256
+   ```
+
+5. **客户端行为**：启动时自动检查；回到前台且距上次检查 ≥ 6 小时再检查；
+   「我的 → 检查更新」可手动触发。发现新版本弹更新框，下载完成后校验 SHA-256 再调起安装器。
+   非强制版本可「跳过此版本」，强制版本不能跳过。
+
+注意事项：
+
+- **签名必须与上一次发布一致**，否则已安装用户无法覆盖安装，只能卸载重装。
+- 从 debug 签名包（开发机直装）切到 release 签名包需要**一次性卸载重装**；
+  迁移完成后，后续版本都在应用内更新。
+- 上传的 APK 存放在 `releases-data` 卷，`docker compose down -v` 会连同数据库一起清空。
+- 安装未知来源应用需要用户授权，首次更新会在系统设置里引导开启。
+
+## 八、安全说明
 
 - `TRUST_PROXY` 必须保持 `false`。当前 API 直接暴露 3000 端口、前面没有反向代理，
   开启后攻击者可伪造 `X-Forwarded-For` 绕过登录限流并伪造来源 IP。
@@ -132,7 +172,7 @@ App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接�
 - `JWT_SECRET` 泄露等于任何人都能签发合法 token，务必用随机串且不要提交到仓库。
 - 密码存储为 bcrypt(12)，refresh token 仅存 SHA-256 并支持轮换吊销。
 
-## 八、切换到域名 + HTTPS
+## 九、切换到域名 + HTTPS
 
 上线前按 [Phase 0 执行清单](phase0-rollout-checklist.md) 记录旧镜像、备份与回滚负责人。
 以下命令在服务器上执行，`<域名>` 必须替换为实际 DNS 名称；需要服务器与域名管理权限，
@@ -157,7 +197,7 @@ App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接�
 切换失败时以清单中记录的旧镜像标签/ID 回滚 API，保留两个数据卷；数据库 schema 不兼容时
 先停止写入并评估恢复，不能将演练脚本指向生产库。
 
-## 九、运维
+## 十、运维
 
 | 事项 | 命令 |
 |---|---|
@@ -219,7 +259,7 @@ sudo /opt/kaoyan/server/scripts/restore-mysql-drill.sh /var/backups/yanzhong/mys
 sudo docker compose exec api npx prisma db push --accept-data-loss
 ```
 
-## 十、常见问题
+## 十一、常见问题
 
 **外部访问超时，服务器本机 curl 正常**
 安全组没放行 3000。见 2.2。
@@ -245,7 +285,7 @@ sudo docker compose exec api npx prisma db push --accept-data-loss
 **上传的 APK 重启后消失**
 `releases-data` 卷被 `down -v` 删掉了，或部署时用的旧 compose（没有挂该卷）。
 
-## 十一、本地开发
+## 十二、本地开发
 
 ```powershell
 cd f:\kaoyan-app-prd\server

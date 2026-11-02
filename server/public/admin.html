@@ -70,14 +70,21 @@
     <section id="tab-releases" style="display:none">
       <div class="card" style="margin-bottom:16px">
         <b style="font-size:14px">发布新版本</b>
+        <p class="muted" style="margin-top:6px;font-size:12px">
+          选择 release APK 即可，版本号从包内自动读取。请始终使用同一个发布签名，否则已安装用户无法覆盖升级。
+        </p>
         <div class="row" style="margin-top:12px">
-          <input id="vCode" type="number" placeholder="versionCode(必填)" style="width:150px">
-          <input id="vName" placeholder="versionName 如 1.0.2" style="width:170px">
+          <input type="file" id="vFile" accept=".apk">
           <input id="vForced" type="checkbox" style="width:16px"><label for="vForced" class="muted">强制更新</label>
         </div>
         <textarea id="vNotes" rows="2" placeholder="更新说明,每行一条"></textarea>
-        <input type="file" id="vFile" accept=".apk">
-        <div style="margin-top:12px"><button onclick="uploadRelease()">上传发布</button></div>
+        <div style="margin-top:12px">
+          <button id="vUploadBtn" onclick="uploadRelease()">上传发布</button>
+          <span id="vStatus" class="muted" style="margin-left:10px"></span>
+        </div>
+        <div id="vProgressWrap" style="display:none;margin-top:10px;height:6px;background:#12142a;border-radius:4px;overflow:hidden">
+          <div id="vProgress" style="height:100%;width:0;background:var(--pri);transition:width .2s"></div>
+        </div>
       </div>
       <table><thead><tr><th>版本</th><th>大小</th><th>说明</th><th>类型</th><th>发布时间</th><th></th></tr></thead>
       <tbody id="relRows"></tbody></table>
@@ -154,8 +161,9 @@ async function delUser(guid, name) {
 // ---- 版本 ----
 async function loadReleases() {
   const { releases } = await api('/admin/releases')
-  $('#relRows').innerHTML = releases.map(r => `<tr>
-    <td><b>${esc(r.versionName)}</b> <span class="muted">#${r.versionCode}</span></td>
+  $('#relRows').innerHTML = releases.map((r, i) => `<tr>
+    <td><b>${esc(r.versionName)}</b> <span class="muted">#${r.versionCode}</span>
+      ${i === 0 ? ' <span class="pill ok">最新</span>' : ''}</td>
     <td>${fmtMB(r.fileSize)}</td>
     <td><ul class="notes">${r.notes.map(n => '<li>' + esc(n) + '</li>').join('')}</ul></td>
     <td>${r.forced ? '<span class="pill forced">强更</span>' : '<span class="pill ok">普通</span>'}</td>
@@ -163,16 +171,51 @@ async function loadReleases() {
     <td><button class="danger" onclick="delRel(${r.versionCode},'${esc(r.versionName)}')">删除</button></td>
   </tr>`).join('') || '<tr><td colspan="6" class="muted">暂无发布版本</td></tr>'
 }
-async function uploadRelease() {
-  const code = Number($('#vCode').value), name = $('#vName').value.trim(),
-        notes = $('#vNotes').value.trim(), forced = $('#vForced').checked, file = $('#vFile').files[0]
-  if (!code || !name || !file) return toast('versionCode / versionName / APK 文件均必填')
-  const q = `?versionCode=${code}&versionName=${encodeURIComponent(name)}&forced=${forced}&notes=${encodeURIComponent(notes)}`
-  const r = await fetch(API + '/admin/app/upload' + q, {
-    method: 'PUT', headers: {'X-Admin-Token': ADMIN}, body: file,
-  })
-  if (r.ok) { toast(`已发布 ${name}`); $('#vCode').value = $('#vName').value = $('#vNotes').value = ''; $('#vFile').value = ''; loadReleases() }
-  else toast('发布失败: ' + ((await r.json()).message))
+function uploadRelease() {
+  const notes = $('#vNotes').value.trim(), forced = $('#vForced').checked, file = $('#vFile').files[0]
+  if (!file) return toast('请选择 APK 文件')
+  if (!/\.apk$/i.test(file.name)) return toast('请选择 .apk 文件')
+
+  const btn = $('#vUploadBtn'), status = $('#vStatus'), wrap = $('#vProgressWrap'), bar = $('#vProgress')
+  btn.disabled = true
+  status.textContent = '上传并解析中…'
+  wrap.style.display = ''
+  bar.style.width = '0'
+
+  const q = `?forced=${forced}&notes=${encodeURIComponent(notes)}`
+  const xhr = new XMLHttpRequest()
+  xhr.open('PUT', API + '/admin/app/upload' + q)
+  xhr.setRequestHeader('X-Admin-Token', ADMIN)
+  xhr.upload.onprogress = e => {
+    if (!e.lengthComputable) return
+    const p = Math.round(e.loaded * 100 / e.total)
+    bar.style.width = p + '%'
+    status.textContent = `上传中 ${p}%`
+  }
+  xhr.onload = () => {
+    btn.disabled = false
+    wrap.style.display = 'none'
+    let data = {}
+    try { data = JSON.parse(xhr.responseText || '{}') } catch {}
+    if (xhr.status === 201) {
+      status.textContent = `已发布 v${data.versionName} (#${data.versionCode})`
+      toast(`已发布 ${data.versionName}`)
+      $('#vFile').value = $('#vNotes').value = ''
+      $('#vForced').checked = false
+      loadReleases()
+      return
+    }
+    status.textContent = ''
+    if (xhr.status === 403) { logout(); return }
+    toast('发布失败: ' + (data.message || `HTTP ${xhr.status}`))
+  }
+  xhr.onerror = () => {
+    btn.disabled = false
+    wrap.style.display = 'none'
+    status.textContent = ''
+    toast('上传失败:网络错误')
+  }
+  xhr.send(file)
 }
 async function delRel(code, name) {
   if (!confirm(`删除版本「${name}」?APK 文件将一并移除`)) return

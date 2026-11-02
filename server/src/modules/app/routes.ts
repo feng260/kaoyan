@@ -7,13 +7,15 @@ import { prisma, num } from '../../shared/prisma'
 import { ApiError } from '../../middlewares/error'
 import { rateLimit } from '../../middlewares/ratelimit'
 import { env } from '../../config/env'
+import { parseApkMeta, validateRelease, parseBoolFlag } from './release'
 
 /**
  * 应用更新分发(自部署 OTA):
- * - POST /api/v1/admin/app/upload   管理员上传 APK(流式落盘 releases/) + 登记
+ * - PUT  /api/v1/admin/app/upload   管理员上传 APK(流式落临时文件 → 解析版本 → 登记)
  * - GET  /api/v1/app/latest?current=  最新版本(current < latest → updateAvailable)
  * - GET  /api/v1/app/download/:versionCode  APK 下载(支持 Range 断点续传)
  * 鉴权:管理员通过 X-Admin-Token(env ADMIN_TOKEN)上传;下载/检查公开。
+ * 版本号以 APK 内 AndroidManifest 为准,后台不再手填,避免与构建产物不一致。
  */
 const router = new Router({ prefix: '/api/v1' })
 
@@ -32,46 +34,60 @@ function adminGuard(ctx: any, next: () => Promise<any>) {
 /** 管理员上传:multipart 过于复杂,用原始流:PUT APK 二进制 + query 元数据 */
 router.put('/admin/app/upload', adminGuard, async ctx => {
   const q = z.object({
-    versionCode: z.coerce.number().int(),
-    versionName: z.string().min(1).max(32),
     notes: z.string().max(4000).optional().default(''),
-    forced: z.coerce.boolean().optional().default(false),
+    forced: z.preprocess(parseBoolFlag, z.boolean()),
   }).parse(ctx.query)
 
-  const exists = await prisma.appRelease.findUnique({ where: { versionCode: q.versionCode } })
-  if (exists) throw new ApiError(409, 'CONFLICT', `versionCode ${q.versionCode} 已存在`)
-
-  // 流式写盘:bodyparser 只处理 JSON content-type,二进制原样进入 ctx.req
-  const fileName = `yanzhong-v${q.versionCode}.apk`
-  const filePath = path.join(RELEASES_DIR, fileName)
-  const hash = crypto.createHash('sha256')
+  // 先落临时文件,解析并校验通过后再改名;校验失败不会留下半成品 APK
+  const tmpPath = path.join(
+    RELEASES_DIR,
+    `.upload-${process.pid}-${Date.now()}-${crypto.randomUUID()}.apk`
+  )
   let size = 0
-  await new Promise<void>((resolve, reject) => {
-    const out = fs.createWriteStream(filePath)
-    ctx.req.on('data', (chunk: Buffer) => { size += chunk.length; hash.update(chunk) })
-    ctx.req.pipe(out)
-    out.on('finish', () => resolve())
-    out.on('error', reject)
-    ctx.req.on('error', reject)
-  })
-  if (size < 1024) {
-    fs.rmSync(filePath, { force: true })
-    throw new ApiError(400, 'INVALID_PARAMS', '上传内容过小,不是有效 APK')
+  const hash = crypto.createHash('sha256')
+  try {
+    // 流式写盘:bodyparser 只处理 JSON content-type,二进制原样进入 ctx.req
+    await new Promise<void>((resolve, reject) => {
+      const out = fs.createWriteStream(tmpPath)
+      ctx.req.on('data', (chunk: Buffer) => { size += chunk.length; hash.update(chunk) })
+      ctx.req.pipe(out)
+      out.on('finish', () => resolve())
+      out.on('error', reject)
+      ctx.req.on('error', reject)
+    })
+    if (size < 1024) throw new ApiError(400, 'INVALID_PARAMS', '上传内容过小,不是有效 APK')
+
+    const meta = await parseApkMeta(tmpPath)
+    if (!meta) throw new ApiError(400, 'INVALID_PARAMS', '无法解析 APK,请确认文件完整')
+    const latest = await prisma.appRelease.findFirst({ orderBy: { versionCode: 'desc' } })
+    const invalid = validateRelease(meta, latest?.versionCode ?? null)
+    if (invalid) throw new ApiError(400, 'INVALID_PARAMS', invalid)
+
+    const fileName = `yanzhong-v${meta.versionCode}.apk`
+    await fs.promises.rename(tmpPath, path.join(RELEASES_DIR, fileName))
+    await prisma.appRelease.create({
+      data: {
+        versionCode: meta.versionCode,
+        versionName: meta.versionName,
+        fileName,
+        fileSize: BigInt(size),
+        sha256: hash.digest('hex'),
+        notes: q.notes,
+        forced: q.forced,
+        createdAt: Date.now(),
+      },
+    })
+    ctx.status = 201
+    ctx.body = {
+      versionCode: meta.versionCode,
+      versionName: meta.versionName,
+      packageName: meta.packageName,
+      fileSize: size,
+    }
+  } catch (e) {
+    fs.rmSync(tmpPath, { force: true })
+    throw e
   }
-  await prisma.appRelease.create({
-    data: {
-      versionCode: q.versionCode,
-      versionName: q.versionName,
-      fileName,
-      fileSize: BigInt(size),
-      sha256: hash.digest('hex'),
-      notes: q.notes,
-      forced: q.forced,
-      createdAt: Date.now(),
-    },
-  })
-  ctx.status = 201
-  ctx.body = { versionCode: q.versionCode, versionName: q.versionName, fileSize: size }
 })
 
 /** 最新版本检查(公开):current=客户端当前 versionCode */

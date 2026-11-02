@@ -3,6 +3,7 @@ package com.yanzhong.app.data.remote
 import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -11,6 +12,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 
 @Serializable
 data class LatestVersionDto(
@@ -39,9 +41,13 @@ object AppUpdater {
     val CURRENT_VERSION_CODE: Int get() = com.yanzhong.app.BuildConfig.VERSION_CODE
     val CURRENT_VERSION_NAME: String get() = com.yanzhong.app.BuildConfig.VERSION_NAME
 
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(60, TimeUnit.SECONDS)
+        .build()
 
-    suspend fun checkForUpdate(): UpdateCheckResp = withContext(Dispatchers.IO) {
+    /** 返回 null 表示网络/服务端异常,与「已是最新版本」区分开。 */
+    suspend fun checkForUpdate(): UpdateCheckResp? = withContext(Dispatchers.IO) {
         runCatching {
             val server = effectiveServerUrl()
             val req = Request.Builder()
@@ -49,12 +55,28 @@ object AppUpdater {
                 .get()
                 .build()
             client.newCall(req).execute().use { resp ->
-                if (resp.isSuccessful) {
-                    val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
-                    json.decodeFromString(UpdateCheckResp.serializer(), resp.body?.string() ?: "")
-                } else UpdateCheckResp()
+                if (!resp.isSuccessful) return@withContext null
+                val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+                json.decodeFromString(UpdateCheckResp.serializer(), resp.body?.string() ?: "")
             }
-        }.getOrDefault(UpdateCheckResp())
+        }.getOrNull()
+    }
+
+    /** Android 8+ 覆盖安装需要「安装未知应用」权限。 */
+    fun canInstall(context: Context): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+            context.packageManager.canRequestPackageInstalls()
+
+    fun openInstallPermissionSettings(context: Context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        runCatching {
+            context.startActivity(
+                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                    data = android.net.Uri.parse("package:${context.packageName}")
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            )
+        }
     }
 
     /**
@@ -67,6 +89,7 @@ object AppUpdater {
         onProgress: (Int) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
+            check(canInstall(context)) { "请先允许「研钟」安装未知应用" }
             val server = effectiveServerUrl()
             val dir = File(context.filesDir, "updates").apply { mkdirs() }
             val file = File(dir, "yanzhong-v${version.versionCode}.apk")
@@ -77,6 +100,7 @@ object AppUpdater {
                 val total = body.contentLength().coerceAtLeast(1)
                 val digest = MessageDigest.getInstance("SHA-256")
                 var read = 0L
+                var lastPct = -1
                 file.outputStream().use { out ->
                     val src = body.byteStream()
                     val buf = ByteArray(64 * 1024)
@@ -86,7 +110,11 @@ object AppUpdater {
                         out.write(buf, 0, n)
                         digest.update(buf, 0, n)
                         read += n
-                        onProgress((read * 100 / total).toInt().coerceIn(0, 100))
+                        val pct = (read * 100 / total).toInt().coerceIn(0, 100)
+                        if (pct != lastPct) {
+                            lastPct = pct
+                            withContext(Dispatchers.Main) { onProgress(pct) }
+                        }
                     }
                 }
                 check(read > 0) { "下载内容为空" }
@@ -108,18 +136,6 @@ object AppUpdater {
         }
         // Android 8+ 需要用户先在设置开启「安装未知应用」权限,此处调起会引导
         runCatching { context.startActivity(intent) }
-            .onFailure {
-                // 直接打开授权页兜底
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    runCatching {
-                        context.startActivity(
-                            Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
-                                data = android.net.Uri.parse("package:${context.packageName}")
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                        )
-                    }
-                }
-            }
+            .onFailure { openInstallPermissionSettings(context) }
     }
 }

@@ -39,10 +39,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -62,7 +59,6 @@ import com.yanzhong.app.ui.stats.StatsScreen
 import com.yanzhong.app.ui.theme.AppIcons
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
 import java.util.Locale
 
 object Routes {
@@ -132,71 +128,6 @@ fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
         currentRoute == Routes.PLAN_INTERVIEW || currentRoute == Routes.PLAN_DOCUMENT ||
         currentRoute?.startsWith("apppicker") == true
     val showNav = !deepPage && !(currentRoute == Routes.FOCUS && timerRunning)
-
-    // 应用内更新:启动时检查一次(需已配置服务器),有新版本弹窗 → 下载 → 调起安装
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val scope = rememberCoroutineScope()
-    var updateInfo by remember {
-        mutableStateOf<com.yanzhong.app.data.remote.LatestVersionDto?>(null)
-    }
-    var downloading by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableStateOf(0) }
-    androidx.compose.runtime.LaunchedEffect(Unit) {
-        val result = com.yanzhong.app.data.remote.AppUpdater.checkForUpdate()
-        if (result.updateAvailable) updateInfo = result.latest
-    }
-    updateInfo?.let { info ->
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { if (!info.forced && !downloading) updateInfo = null },
-            title = { Text("发现新版本 ${info.versionName}") },
-            text = {
-                androidx.compose.foundation.layout.Column {
-                    if (info.notes.isNotEmpty()) {
-                        info.notes.forEach { note ->
-                            Text("· $note", style = MaterialTheme.typography.bodyMedium)
-                        }
-                        androidx.compose.foundation.layout.Spacer(Modifier.height(4.dp))
-                    }
-                    if (downloading) {
-                        androidx.compose.material3.LinearProgressIndicator(
-                            progress = { downloadProgress / 100f },
-                            modifier = androidx.compose.ui.Modifier.fillMaxWidth()
-                        )
-                        Text(
-                            "下载中 $downloadProgress%",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            },
-                    confirmButton = {
-                androidx.compose.material3.TextButton(
-                    enabled = !downloading,
-                    onClick = {
-                        downloading = true
-                        scope.launch {
-                            val result = com.yanzhong.app.data.remote.AppUpdater
-                                .downloadAndInstall(context, info) { p -> downloadProgress = p }
-                            downloading = false
-                            result.onFailure { e ->
-                                android.widget.Toast.makeText(
-                                    context, "更新失败:${e.message}", android.widget.Toast.LENGTH_LONG
-                                ).show()
-                            }
-                        }
-                    }
-                ) { Text(if (downloading) "下载中…" else "立即更新") }
-            },
-            dismissButton = {
-                if (!info.forced && !downloading) {
-                    androidx.compose.material3.TextButton(onClick = { updateInfo = null }) {
-                        Text("稍后再说")
-                    }
-                }
-            }
-        )
-    }
 
     Box(Modifier.fillMaxSize()) {
     Row(Modifier.fillMaxSize()) {

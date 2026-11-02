@@ -36,6 +36,7 @@ import com.yanzhong.app.ui.nav.YanZhongAppRoot
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.BrandGradient
 import com.yanzhong.app.ui.theme.YanZhongTheme
+import com.yanzhong.app.ui.update.UpdateHost
 import kotlinx.coroutines.flow.map
 
 class MainActivity : ComponentActivity() {
@@ -69,6 +70,8 @@ class MainActivity : ComponentActivity() {
                         false -> LoginScreen()
                         else -> ProfileGate()
                     }
+                    // 更新检查必须盖在登录门之上:旧版本可能连登录都不可用,强更不能被卡在门外
+                    UpdateHost()
                     PasswordResetHost()
                 }
             }

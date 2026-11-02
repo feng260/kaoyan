@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -52,6 +53,8 @@ import com.yanzhong.app.BuildConfig
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.prefs.PomodoroPlan
 import com.yanzhong.app.data.prefs.ThemeMode
+import com.yanzhong.app.data.remote.UpdateCenter
+import com.yanzhong.app.data.remote.UpdateCheckResult
 import com.yanzhong.app.data.stats.LearningProfile
 import com.yanzhong.app.ui.legal.PolicyLinksRow
 import com.yanzhong.app.ui.nav.Routes
@@ -78,6 +81,7 @@ import com.yanzhong.app.ui.theme.SubjectCsColor
 import com.yanzhong.app.ui.theme.SwitchRow
 import com.yanzhong.app.ui.theme.TextAction
 import com.yanzhong.app.util.TimeUtils
+import kotlinx.coroutines.launch
 
 /**
  * 我的页:渐变头部卡(身份 / 科目 / 四项指标)+ 分组设置列表。
@@ -88,6 +92,8 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
     val vm: MineViewModel = viewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val updateScope = rememberCoroutineScope()
+    var checkingUpdate by remember { mutableStateOf(false) }
 
     var showSubjectEditor by remember { mutableStateOf(false) }
     var showSubjectBatch by remember { mutableStateOf(false) }
@@ -377,6 +383,26 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                             title = "研钟 YanZhong",
                             subtitle = "v${BuildConfig.VERSION_NAME} · 本地数据 · 零广告",
                             icon = AppIcons.Info
+                        )
+                        RowDivider()
+                        ListRow(
+                            title = "检查更新",
+                            subtitle = if (checkingUpdate) "正在检查…" else "当前版本 v${BuildConfig.VERSION_NAME}",
+                            icon = AppIcons.Download,
+                            enabled = !checkingUpdate,
+                            onClick = {
+                                checkingUpdate = true
+                                updateScope.launch {
+                                    when (UpdateCenter.check(manual = true, context = context)) {
+                                        UpdateCheckResult.UP_TO_DATE ->
+                                            Toast.makeText(context, "已是最新版本", Toast.LENGTH_SHORT).show()
+                                        UpdateCheckResult.FAILED ->
+                                            Toast.makeText(context, "检查失败，请稍后重试", Toast.LENGTH_SHORT).show()
+                                        else -> Unit
+                                    }
+                                    checkingUpdate = false
+                                }
+                            }
                         )
                         RowDivider()
                         PolicyLinksRow(prefix = "隐私与协议：")
