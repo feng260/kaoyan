@@ -3,7 +3,7 @@ import { ZodError } from 'zod'
 
 /** 统一错误响应与日志:业务错误抛 ApiError,未知错误 500 且不泄漏内部细节 */
 export class ApiError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(public status: number, public code: string, message: string, public details?: unknown) {
     super(message)
   }
 }
@@ -15,7 +15,11 @@ export function errorMiddleware() {
     } catch (err) {
       if (err instanceof ApiError) {
         ctx.status = err.status
-        ctx.body = { error: err.code, message: err.message }
+        ctx.body = {
+          error: err.code,
+          message: err.message,
+          ...(err.details === undefined ? {} : { details: err.details }),
+        }
       } else if (err instanceof ZodError) {
         ctx.status = 400
         ctx.body = { error: 'INVALID_PARAMS', message: '参数校验失败', details: err.errors.map(e => `${e.path.join('.')}: ${e.message}`) }

@@ -291,6 +291,7 @@ model PlanItem {
   sortOrder Int      @default(0)
   slot      String?  @db.VarChar(16) // morning/afternoon/evening:由编译器按空闲窗口给出
   startTime String?  @db.VarChar(5) // 建议开始时刻 HH:mm;App 按它排序并展示
+  locked    Boolean  @default(false) // 锁定后 AI 调整不得移动/改内容/删除;手工仍可改
 
   plan  Plan      @relation(fields: [planId], references: [id], onDelete: Cascade)
   stage PlanStage @relation(fields: [stageId], references: [id], onDelete: Cascade)
@@ -315,6 +316,11 @@ model PlanAdjustment {
   beforeJson  String?   @db.Text // 调整前窗口内计划项快照
   afterJson   String?   @db.Text // 调整后窗口内计划项快照(确认即落这份)
   fingerprint String    @db.VarChar(64) // 确认时校验窗口未被第三方改过
+  afterFingerprint  String? @db.VarChar(64) // 生效后指纹:撤销前比对是否又有手工修改
+  optionsJson       String? @db.MediumText // 多方案:全部方案的 after 与影响
+  selectedOption    String? @db.VarChar(32) // 用户选中的方案 id
+  profileBeforeJson String? @db.Text // 延迟写档案:确认前口径
+  profileAfterJson  String? @db.Text // 延迟写档案:确认后口径
   createdAt   DateTime  @default(now())
   appliedAt   DateTime?
   undoneAt    DateTime?

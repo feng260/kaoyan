@@ -99,6 +99,56 @@ test('validateL2:排进容量为 0 的日子 → 不通过', () => {
   assert.equal(validateL2(over, ledger).ok, false)
 })
 
+test('validateL2:conserve 总量差 2 分钟失败,差 1 分钟放行', () => {
+  const ledger = buildLedger(PENDING, CAPACITY, DAYS, SUBJECTS, [])
+  const offByTwo = [{ id: 1, subject: '数学', title: '线性代数', planDate: '2026-09-29', minutes: 118, status: 'pending' }]
+  assert.equal(validateL2(offByTwo, ledger, { mode: 'conserve' }).ok, false)
+  const offByOne = [{ id: 1, subject: '数学', title: '线性代数', planDate: '2026-09-29', minutes: 179, status: 'pending' }]
+  assert.equal(validateL2(offByOne, ledger, { mode: 'conserve' }).ok, true)
+})
+
+test('validateL2:add 模式总量必须等于原总量加新增', () => {
+  const ledger = buildLedger(PENDING, CAPACITY, DAYS, SUBJECTS, [])
+  const exact = [
+    { id: 1, subject: '数学', title: '线性代数', planDate: '2026-09-29', minutes: 180, status: 'pending' },
+    { id: 0, subject: '数学', title: '新增任务', planDate: '2026-10-01', minutes: 60, status: 'pending' },
+  ]
+  assert.equal(validateL2(exact, ledger, { mode: 'add', allowedDelta: 60 }).ok, true)
+  const over = [
+    { id: 1, subject: '数学', title: '线性代数', planDate: '2026-09-29', minutes: 180, status: 'pending' },
+    { id: 0, subject: '数学', title: '新增任务', planDate: '2026-10-01', minutes: 62, status: 'pending' },
+  ]
+  assert.equal(validateL2(over, ledger, { mode: 'add', allowedDelta: 60 }).ok, false)
+})
+
+test('validateL2:drop 模式只许减少,点名删除的项必须缺席', () => {
+  const ledger = buildLedger(PENDING, CAPACITY, DAYS, SUBJECTS, [])
+  const dropped = [{ id: 1, subject: '数学', title: '线性代数', planDate: '2026-09-29', minutes: 120, status: 'pending' }]
+  assert.equal(validateL2(dropped, ledger, { mode: 'drop', droppedIds: [2] }).ok, true)
+  const stillThere = [...dropped, { id: 2, subject: '英语', title: '阅读真题', planDate: '2026-10-01', minutes: 60, status: 'pending' }]
+  assert.equal(validateL2(stillThere, ledger, { mode: 'drop', droppedIds: [2] }).ok, false)
+})
+
+test('validateL2:scope 模式允许低于原总量', () => {
+  const ledger = buildLedger(PENDING, CAPACITY, DAYS, SUBJECTS, [])
+  const lowered = [{ id: 1, subject: '数学', title: '线性代数', planDate: '2026-09-29', minutes: 90, status: 'pending' }]
+  assert.equal(validateL2(lowered, ledger, { mode: 'scope' }).ok, true)
+})
+
+test('validateL2:锁定项出现在重排结果里即失败', () => {
+  const ledger = buildLedger(PENDING, CAPACITY, DAYS, SUBJECTS, [])
+  const locked: WindowSnapshotItem = {
+    id: 2, subject: '英语', title: '阅读真题', planDate: '2026-09-30', minutes: 60, status: 'pending', locked: true,
+  }
+  const target = [
+    { id: 1, subject: '数学', title: '线性代数', planDate: '2026-09-29', minutes: 120, status: 'pending' },
+    { id: 2, subject: '英语', title: '阅读真题', planDate: '2026-10-01', minutes: 60, status: 'pending' },
+  ]
+  const verdict = validateL2(target, ledger, { mode: 'conserve', locked: [locked] })
+  assert.equal(verdict.ok, false)
+  assert.match(verdict.reason!, /锁定任务「阅读真题」被改动/)
+})
+
 test('validateL2:里程碑不推迟;当日或之前允许', () => {
   const ledger = buildLedger(PENDING, CAPACITY, DAYS, SUBJECTS,
     [{ subject: '英语', date: '2026-09-29', name: '单词一轮' }])

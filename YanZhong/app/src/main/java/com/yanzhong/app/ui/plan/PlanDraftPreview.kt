@@ -4,6 +4,7 @@ import com.yanzhong.app.data.remote.AdjustmentDto
 import com.yanzhong.app.data.remote.DocBlockDto
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.remote.PlanItemDto
+import com.yanzhong.app.data.remote.PlanOverviewDto
 import java.time.LocalDate
 
 internal data class TodayItemDiff(val removed: List<PlanItemDto>, val added: List<PlanItemDto>)
@@ -40,8 +41,27 @@ private fun escapeHtml(value: String): String = buildString {
     }
 }
 
+/** 预算表一行要塞 5 列,长文案会把「里程碑前」挤出屏幕,这里用 22h30m 这种紧凑写法 */
+private fun formatMinutesShort(minutes: Int): String {
+    val safe = minutes.coerceAtLeast(0)
+    val hours = safe / 60
+    val rest = safe % 60
+    return when {
+        hours == 0 -> "${rest}m"
+        rest == 0 -> "${hours}h"
+        else -> "${hours}h${rest}"
+    }
+}
+
+private fun formatDeltaShort(minutes: Int): String = when {
+    minutes == 0 -> "持平"
+    minutes > 0 -> "+${formatMinutesShort(minutes)}"
+    else -> "-${formatMinutesShort(-minutes)}"
+}
+
 internal fun renderDraftHtml(draft: PlanDto, diff: TodayItemDiff, today: LocalDate,
-    activeCompared: Boolean = true, adjustment: AdjustmentDto? = null): String = buildString {
+    activeCompared: Boolean = true, adjustment: AdjustmentDto? = null,
+    overview: PlanOverviewDto? = null): String = buildString {
     fun text(value: String) = append(escapeHtml(value))
     fun itemList(items: List<PlanItemDto>, empty: String) {
         if (items.isEmpty()) { append("<p class='muted'>"); text(empty); append("</p>") }
@@ -58,12 +78,48 @@ internal fun renderDraftHtml(draft: PlanDto, diff: TodayItemDiff, today: LocalDa
         }
     }
     append("""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>
-:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f7f8f6;color:#22302a;font:14px/1.7 system-ui,sans-serif}main{max-width:700px;margin:auto;padding:20px 18px 48px}header{border-bottom:2px solid #213c35;padding:10px 0 20px}.eyebrow{font-size:11px;font-weight:700;color:#ae663c;letter-spacing:1px}h1{font-size:24px;line-height:1.35;margin:8px 0;overflow-wrap:anywhere}h2{font-size:17px;margin:28px 0 10px}h3{font-size:14px;margin:16px 0 6px}.muted,small{color:#68766f}.meta{font-size:12px;color:#68766f}section{border-bottom:1px solid #dce3dc;padding:4px 0 18px}.tasks{padding:0;margin:4px 0;list-style:none}.tasks li{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #e9ede8;align-items:baseline}.tasks strong{flex:none;color:#176458;font-size:12px}.tasks span{flex:1;overflow-wrap:anywhere}.tasks small{white-space:nowrap}.change{font-size:12px;font-weight:700;color:#ae663c;margin:12px 0 2px}.stage{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #e9ede8}.stage span{font-weight:600}.stage small{text-align:right}.block{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}.note{border-left:3px solid #176458;padding:6px 10px;background:#eaf1ec}.doccard{padding:10px 0;border-bottom:1px solid #e9ede8}.tablewrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:12px}td,th{border-bottom:1px solid #dce3dc;text-align:left;padding:7px;min-width:85px;vertical-align:top}
+:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f7f8f6;color:#22302a;font:14px/1.7 system-ui,sans-serif}main{max-width:700px;margin:auto;padding:20px 18px 48px}header{border-bottom:2px solid #213c35;padding:10px 0 20px}.eyebrow{font-size:11px;font-weight:700;color:#ae663c;letter-spacing:1px}h1{font-size:24px;line-height:1.35;margin:8px 0;overflow-wrap:anywhere}h2{font-size:17px;margin:28px 0 10px}h3{font-size:14px;margin:16px 0 6px}.muted,small{color:#68766f}.meta{font-size:12px;color:#68766f}section{border-bottom:1px solid #dce3dc;padding:4px 0 18px}.tasks{padding:0;margin:4px 0;list-style:none}.tasks li{display:flex;gap:8px;padding:8px 0;border-bottom:1px solid #e9ede8;align-items:baseline}.tasks strong{flex:none;color:#176458;font-size:12px}.tasks span{flex:1;overflow-wrap:anywhere}.tasks small{white-space:nowrap}.change{font-size:12px;font-weight:700;color:#ae663c;margin:12px 0 2px}.stage{display:flex;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:1px solid #e9ede8}.stage span{font-weight:600}.stage small{text-align:right}.block{white-space:pre-wrap;overflow-wrap:anywhere;margin:8px 0}.note{border-left:3px solid #176458;padding:6px 10px;background:#eaf1ec}.doccard{padding:10px 0;border-bottom:1px solid #e9ede8}.tablewrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:12px;table-layout:fixed}td,th{border-bottom:1px solid #dce3dc;text-align:left;padding:6px 4px;vertical-align:top;overflow-wrap:anywhere}
 </style></head><body><main><header><div class="eyebrow">DRAFT / 待确认</div><h1>""")
     text(draft.title)
     append("</h1><div class='meta'>")
     text("${draft.startDate} — ${draft.examDate} · 第 ${draft.version} 版")
-    append("</div></header><section><h2>今日任务变化</h2><p class='meta'>")
+    append("</div></header>")
+    overview?.let { ov ->
+        append("<section><h2>预算表</h2>")
+        ov.warnings.forEach { warning ->
+            append("<p class='note'>"); text(budgetWarningText(warning)); append("</p>")
+        }
+        append("<p class='meta'>")
+        text("已排 ${formatMinutesCn(ov.budget.scheduledMinutes)} · 目标 ${formatMinutesCn(ov.budget.targetMinutes)}" +
+            " · 有效容量 ${formatMinutesCn(ov.budget.effectiveCapacityMinutes)}")
+        append("</p>")
+        if (ov.budget.shortfallMinutes > 0) {
+            append("<p class='change'>缺口 ${formatMinutesCn(ov.budget.shortfallMinutes)}</p>")
+        }
+        if (ov.subjects.isNotEmpty()) {
+            append("<div class='tablewrap'><table><thead><tr><th>科目</th><th>已排</th><th>目标</th><th>差异</th><th>里程碑前</th></tr></thead><tbody>")
+            ov.subjects.forEach { subject ->
+                append("<tr><td>"); text(subject.name)
+                if (subject.estimated) { append("<br><small>估算</small>") }
+                append("</td><td>"); text(formatMinutesShort(subject.scheduledMinutes))
+                append("</td><td>"); text(formatMinutesShort(subject.targetMinutes))
+                append("</td><td>"); text(formatDeltaShort(subject.deltaMinutes))
+                append("</td><td>")
+                if (subject.milestoneMinutes > 0) {
+                    text("${formatMinutesShort(subject.beforeMilestoneMinutes)} / ${formatMinutesShort(subject.milestoneMinutes)}")
+                    if (subject.milestoneDate.isNotBlank()) {
+                        append("<br><small>"); text(subject.milestoneDate); append("</small>")
+                    }
+                } else {
+                    text("—")
+                }
+                append("</td></tr>")
+            }
+            append("</tbody></table></div>")
+        }
+        append("</section>")
+    }
+    append("<section><h2>今日任务变化</h2><p class='meta'>")
     text(today.toString())
     append(" · 确认后才会替换生效计划</p>")
     if (activeCompared) {

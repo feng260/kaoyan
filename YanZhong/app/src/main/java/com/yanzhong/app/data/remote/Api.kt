@@ -221,7 +221,9 @@ data class PlanItemDto(
     /** 服务端编译出的时段(morning/afternoon/evening),旧计划为 null */
     val slot: String? = null,
     /** 服务端编译出的开始时刻 HH:mm,客户端据此按时间轴展示与排序 */
-    val startTime: String? = null
+    val startTime: String? = null,
+    /** 锁定项不参与 AI 调整与自动重排;手工编辑仍可解锁后修改 */
+    val locked: Boolean = false
 )
 
 @Serializable
@@ -332,6 +334,211 @@ data class PlanHistoryResp(val plans: List<PlanSummaryDto> = emptyList(), val se
 /** 勾选/取消勾选计划项:服务端只认 pending / done 两个值 */
 @Serializable
 data class PlanItemStatusReq(val status: String)
+
+// ---------- 计划预算、生成口径与手工编辑 ----------
+//
+// 这一组与 server modules/planning/planBudget.ts 的响应字段一一对应。
+// 旧服务端没有这些路由/字段,所以全部给默认值:解析旧响应不报错,界面按空数据降级。
+
+/** 预算里的一个缺口:某科在里程碑前还差多少分钟 */
+@Serializable
+data class BudgetDeficitDto(
+    val subject: String = "",
+    val milestone: String = "",
+    val missingMinutes: Int = 0
+)
+
+/**
+ * 逐科预算。[budgetMinutes]/[milestoneBudgetMinutes] 来自 brief 的预算视图,
+ * [targetMinutes]/[scheduledMinutes]/[deltaMinutes]/[beforeMilestoneMinutes] 来自草案 overview,
+ * 两份响应共用同一个 DTO,缺的字段按默认值处理。
+ */
+@Serializable
+data class PlanBudgetSubjectDto(
+    val name: String = "",
+    val estimated: Boolean = false,
+    val remainingMinutes: Int = 0,
+    val budgetMinutes: Int = 0,
+    val milestone: String = "",
+    val milestoneDate: String = "",
+    val milestoneMinutes: Int = 0,
+    val milestoneBudgetMinutes: Int = 0,
+    val targetMinutes: Int = 0,
+    val scheduledMinutes: Int = 0,
+    val beforeMilestoneMinutes: Int = 0,
+    val deltaMinutes: Int = 0
+)
+
+/** 计划总预算:确认任务量、有效容量、目标量、缺口与逐科明细 */
+@Serializable
+data class PlanBudgetDto(
+    val capacityMinutes: Int = 0,
+    val effectiveCapacityMinutes: Int = 0,
+    val confirmedMinutes: Int = 0,
+    val estimatedMinutes: Int = 0,
+    val estimatedBudgetMinutes: Int = 0,
+    val targetMinutes: Int = 0,
+    val shortfallMinutes: Int = 0,
+    val scheduledMinutes: Int = 0,
+    val utilization: Double = 0.0,
+    val deficits: List<BudgetDeficitDto> = emptyList(),
+    val subjects: List<PlanBudgetSubjectDto> = emptyList(),
+    val warnings: List<String> = emptyList()
+)
+
+/** brief 里附带的档案摘要,确认页用来显示目标与考期 */
+@Serializable
+data class BriefProfileDto(
+    val targetType: String = "",
+    val examDate: String = "",
+    val foundation: String? = null,
+    val weakSubjects: List<String> = emptyList()
+)
+
+@Serializable
+data class WeekdayCapacityDto(val weekday: Int = 0, val minutes: Int = 0)
+
+/** GET /plans/brief:计划口径确认页的数据源(brief + 哈希 + 预算 + 每周容量) */
+@Serializable
+data class PlanBriefResp(
+    val brief: PlanBriefDto? = null,
+    val briefHash: String = "",
+    val profile: BriefProfileDto = BriefProfileDto(),
+    val budget: PlanBudgetDto = PlanBudgetDto(),
+    val capacityByWeekday: List<WeekdayCapacityDto> = emptyList(),
+    val warnings: List<String> = emptyList(),
+    val serverTime: Long = 0
+)
+
+/** 草案预算表里的一天负荷 */
+@Serializable
+data class PlanDayLoadDto(
+    val date: String = "",
+    val capacityMinutes: Int = 0,
+    val dayCapMinutes: Int = 0,
+    val scheduledMinutes: Int = 0,
+    val itemCount: Int = 0
+)
+
+@Serializable
+data class PlanStageLoadDto(
+    val name: String = "",
+    val startDate: String = "",
+    val endDate: String = "",
+    val targetMinutes: Int = 0,
+    val scheduledMinutes: Int = 0
+)
+
+@Serializable
+data class PlanWarningDto(
+    val code: String = "",
+    val message: String = "",
+    val date: String? = null,
+    val subject: String? = null
+)
+
+/** GET /plans/:id/overview:草案/生效计划的预算、逐日负荷、阶段目标与警告(服务端平铺返回) */
+@Serializable
+data class PlanOverviewDto(
+    val planId: Long = 0,
+    val title: String = "",
+    val version: Int = 1,
+    val startDate: String = "",
+    val examDate: String = "",
+    val status: String = "",
+    val budget: PlanBudgetDto = PlanBudgetDto(),
+    val subjects: List<PlanBudgetSubjectDto> = emptyList(),
+    val days: List<PlanDayLoadDto> = emptyList(),
+    val stages: List<PlanStageLoadDto> = emptyList(),
+    val warnings: List<PlanWarningDto> = emptyList(),
+    val horizonDays: Int = 0,
+    val serverTime: Long = 0
+)
+
+/** 一条调整方案的影响指标 */
+@Serializable
+data class AdjustmentImpactDto(
+    val affectedDays: Int = 0,
+    val movedCount: Int = 0,
+    val addedCount: Int = 0,
+    val removedCount: Int = 0,
+    val totalMinutesBefore: Int = 0,
+    val totalMinutesAfter: Int = 0,
+    val maxDayLoad: Int = 0,
+    val maxDayCapacity: Int = 0,
+    val shortfallMinutes: Int = 0,
+    val milestoneRiskCount: Int = 0,
+    val lockedKeptCount: Int = 0
+)
+
+/** 一个可选方案:id 为 compress/spill/drop/lower_target/manual */
+@Serializable
+data class AdjustmentOptionDto(
+    val id: String = "",
+    val label: String = "",
+    val summary: String = "",
+    val tier: String = "",
+    val impact: AdjustmentImpactDto = AdjustmentImpactDto(),
+    val changes: List<AdjustmentChangeDto> = emptyList()
+)
+
+/** 生成计划请求:带 briefHash 表示用户已确认口径;allowShortfall 只能与 hash 同时出现 */
+@Serializable
+data class GeneratePlanReq(
+    val briefHash: String? = null,
+    val allowShortfall: Boolean? = null
+)
+
+/** 手工改口径:逐科剩余量/里程碑/截止日/估算位 + 固定占用 */
+@Serializable
+data class BriefSubjectPatch(
+    val name: String,
+    val remainingMinutes: Int? = null,
+    val milestone: String? = null,
+    val milestoneDate: String? = null,
+    val milestoneMinutes: Int? = null,
+    val estimated: Boolean? = null,
+    val scope: String? = null,
+    val progress: String? = null
+)
+
+@Serializable
+data class PatchBriefReq(
+    val examSubjects: List<BriefSubjectPatch>? = null,
+    val fixedCommitments: List<BriefCommitmentDto>? = null
+)
+
+/** 手工编辑任务内容(status 勾选仍走 PlanItemStatusReq,两者不能混在一次请求里) */
+@Serializable
+data class PlanItemEditReq(
+    val status: String? = null,
+    val planDate: String? = null,
+    val minutes: Int? = null,
+    val title: String? = null,
+    val subject: String? = null,
+    val locked: Boolean? = null
+)
+
+@Serializable
+data class AddPlanItemReq(
+    val planId: Long? = null,
+    val subject: String,
+    val title: String,
+    val planDate: String,
+    val minutes: Int,
+    val locked: Boolean? = null
+)
+
+@Serializable
+data class PlanItemEditResp(
+    val plan: PlanDto? = null,
+    val item: PlanItemDto? = null,
+    val warnings: List<String> = emptyList(),
+    val serverTime: Long = 0
+)
+
+@Serializable
+data class SelectOptionReq(val optionId: String)
 
 /** POST /account/delete 的请求体：confirm 必须与用户名完全一致，password 是本人密码 */
 @Serializable
@@ -519,6 +726,10 @@ data class AdjustmentDto(
     val windowFrom: String = "",
     val windowTo: String = "",
     val changes: List<AdjustmentChangeDto> = emptyList(),
+    /** 多方案时服务端下发 2–4 条方案;单方案/旧服务端为 null */
+    val options: List<AdjustmentOptionDto>? = null,
+    /** 当前选中的方案 id;单方案时也指向那张调整单本身的方案 */
+    val selectedOption: String? = null,
     val createdAt: Long? = null,
     val appliedAt: Long? = null
 )
@@ -538,8 +749,15 @@ data class AdjustResp(
     val adjustment: AdjustmentDto? = null,
     val reply: String? = null,
     val plan: PlanDto? = null,
+    /** 追问时的可点选答案;点击后把 value 作为下一句发送 */
+    val clarifyOptions: List<ClarifyOptionDto>? = null,
+    /** lock_task 这类直接生效的意图为 true,无调整单也会改计划 */
+    val changedPlan: Boolean = false,
     val serverTime: Long = 0
 )
+
+@Serializable
+data class ClarifyOptionDto(val label: String = "", val value: String = "")
 
 @Serializable
 data class LatestAdjustmentResp(val adjustment: AdjustmentDto? = null, val serverTime: Long = 0)
@@ -556,6 +774,8 @@ data class CheckupResp(
     val behindMinutes: Long = 0,
     val overdueCount: Long = 0,
     val suggestion: String = "",
+    /** 可一键带进调整对话的预填话术;没有需要主动干预的问题时为 null */
+    val suggestedMessage: String? = null,
     val weekPlanDone: Long = 0,
     val weekPlanTotal: Long = 0,
     val weekFocusMinutes: Long = 0,
@@ -648,12 +868,21 @@ interface YanzhongApi {
     @PUT("api/v1/profile")
     suspend fun putProfile(@Body body: ProfileReq): ProfileResp
 
+    /** 生成前口径确认页:简报 + 口径哈希 + 预算 + 按星期容量 */
+    @GET("api/v1/plans/brief")
+    suspend fun getPlanBrief(): PlanBriefResp
+
+    /** 手工改口径(剩余量/里程碑/固定占用);计划生成中服务端会拒绝 */
+    @retrofit2.http.PATCH("api/v1/plans/brief")
+    suspend fun patchPlanBrief(@Body body: PatchBriefReq): PlanBriefResp
+
     /**
      * 依据当前档案生成待确认草稿；旧计划保持生效，直到调用 confirmPlan。
+     * [GeneratePlanReq.briefHash] 是用户看过口径的凭证,服务端不匹配会回 409 PLAN_BRIEF_CHANGED。
      * 该接口可能耗时一两分钟（含长文档生成），调用方请走 [ApiClient.aiApi]。
      */
     @POST("api/v1/plans/generate")
-    suspend fun generatePlan(): PlanResp
+    suspend fun generatePlan(@Body body: GeneratePlanReq = GeneratePlanReq()): PlanResp
 
     /**
      * 异步生成计划:立刻拿到 jobId,后台跑完整链路,进度经 WebSocket 的 planGeneration
@@ -661,10 +890,16 @@ interface YanzhongApi {
      * 调用方回退到同步的 [generatePlan]。
      */
     @POST("api/v1/plans/generate/jobs")
-    suspend fun startPlanGeneration(): PlanGenerationJobResp
+    suspend fun startPlanGeneration(
+        @Body body: GeneratePlanReq = GeneratePlanReq()
+    ): PlanGenerationJobResp
 
     @GET("api/v1/plans/generate/jobs/{id}")
     suspend fun getPlanGenerationJob(@Path("id") id: String): PlanGenerationStatusResp
+
+    /** 草案/生效计划的预算摘要:预算表、逐日负荷、阶段目标与警告(服务端平铺返回) */
+    @GET("api/v1/plans/{id}/overview")
+    suspend fun getPlanOverview(@Path("id") id: Long): PlanOverviewDto
 
     @POST("api/v1/plans/{id}/confirm")
     suspend fun confirmPlan(@Path("id") id: Long): PlanResp
@@ -688,6 +923,10 @@ interface YanzhongApi {
     @GET("api/v1/plans/active")
     suspend fun getActivePlan(): PlanResp
 
+    /** 取最近一份未确认草稿；生成任务过期/服务重启后用它恢复草稿预览 */
+    @GET("api/v1/plans/draft")
+    suspend fun getLatestDraft(): PlanResp
+
     /** 历史计划列表（含当前 active 与所有 archived），按版本从新到旧，只返回摘要 */
     @GET("api/v1/plans/history")
     suspend fun getPlanHistory(): PlanHistoryResp
@@ -695,6 +934,21 @@ interface YanzhongApi {
     /** 按 id 读取某一版计划的完整明细（含 stages/items），用于历史详情只读查看 */
     @GET("api/v1/plans/{id}")
     suspend fun getPlanById(@Path("id") id: Long): PlanResp
+
+    /** 手工编辑任务内容(日期/时长/标题/科目/锁定);成功返回最新 plan 与被改的那一项 */
+    @retrofit2.http.PATCH("api/v1/plans/items/{id}")
+    suspend fun editPlanItem(
+        @Path("id") id: Long,
+        @Body body: PlanItemEditReq
+    ): PlanItemEditResp
+
+    /** 手工新增任务;默认加到当前生效计划,也可指定 planId(草案) */
+    @POST("api/v1/plans/items")
+    suspend fun addPlanItem(@Body body: AddPlanItemReq): PlanItemEditResp
+
+    /** 删除未完成任务;done 项需要先取消勾选 */
+    @DELETE("api/v1/plans/items/{id}")
+    suspend fun deletePlanItem(@Path("id") id: Long): PlanResp
 
     /** 回写单个计划项的完成状态,成功返回整份最新计划(服务端会同步广播给同账号其它设备) */
     @retrofit2.http.PATCH("api/v1/plans/items/{id}")
@@ -733,6 +987,13 @@ interface YanzhongApi {
     /** 最近一张待确认/已生效的调整单(冷启动恢复卡片用) */
     @GET("api/v1/plans/adjustments/latest")
     suspend fun getLatestAdjustment(): LatestAdjustmentResp
+
+    /** 多方案调整:选中其中一条,服务端把 adjustment.changes 换成该方案的变动 */
+    @POST("api/v1/plans/adjustments/{id}/select")
+    suspend fun selectAdjustmentOption(
+        @Path("id") id: Long,
+        @Body body: SelectOptionReq
+    ): LatestAdjustmentResp
 
     @POST("api/v1/plans/adjustments/{id}/confirm")
     suspend fun confirmAdjustment(@Path("id") id: Long): PlanResp

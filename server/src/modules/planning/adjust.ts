@@ -18,6 +18,7 @@ export interface AdjustableItem {
   minutes: number
   priority: number
   sortOrder: number
+  locked?: boolean
 }
 
 /** 调整窗口快照:确认时用它做指纹比对,撤销时用它还原 */
@@ -28,6 +29,12 @@ export interface WindowSnapshotItem {
   planDate: string
   minutes: number
   status: string
+  locked?: boolean
+  startTime?: string | null
+  slot?: string | null
+  /** 方案引擎排序用;不入指纹、不影响同步内容 */
+  priority?: number
+  sortOrder?: number
 }
 
 /** L1 的单条挪动:只改 planDate,其余字段原样保留 */
@@ -45,10 +52,12 @@ export interface L1Result {
 
 export interface L1Input {
   pending: AdjustableItem[]
-  /** 每日剩余容量(已扣除当天 done 项),key 为 YYYY-MM-DD */
+  /** 每日剩余容量(已扣除当天 done 项与锁定项),key 为 YYYY-MM-DD */
   capacity: Map<string, number>
   windowFrom: string
   windowTo: string
+  /** 科目里程碑:原日期在里程碑之前的任务,不得被推到里程碑之后 */
+  milestones?: Array<{ subject: string; date: string }>
 }
 
 /** 给确认卡片看的单条变动 */
@@ -97,15 +106,19 @@ export function planL1Shuffle(input: L1Input): L1Result {
   const left = new Map(input.capacity)
   const moves: L1Move[] = []
   const overflow: AdjustableItem[] = []
+  const milestoneOf = new Map((input.milestones ?? []).map(item => [item.subject, item.date]))
   const ordered = [...input.pending].sort((a, b) =>
     a.planDate.localeCompare(b.planDate) || a.priority - b.priority
     || a.sortOrder - b.sortOrder || a.id - b.id)
   for (const item of ordered) {
     // 顺延不提前:最早只能落回它原本的日子(原本的日子已在窗口外时,从窗口头开始)
     const floor = item.planDate > input.windowFrom ? item.planDate : input.windowFrom
+    const milestone = milestoneOf.get(item.subject)
+    const ceiling = milestone && item.planDate <= milestone ? milestone : undefined
     let placed: string | null = null
     for (const day of days) {
       if (day < floor) continue
+      if (ceiling && day > ceiling) break
       if ((left.get(day) ?? 0) >= item.minutes) {
         left.set(day, (left.get(day) ?? 0) - item.minutes)
         placed = day
@@ -163,14 +176,37 @@ export function diffSnapshots(before: WindowSnapshotItem[], after: WindowSnapsho
 }
 
 /**
- * 窗口指纹:调整单生成时记一份,确认时重算比对 —— 不一致说明窗口被人动过,调整单作废(409 ADJUSTMENT_STALE)。
- * done 项不参与:打卡随时发生,不该让一张调整单因为正常打卡而全部失效。
+ * 调整窗口:未来 30 天 + 过去 30 天内落后的任务。
+ * 只覆盖当前阶段会让「落后到上一阶段」的任务永远修不了,这里放宽到滚动窗口。
  */
-export function windowFingerprint(items: WindowSnapshotItem[]): string {
+export function adjustWindow(input: {
+  planStart: string
+  examDate: string
+  today: string
+  unfinishedDates: string[]
+}): { from: string; to: string } | null {
+  const examLast = shiftDate(input.examDate, -1)
+  const futureLast = shiftDate(input.today, 29)
+  const to = examLast < futureLast ? examLast : futureLast
+  if (to < input.today) return null
+  const overdue = input.unfinishedDates
+    .filter(day => day >= shiftDate(input.today, -30) && day < input.today)
+    .sort()[0]
+  const start = overdue ?? input.today
+  const from = start > input.planStart ? start : input.planStart
+  return from <= to ? { from, to } : null
+}
+
+/**
+ * 窗口指纹:调整单生成时记一份,确认时重算比对 —— 不一致说明窗口被人动过,调整单作废(409 ADJUSTMENT_STALE)。
+ * 手工改标题/科目/锁定/时段也必须让旧单失效,否则确认时会把这些修改覆盖掉。
+ * done 的打卡不改变任务字段,所以正常打卡不会让调整单失效(指纹不含 status)。
+ */
+export function windowFingerprint(items: WindowSnapshotItem[], contextHash = ''): string {
   const payload = items
-    .filter(item => item.id > 0 && item.status !== 'done')
-    .map(item => `${item.id}:${item.planDate}:${item.minutes}`)
+    .filter(item => item.id > 0)
+    .map(item => `${item.id}:${item.planDate}:${item.minutes}:${item.subject}:${item.title}:${item.locked === true ? 1 : 0}:${item.startTime ?? ''}:${item.slot ?? ''}`)
     .sort()
     .join('|')
-  return createHash('sha256').update(payload).digest('hex')
+  return createHash('sha256').update(`${payload}|${contextHash}`).digest('hex')
 }

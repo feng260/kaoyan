@@ -24,6 +24,8 @@ export type PlanGenerationJob = {
   planId?: number
   /** 失败时的业务错误码与面向用户的错误信息 */
   error?: { code: string; message: string }
+  /** 从今天到考前的天数;客户端据此估算剩余时间(0 = 旧任务/未知) */
+  horizonDays: number
   createdAt: number
   updatedAt: number
 }
@@ -33,7 +35,7 @@ const JOB_TTL_MS = 30 * 60_000
 export class GenerationJobStore {
   private jobs = new Map<string, PlanGenerationJob>()
 
-  create(userGuid: string): PlanGenerationJob {
+  create(userGuid: string, horizonDays = 0): PlanGenerationJob {
     this.prune()
     const now = Date.now()
     const job: PlanGenerationJob = {
@@ -41,6 +43,7 @@ export class GenerationJobStore {
       userGuid,
       status: 'running',
       progress: { percent: 0, phase: 'skeleton', message: '任务已创建,等待开始' },
+      horizonDays: Math.max(0, Math.round(horizonDays)),
       createdAt: now,
       updatedAt: now,
     }

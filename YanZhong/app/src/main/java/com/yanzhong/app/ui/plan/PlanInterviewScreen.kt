@@ -23,9 +23,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -35,6 +37,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -55,6 +58,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import com.yanzhong.app.data.remote.InterviewMessageDto
 import com.yanzhong.app.data.remote.PlanBriefDto
 import com.yanzhong.app.data.remote.PlanDto
+import com.yanzhong.app.data.remote.PlanItemDto
 import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
@@ -79,10 +83,8 @@ fun PlanInterviewScreen(
     val vm: PlanInterviewViewModel = viewModel()
     val state by vm.state.collectAsStateWithLifecycle()
     var input by rememberSaveable { mutableStateOf("") }
-    // 体检卡的一句话建议只做预填,绝不覆盖考生已经输入的内容
-    LaunchedEffect(prefill) {
-        if (prefill.isNotBlank() && input.isBlank()) input = prefill
-    }
+    // 从体检卡/教练卡带来的话术自动发送一次;进程重启后存档里已有这轮提问,不会重复发
+    var prefillConsumed by rememberSaveable { mutableStateOf(false) }
     var fullscreen by rememberSaveable { mutableStateOf(false) }
     var adjustPreview by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -90,9 +92,19 @@ fun PlanInterviewScreen(
     val profileSaved by (entry?.savedStateHandle?.getStateFlow(Routes.EXTRA_PLAN_PROFILE_SAVED, false)
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }).collectAsStateWithLifecycle()
 
-    LaunchedEffect(profileSaved) {
-        vm.beginSession(profileJustSaved = profileSaved, forcedMode = parseModeIntent(mode))
+    LaunchedEffect(profileSaved, prefill) {
+        val pendingPrefill = prefill.takeIf { !prefillConsumed && it.isNotBlank() }.orEmpty()
+        vm.beginSession(profileJustSaved = profileSaved, forcedMode = parseModeIntent(mode),
+            prefill = pendingPrefill)
+        if (pendingPrefill.isNotBlank()) prefillConsumed = true
         if (profileSaved) entry?.savedStateHandle?.remove<Boolean>(Routes.EXTRA_PLAN_PROFILE_SAVED)
+    }
+    // 容量不足时选择「调整作息」:去档案页改每周空档与固定占用,回来再重新生成
+    LaunchedEffect(state.openSetupRequested) {
+        if (state.openSetupRequested) {
+            vm.consumeOpenSetup()
+            navController.navigate(Routes.planSetup(profileOnly = true))
+        }
     }
     LaunchedEffect(state.phase) {
         if (state.phase == InterviewPhase.SUCCESS) {
@@ -172,6 +184,16 @@ fun PlanInterviewScreen(
                     }
                     if (state.sending) item { TypingRow() }
                 }
+                if (state.clarifyOptions.isNotEmpty() && !state.busy && !adjustPreview) {
+                    ClarifyOptionsRow(
+                        options = state.clarifyOptions.map { it.label },
+                        onPick = { index ->
+                            val option = state.clarifyOptions[index]
+                            vm.send(option.value.ifBlank { option.label })
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                    )
+                }
                 state.adjustment?.let { adjustment ->
                     AdjustmentCard(
                         summary = adjustment.summary ?: "已按你的情况算好新排法",
@@ -180,6 +202,10 @@ fun PlanInterviewScreen(
                         confirming = state.confirming,
                         onConfirm = vm::confirmAdjustment,
                         onDismiss = vm::dismissAdjustmentCard,
+                        options = adjustment.options,
+                        selectedOption = adjustment.selectedOption,
+                        selecting = state.selectingOption,
+                        onSelectOption = vm::selectOption,
                         onPreview = if (adjustment.tier == "L2") ({ adjustPreview = true }) else null,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
                     )
@@ -190,6 +216,10 @@ fun PlanInterviewScreen(
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Column(Modifier.fillMaxWidth().padding(12.dp)) {
                             state.error?.let { ErrorRow(it, vm::retry, vm::dismissError) }
+                            if (state.mode == InterviewMode.ADJUST && !state.busy) {
+                                QuickAdjustmentsRow(onSend = vm::send)
+                                Spacer(Modifier.height(8.dp))
+                            }
                             if (state.done) {
                                 Surface(color = MaterialTheme.colorScheme.secondaryContainer,
                                     shape = RoundedCornerShape(12.dp),
@@ -205,8 +235,9 @@ fun PlanInterviewScreen(
                                 Spacer(Modifier.height(8.dp))
                                 PrimaryButton(
                                     text = if (state.generating) (state.progressMessage ?: "正在生成草稿…")
+                                    else if (state.briefLoading) "正在核对口径…"
                                     else "生成计划草稿",
-                                    onClick = vm::generate,
+                                    onClick = vm::requestGeneration,
                                     enabled = state.canGenerate
                                 )
                                 if (state.generating) {
@@ -216,12 +247,16 @@ fun PlanInterviewScreen(
                                         progress = { if (percent == null) 0f else percent / 100f },
                                         modifier = Modifier.fillMaxWidth()
                                     )
-                                    if (percent != null) {
-                                        Text("$percent% · 约需 1-3 分钟，可先退出，回来还能继续看进度",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(top = 4.dp))
-                                    }
+                                    val elapsed = formatElapsed(state.elapsedSeconds)
+                                    val eta = state.etaMinutes?.let { "预计 ${it.first}–${it.last} 分钟" }
+                                        ?: "预计 8–30 分钟"
+                                    Text(
+                                        (percent?.let { "$it% · " } ?: "") +
+                                            "已用 $elapsed · $eta · 可先退出，回来还能继续看进度",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    )
                                 }
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -244,10 +279,11 @@ fun PlanInterviewScreen(
                 if (draft != null) {
                     val today = LocalDate.now()
                     val diff = remember(draft, state.activePlan, today) { compareTodayItems(draft, state.activePlan, today) }
-                    val html = remember(draft, diff, today, state.activeCompared) {
-                        renderDraftHtml(draft, diff, today, state.activeCompared)
+                    val html = remember(draft, diff, today, state.activeCompared, state.draftOverview) {
+                        renderDraftHtml(draft, diff, today, state.activeCompared, overview = state.draftOverview)
                     }
                     DraftContent(draft, diff, html, fullscreen, state.activeCompared,
+                        overview = state.draftOverview,
                         estimatedSubjects = state.brief?.examSubjects?.filter { it.estimated }?.map { it.name }.orEmpty(),
                         onFullscreen = { fullscreen = !fullscreen },
                         onConfirm = vm::confirm, onChat = { fullscreen = false; vm.backToChat() },
@@ -266,7 +302,112 @@ fun PlanInterviewScreen(
                 onBack = { navController.popBackStack() },
             )
         }
+        state.briefResp?.takeIf { state.showBriefSheet }?.let { resp ->
+            PlanBriefSheet(
+                resp = resp,
+                saving = state.briefLoading,
+                onConfirm = vm::confirmBrief,
+                onDismiss = vm::dismissBriefSheet
+            )
+        }
+        if (state.showCapacityDialog) {
+            state.capacityIssue?.let { issue ->
+                CapacityOptionsDialog(
+                    issue = issue,
+                    onChoose = vm::chooseCapacity,
+                    onDismiss = vm::dismissCapacityDialog
+                )
+            }
+        }
+        state.lockedConflict?.let { message ->
+            LockedConflictDialog(
+                message = message,
+                lockedItems = state.activePlan?.items?.filter { it.locked && it.status != "done" }.orEmpty(),
+                onGoUnlock = {
+                    vm.dismissLockedConflict()
+                    navController.navigate(Routes.PLAN) {
+                        launchSingleTop = true
+                        popUpTo(Routes.HOME) { saveState = true }
+                        restoreState = true
+                    }
+                },
+                onDismiss = vm::dismissLockedConflict
+            )
+        }
     }
+}
+
+/** 常用一句话:横向滚动,点一下直接发出去 */
+@Composable
+private fun QuickAdjustmentsRow(onSend: (String) -> Unit) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 2.dp)
+    ) {
+        items(QUICK_ADJUSTMENTS.size) { index ->
+            OptionChip(text = QUICK_ADJUSTMENTS[index], onClick = { onSend(QUICK_ADJUSTMENTS[index]) })
+        }
+    }
+}
+
+/** 服务端追问时给出的可点选答案 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ClarifyOptionsRow(options: List<String>, onPick: (Int) -> Unit, modifier: Modifier = Modifier) {
+    FlowRow(modifier, horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        options.forEachIndexed { index, label ->
+            OptionChip(text = label, onClick = { onPick(index) })
+        }
+    }
+}
+
+/** 锁定冲突:列出被锁任务,先去计划页解锁再回来重排 */
+@Composable
+private fun LockedConflictDialog(
+    message: String,
+    lockedItems: List<PlanItemDto>,
+    onGoUnlock: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("有锁定任务挡住了这次调整") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(message, style = MaterialTheme.typography.bodyMedium)
+                if (lockedItems.isNotEmpty()) {
+                    Text(
+                        "当前锁定的任务",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    lockedItems.take(6).forEach { item ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                AppIcons.Lock,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "${item.planDate.takeLast(5)} · ${item.subject} · ${item.title}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                    Text(
+                        "到计划页点开任务即可解锁，然后再回来说一次。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onGoUnlock) { Text("去计划页解锁") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("知道了") } }
+    )
 }
 
 /** 入口声明的模式意图:空串表示「没指定」,交回面谈页按有没有生效计划自行判断 */
@@ -498,6 +639,7 @@ private fun QuickAnswers(options: List<String>, enabled: Boolean, onOption: (Str
 @Composable
 private fun ColumnScope.DraftContent(
     draft: PlanDto, diff: TodayItemDiff, html: String, fullscreen: Boolean, activeCompared: Boolean,
+    overview: com.yanzhong.app.data.remote.PlanOverviewDto?,
     estimatedSubjects: List<String>,
     onFullscreen: () -> Unit, onConfirm: () -> Unit, onChat: () -> Unit,
     onProfile: () -> Unit, onRetry: () -> Unit, onDismiss: () -> Unit,
@@ -516,6 +658,10 @@ private fun ColumnScope.DraftContent(
                 else "当前计划读取失败，无法对比今日移除项", style = MaterialTheme.typography.bodySmall)
             if (activeCompared && diff.removed.isNotEmpty()) Text("移除：${diff.removed.joinToString("、") { it.title }}", style = MaterialTheme.typography.bodySmall)
             if (diff.added.isNotEmpty()) Text("新增：${diff.added.joinToString("、") { it.title }}", style = MaterialTheme.typography.bodySmall)
+            overview?.let {
+                Spacer(Modifier.height(10.dp))
+                PlanBudgetTable(budget = it.budget, subjects = it.subjects, warnings = it.warnings)
+            }
         }
     }
     DraftWebView(html, Modifier.weight(1f).fillMaxWidth())

@@ -160,7 +160,7 @@ test('上周没有专注时用开始积累的文案', () => {
 
 test('emptyCheckup 返回完整零值', () => {
   assert.deepEqual(emptyCheckup(), {
-    behindMinutes: 0, overdueCount: 0, suggestion: '',
+    behindMinutes: 0, overdueCount: 0, suggestion: '', suggestedMessage: null,
     weekPlanDone: 0, weekPlanTotal: 0, weekFocusMinutes: 0,
     lastWeekFocusMinutes: 0, weekActiveDays: 0,
     next7dPlannedMinutes: 0, next7dCapacityMinutes: 0, overloadedDays: [],

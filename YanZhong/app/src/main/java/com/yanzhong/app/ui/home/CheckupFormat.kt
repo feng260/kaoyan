@@ -37,12 +37,13 @@ object CheckupFormat {
         return if (diff > 0) "专注比上周多 $pct%" else "专注比上周少 $pct%"
     }
 
-    /** 面谈预填:第一人称、说清楚现状和诉求,用户点开就能直接发送 */
-    fun adjustPrefill(c: CheckupResp): String = when {
-        c.overdueCount > 0 ->
-            "我最近有 ${c.overdueCount} 项计划没完成（共 ${c.behindMinutes} 分钟），帮我重新安排到接下来的空闲时间，别把每天排太满。"
-        c.overloadedDays.isNotEmpty() ->
-            "未来 7 天有 ${c.overloadedDays.size} 天超出可用时间，帮我减压并重新分配。"
-        else -> "帮我看看未来一周的计划是否合理，需要的话微调。"
-    }
+    /** 面谈预填:优先用服务端算好的话术,缺失时才按本地规则兜底 */
+    fun adjustPrefill(c: CheckupResp): String =
+        c.suggestedMessage?.takeIf { it.isNotBlank() } ?: when {
+            c.overdueCount > 0 ->
+                "我最近有 ${c.overdueCount} 项计划没完成（共 ${c.behindMinutes} 分钟），帮我重新安排到接下来的空闲时间，别把每天排太满。"
+            c.overloadedDays.isNotEmpty() ->
+                "未来 7 天有 ${c.overloadedDays.size} 天超出可用时间，帮我减压并重新分配。"
+            else -> "帮我看看未来一周的计划是否合理，需要的话微调。"
+        }
 }

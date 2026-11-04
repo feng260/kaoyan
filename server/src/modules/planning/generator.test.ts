@@ -2,6 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateRulePlan, PlanGenerationError, type PlanningInput } from './generator'
 import { expandStage } from './aiGenerator'
+import { buildPlanBudget } from './planBudget'
+import { EMPTY_BRIEF, type PlanBrief } from './document'
 
 const DAY = 24 * 3600_000
 
@@ -307,4 +309,29 @@ test('days the variant forgot are backfilled by rotating through the variant', (
   })
   assert.equal(byDay.size, 7)
   assert.equal(items.reduce((sum, item) => sum + item.minutes, 0), 60 + 60 + 120 * 5)
+})
+
+test('预算版:400 天也不超发,总量围绕考生确认的 3000 分钟', () => {
+  const start = dayStart(0)
+  const exam = dayStart(400)
+  const availability = weekAvailability([{ start: '09:00', end: '13:00' }])
+  const brief: PlanBrief = {
+    ...EMPTY_BRIEF,
+    examSubjects: [
+      { name: '数学', progress: '一轮', scope: '高数', remainingMinutes: 2000, milestone: '', milestoneDate: '', milestoneMinutes: 0, estimated: false },
+      { name: '英语', progress: '一轮', scope: '阅读', remainingMinutes: 1000, milestone: '', milestoneDate: '', milestoneMinutes: 0, estimated: false },
+    ],
+    availability,
+    availabilityConfirmed: true,
+    commitmentsConfirmed: true,
+  }
+  const budget = buildPlanBudget(brief, start, exam)
+  const plan = generateRulePlan(input({ startDate: start, examDate: exam, availability, budget, weakSubjects: ['数学', '英语'] }))
+  const study = plan.items.filter(item => item.subject !== '复盘').reduce((sum, item) => sum + item.minutes, 0)
+  const review = plan.items.filter(item => item.subject === '复盘').reduce((sum, item) => sum + item.minutes, 0)
+  assert.ok(study >= 3000 - 15, `确认任务应覆盖目标,实际 ${study}`)
+  assert.ok(study <= 3150, `非复盘总量应受 105% 上限约束,实际 ${study}`)
+  assert.ok(review <= 300, `复盘不应超过目标 10%,实际 ${review}`)
+  assert.equal(plan.items.length > 0, true)
+  assertItemsInsideStages(plan, exam)
 })

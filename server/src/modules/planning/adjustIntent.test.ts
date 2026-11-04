@@ -199,3 +199,91 @@ test('矫正:模型把「整段下午没空」误归 unavailable → 按课表�
   assert.equal(wholeDay.kind, 'unavailable')
   assert.deepEqual(wholeDay.days, ['2026-10-08'])
 })
+
+test('move_task:任务引用归一化,缺 targetDate 先追问', () => {
+  const moved = normalizeAdjustIntent({
+    kind: 'move_task',
+    tasks: [{ subject: '数学', title: '线性代数', date: '2026-09-30', targetDate: '2026-10-02' }],
+  }, input)
+  assert.equal(moved.kind, 'move_task')
+  assert.equal(moved.needClarify, false)
+  assert.deepEqual(moved.tasks, [{ subject: '数学', title: '线性代数', date: '2026-09-30', targetDate: '2026-10-02' }])
+
+  const missingTarget = normalizeAdjustIntent({
+    kind: 'move_task',
+    tasks: [{ subject: '数学', title: '线性代数' }],
+  }, input)
+  assert.equal(missingTarget.kind, 'move_task')
+  assert.equal(missingTarget.needClarify, true)
+  assert.match(missingTarget.clarifyQuestion, /挪到哪天/)
+})
+
+test('add_task:缺日期或时长先追问;字段齐全则归一化', () => {
+  const ok = normalizeAdjustIntent({
+    kind: 'add_task',
+    newTasks: [{ subject: '英语', title: '阅读两篇', date: '2026-10-01', minutes: 45 }],
+  }, input)
+  assert.equal(ok.kind, 'add_task')
+  assert.equal(ok.needClarify, false)
+  assert.deepEqual(ok.newTasks, [{ subject: '英语', title: '阅读两篇', date: '2026-10-01', minutes: 45 }])
+
+  const missing = normalizeAdjustIntent({
+    kind: 'add_task',
+    newTasks: [{ subject: '英语', title: '阅读两篇', date: '2026-10-01', minutes: 0 }],
+  }, input)
+  assert.equal(missing.kind, 'add_task')
+  assert.equal(missing.needClarify, true)
+  assert.match(missing.clarifyQuestion, /哪一天|多久/)
+})
+
+test('drop_task/lock_task:没有任务引用先追问', () => {
+  const dropEmpty = normalizeAdjustIntent({ kind: 'drop_task' }, input)
+  assert.equal(dropEmpty.needClarify, true)
+  assert.match(dropEmpty.clarifyQuestion, /删掉哪一条/)
+  const lockEmpty = normalizeAdjustIntent({ kind: 'lock_task' }, input)
+  assert.equal(lockEmpty.needClarify, true)
+  assert.match(lockEmpty.clarifyQuestion, /锁定哪一条/)
+
+  const lock = normalizeAdjustIntent({
+    kind: 'lock_task',
+    tasks: [{ subject: '数学', title: '线性代数', date: '2026-09-30' }],
+  }, input)
+  assert.equal(lock.needClarify, false)
+  assert.equal(lock.tasks[0].title, '线性代数')
+})
+
+test('adjust_scope:缺少任何数值/日期目标时追问', () => {
+  const empty = normalizeAdjustIntent({
+    kind: 'adjust_scope',
+    scope: [{ subject: '数学' }],
+  }, input)
+  assert.equal(empty.needClarify, true)
+  assert.match(empty.clarifyQuestion, /目标调成多少/)
+
+  const ok = normalizeAdjustIntent({
+    kind: 'adjust_scope',
+    scope: [{ subject: '数学', remainingMinutes: 1200, milestoneDate: '2026-10-03' }],
+  }, input)
+  assert.equal(ok.needClarify, false)
+  assert.equal(ok.scope[0].remainingMinutes, 1200)
+  assert.equal(ok.scope[0].milestoneDate, '2026-10-03')
+})
+
+test('日期超出窗口的任务引用 → 先追问', () => {
+  const intent = normalizeAdjustIntent({
+    kind: 'move_task',
+    tasks: [{ subject: '数学', title: '线性代数', date: '2026-09-30', targetDate: '2026-10-20' }],
+  }, input)
+  assert.equal(intent.needClarify, true)
+})
+
+test('clarifyOptions 原样保留并最多 4 个', () => {
+  const intent = normalizeAdjustIntent({
+    kind: 'chat', needClarify: true,
+    clarifyOptions: [
+      { label: 'A', value: 'a' }, { label: 'B', value: 'b' },
+      { label: 'C', value: 'c' }, { label: 'D', value: 'd' }, { label: 'E', value: 'e' },
+    ],
+  }, input)
+  assert.deepEqual(intent.clarifyOptions.map(option => option.label), ['A', 'B', 'C', 'D'])
+})

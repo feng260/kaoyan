@@ -11,8 +11,68 @@ import { normalizeTzOffset, shouldNotifyPlanReminder } from './checkup'
 
 const router = new Router({ prefix: '/api/v1' })
 
-const itemStatusSchema = z.object({
-  status: z.enum(PLAN_ITEM_STATUSES),
+/**
+ * 客户端(Kotlin explicitNulls)会把未填字段显式发成 null。
+ * 在这些接口里 null 与「没传」等价,所以统一用 nullish 接收,再在入库前剔除 null。
+ */
+type DropNull<T extends object> = {
+  [K in keyof T as undefined extends T[K] ? never : K]: Exclude<T[K], null>
+} & {
+  [K in keyof T as undefined extends T[K] ? K : never]?: Exclude<T[K], null>
+}
+
+function dropNulls<T extends object>(input: T): DropNull<T> {
+  const out: Record<string, unknown> = {}
+  for (const [key, value] of Object.entries(input)) {
+    if (value !== null && value !== undefined) out[key] = value
+  }
+  return out as DropNull<T>
+}
+
+/** 计划项手工编辑:status 与内容字段二选一,混用由 service 拒绝;字段范围与 service 校验保持一致 */
+const planItemPatchSchema = z.object({
+  status: z.enum(PLAN_ITEM_STATUSES).nullish(),
+  planDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  minutes: z.number().int().min(5).max(480).nullish(),
+  title: z.string().trim().min(1).max(64).nullish(),
+  subject: z.string().trim().min(1).max(32).nullish(),
+  locked: z.boolean().nullish(),
+})
+
+const planItemCreateSchema = z.object({
+  planId: z.number().int().positive().nullish(),
+  subject: z.string().trim().min(1).max(32),
+  title: z.string().trim().min(1).max(64),
+  planDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  minutes: z.number().int().min(5).max(480),
+  locked: z.boolean().nullish(),
+})
+
+/** 生成请求可带客户端确认过的口径哈希;allowShortfall 表示用户明确选择「尽力而为」 */
+const generateSchema = z.object({
+  briefHash: z.string().length(64).nullish(),
+  allowShortfall: z.boolean().nullish(),
+}).optional()
+
+/** 口径手工修改:逐科剩余量/里程碑与每周固定占用 */
+const briefPatchSchema = z.object({
+  examSubjects: z.array(z.object({
+    name: z.string().trim().min(1).max(32),
+    remainingMinutes: z.number().int().min(0).max(500000).nullish(),
+    milestone: z.string().max(64).nullish(),
+    // 空串表示「清掉截止日」,和未填一样按不修改处理
+    milestoneDate: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal('')]).nullish(),
+    milestoneMinutes: z.number().int().min(0).max(500000).nullish(),
+    estimated: z.boolean().nullish(),
+    scope: z.string().max(500).nullish(),
+    progress: z.string().max(500).nullish(),
+  })).max(20).nullish(),
+  fixedCommitments: z.array(z.object({
+    weekday: z.number().int().min(1).max(7),
+    start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    label: z.string().trim().min(1).max(32),
+  })).max(40).nullish(),
 })
 
 const interviewSchema = z.object({
@@ -82,9 +142,37 @@ router.put('/profile', requireAuth, apiLimit(), async ctx => {
   ctx.body = { profile, serverTime: Date.now() }
 })
 
+/** 计划口径:确认页读取简报、预算与每周容量;生成请求带 briefHash 回来证明用户看过这份口径 */
+router.get('/plans/brief', requireAuth, async ctx => {
+  ctx.body = { ...await planningService.getBrief(ctx.state.auth!.userGuid), serverTime: Date.now() }
+})
+
+/** 手工改口径:逐科剩余量/里程碑与每周固定占用;计划生成中禁止修改 */
+router.patch('/plans/brief', requireAuth, apiLimit(), async ctx => {
+  const parsed = briefPatchSchema.safeParse(ctx.request.body ?? {})
+  if (!parsed.success) {
+    throw new ApiError(400, 'INVALID_PARAMS', '计划口径参数不合法', {
+      fields: parsed.error.issues.map(issue => ({ field: issue.path.join('.'), message: issue.message })),
+    })
+  }
+  const normalized = dropNulls(parsed.data)
+  const examSubjects = normalized.examSubjects?.map(subject => {
+    const item = dropNulls(subject)
+    if (item.milestoneDate === '') delete item.milestoneDate
+    return item
+  })
+  const result = await planningService.patchBrief(ctx.state.auth!.userGuid, {
+    ...normalized,
+    examSubjects,
+  })
+  ctx.body = { ...result, serverTime: Date.now() }
+})
+
 /** 生成计划:同一档案重复调用是幂等的(内容一致),但会产出新版本并归档旧版本 */
 router.post('/plans/generate', requireAuth, apiLimit(), async ctx => {
-  const plan = await planningService.generatePlanDraft(ctx.state.auth!.userGuid)
+  const parsed = generateSchema.safeParse(ctx.request.body ?? {})
+  if (!parsed.success) throw new ApiError(400, 'INVALID_PARAMS', '生成参数不合法')
+  const plan = await planningService.generatePlanDraft(ctx.state.auth!.userGuid, dropNulls(parsed.data ?? {}))
   ctx.status = 201
   ctx.body = { plan, serverTime: Date.now() }
 })
@@ -97,10 +185,12 @@ router.post('/plans/generate', requireAuth, apiLimit(), async ctx => {
 router.post('/plans/generate/jobs', requireAuth, apiLimit(), async ctx => {
   const userGuid = ctx.state.auth!.userGuid
   const deviceId = ctx.state.auth!.deviceId
-  const { jobId, job } = planningService.startGeneration(userGuid, updated => {
+  const parsed = generateSchema.safeParse(ctx.request.body ?? {})
+  if (!parsed.success) throw new ApiError(400, 'INVALID_PARAMS', '生成参数不合法')
+  const { jobId, job } = await planningService.startGeneration(userGuid, updated => {
     hub.sendToUser(userGuid, { type: 'planGeneration', job: updated, serverTime: Date.now() }, deviceId)
     if (updated.status === 'done') notifyPlanChanged(userGuid, deviceId)
-  })
+  }, dropNulls(parsed.data ?? {}))
   ctx.status = 202
   ctx.body = { jobId, job, serverTime: Date.now() }
 })
@@ -174,6 +264,8 @@ router.post('/plans/adjust', requireAuth, apiLimit(), async ctx => {
     message: parsed.data.message,
     history: parsed.data.history,
   })
+  // lock_task 是确认前唯一会直接改计划的意图;调整单本身不广播,等确认
+  if (result.changedPlan) notifyPlanChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)
   ctx.body = { ...result, serverTime: Date.now() }
 })
 
@@ -190,6 +282,15 @@ router.get('/plans/checkup', requireAuth, async ctx => {
   const checkup = await planningService.checkup(ctx.state.auth!.userGuid, { tzOffset })
   if (notify) void maybeNotifyPlanReminder(ctx.state.auth!.userGuid)
   ctx.body = { ...checkup, serverTime: Date.now() }
+})
+
+router.post('/plans/adjustments/:id/select', requireAuth, apiLimit(), async ctx => {
+  const id = Number(ctx.params.id)
+  if (!Number.isInteger(id) || id <= 0) throw new ApiError(400, 'INVALID_PARAMS', '调整单 id 不合法')
+  const parsed = z.object({ optionId: z.string().min(1).max(32) }).safeParse(ctx.request.body ?? {})
+  if (!parsed.success) throw new ApiError(400, 'INVALID_PARAMS', '请选择一个调整方案')
+  const adjustment = await planningService.selectAdjustmentOption(ctx.state.auth!.userGuid, id, parsed.data.optionId)
+  ctx.body = { adjustment, serverTime: Date.now() }
 })
 
 router.post('/plans/adjustments/:id/confirm', requireAuth, apiLimit(), async ctx => {
@@ -217,6 +318,17 @@ router.get('/plans/active', requireAuth, async ctx => {
 })
 
 /**
+ * 最近一份未确认草稿:异步生成任务随进程重启/超过 30 分钟 TTL 丢失后,
+ * 客户端用它恢复草稿预览,避免考生白等一次生成。必须注册在 `/plans/:id` 之前。
+ */
+router.get('/plans/draft', requireAuth, async ctx => {
+  ctx.body = {
+    plan: await planningService.getLatestDraft(ctx.state.auth!.userGuid),
+    serverTime: Date.now(),
+  }
+})
+
+/**
  * 长文档轻量端点:只回 document 不回全量 items(一份几百天的计划 items 达数百 KB,
  * 文档页只需要这份 8 章文档)。必须注册在 `/plans/:id` 之前。
  */
@@ -237,7 +349,33 @@ router.post('/plans/active/document', requireAuth, apiLimit(), async ctx => {
 
 
 /**
- * 历史计划列表(含当前生效计划),按版本倒序。
+ * 手工新增计划项:默认加到当前生效计划,也可显式指定 draft/active。
+ * 创建后服务端立即重排当天时段,返回的 plan 可直接覆盖客户端缓存。
+ */
+router.post('/plans/items', requireAuth, apiLimit(), async ctx => {
+  const parsed = planItemCreateSchema.safeParse(ctx.request.body ?? {})
+  if (!parsed.success) {
+    throw new ApiError(400, 'INVALID_PARAMS', '计划项参数不合法', {
+      fields: parsed.error.issues.map(issue => ({ field: issue.path.join('.'), message: issue.message })),
+    })
+  }
+  const result = await planningService.addPlanItem(ctx.state.auth!.userGuid, dropNulls(parsed.data))
+  ctx.status = 201
+  ctx.body = { ...result, serverTime: Date.now() }
+  notifyPlanChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)
+})
+
+/** 草案/生效计划的预算摘要(预算表、逐日负荷、阶段目标与警告);静态段必须注册在 /plans/:id 之前 */
+router.get('/plans/:id/overview', requireAuth, async ctx => {
+  const planId = Number(ctx.params.id)
+  if (!Number.isInteger(planId) || planId <= 0) throw new ApiError(400, 'INVALID_PARAMS', '计划 id 不合法')
+  const overview = await planningService.getPlanOverview(ctx.state.auth!.userGuid, planId)
+  if (!overview) throw new ApiError(404, 'PLAN_NOT_FOUND', '计划不存在')
+  ctx.body = { ...overview, serverTime: Date.now() }
+})
+
+
+/**
  * 重新生成会归档旧计划,这里是用户回看旧版本的唯一入口。
  * 必须注册在 `/plans/:id` 之前,否则 "history" 会被当成 id 匹配掉。
  */
@@ -260,28 +398,52 @@ router.get('/plans/:id', requireAuth, async ctx => {
 })
 
 /**
- * 勾选/取消勾选某个计划项 —— 「每日完成的计划」多设备同步的唯一写入口。
- * 客户端在本地先把勾选落库(离线可用),在线时再补一发到这里;成功后会广播给该用户其它设备。
+ * 修改计划项:status(勾选/取消)与内容字段(日期/时长/标题/科目/锁定)走同一个接口。
+ * 两类字段混用由 service 拒绝,避免一次请求里既打卡又改内容。
+ * slim=1 时只回被改的那一项与进度,省掉数百 KB 的下行体积(仅 status 变更支持)。
  */
 router.patch('/plans/items/:id', requireAuth, apiLimit(), async ctx => {
   const itemId = Number(ctx.params.id)
   if (!Number.isInteger(itemId) || itemId <= 0) {
     throw new ApiError(400, 'INVALID_PARAMS', '计划项 id 不合法')
   }
-  const parsed = itemStatusSchema.safeParse(ctx.request.body)
+  const parsed = planItemPatchSchema.safeParse(ctx.request.body ?? {})
   if (!parsed.success) {
-    throw new ApiError(400, 'INVALID_PARAMS', 'status 只能是 pending 或 done')
+    throw new ApiError(400, 'INVALID_PARAMS', '计划项参数不合法', {
+      fields: parsed.error.issues.map(issue => ({ field: issue.path.join('.'), message: issue.message })),
+    })
   }
-  const plan = await planningService.setItemStatus(ctx.state.auth!.userGuid, itemId, parsed.data.status)
-  // slim=1 时只回被改的那一项与进度:全量 plan 数百 KB,而勾选是高频操作;
-  // 客户端用本地缓存的 plan 合并该项即可,省掉 ~99% 的下行体积。默认仍回全量(兼容旧客户端)
-  // 同时接受 true:Retrofit 的 Boolean @Query 会序列化成 slim=true,兼容这类调用方。
-  if (ctx.query.slim === '1' || ctx.query.slim === 'true') {
-    const slim = slimToggleResponse(plan, itemId) ?? { item: plan.items.find(i => i.id === itemId)!, progress: plan.progress }
-    ctx.body = { ...slim, serverTime: Date.now() }
-  } else {
-    ctx.body = { plan, serverTime: Date.now() }
+  const patch = dropNulls(parsed.data)
+  const contentFields = ['planDate', 'minutes', 'title', 'subject', 'locked'] as const
+  const hasContent = contentFields.some(field => patch[field] !== undefined)
+  if (patch.status !== undefined && hasContent) {
+    throw new ApiError(400, 'INVALID_PARAMS', '状态与内容不能在同一请求里修改')
   }
+  if (patch.status !== undefined) {
+    const plan = await planningService.setItemStatus(ctx.state.auth!.userGuid, itemId, patch.status)
+    if (ctx.query.slim === '1' || ctx.query.slim === 'true') {
+      const slim = slimToggleResponse(plan, itemId) ?? { item: plan.items.find(i => i.id === itemId)!, progress: plan.progress }
+      ctx.body = { ...slim, serverTime: Date.now() }
+    } else {
+      ctx.body = { plan, serverTime: Date.now() }
+    }
+    notifyPlanChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)
+    return
+  }
+  if (!hasContent) throw new ApiError(400, 'INVALID_PARAMS', '没有要修改的字段')
+  const result = await planningService.updatePlanItem(ctx.state.auth!.userGuid, itemId, patch)
+  ctx.body = { ...result, serverTime: Date.now() }
+  notifyPlanChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)
+})
+
+/** 删除未完成的计划项;done 项是历史记录,需要先取消勾选 */
+router.delete('/plans/items/:id', requireAuth, apiLimit(), async ctx => {
+  const itemId = Number(ctx.params.id)
+  if (!Number.isInteger(itemId) || itemId <= 0) {
+    throw new ApiError(400, 'INVALID_PARAMS', '计划项 id 不合法')
+  }
+  const plan = await planningService.deletePlanItem(ctx.state.auth!.userGuid, itemId)
+  ctx.body = { plan, serverTime: Date.now() }
   notifyPlanChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)
 })
 

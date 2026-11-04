@@ -42,8 +42,8 @@ android {
         targetSdk = 34
         // OTA 用 versionCode 递增判定(服务端 current < latest),发布新包必须 +1,
         // 否则老设备永远收不到更新(updateAvailable 恒为 false)。
-        versionCode = 3
-        versionName = "1.0.0-m3"
+        versionCode = 4
+        versionName = "1.0.0-m4"
     }
 
     buildTypes {

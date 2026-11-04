@@ -17,6 +17,7 @@ import {
   type SpecVerification,
 } from './planSpec'
 import { critiquePlan } from './planCritic'
+import type { PlanBudget } from './planBudget'
 
 /**
  * AI 版计划生成器。
@@ -46,6 +47,8 @@ export type AiPlanningInput = ProfileInput & {
   startDate: Date
   /** 面谈得到的考生画像;没聊过就是 null,生成器退化为只看问卷 */
   brief?: PlanBrief | null
+  /** 有确认剩余任务时的总预算:生成、细化、校验都按它封顶 */
+  budget?: PlanBudget | null
   /**
    * 上一轮输出未通过服务端校验的原因。service 层重试时把原因喂回来,
    * 让模型带着「哪里被拦了」重新出骨架,而不是盲掷骰子。
@@ -500,6 +503,7 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
   const draftSpec = buildPlanSpec({
     title, targetType: input.targetType, startDate: today, examDate: exam,
     brief, weakSubjects: input.weakSubjects.filter(Boolean), stages: ranges,
+    budget: input.budget ?? null,
   })
 
   report(25, 'refining', `正在细化 ${ranges.length} 个阶段的每周任务(并行)`)
@@ -534,6 +538,7 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
     const nextSpec = buildPlanSpec({
       title, targetType: input.targetType, startDate: today, examDate: exam,
       brief, weakSubjects: input.weakSubjects.filter(Boolean), stages: ranges,
+      budget: input.budget ?? null,
     })
     const nextPlan = compilePlanSpec(nextSpec)
     return { spec: nextSpec, plan: nextPlan, verification: verifyPlanSpec(nextSpec, nextPlan) }
@@ -549,7 +554,7 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
   for (let round = 1; round <= maxRounds; round++) {
     report(65 + round * 3, 'verifying', `第 ${round} 轮校验:容量、科目覆盖与任务递进`)
     const actionable = verification.issues.some(issue => issue.severity === 'error'
-      || ['WEEK_PATTERN', 'MISSING_SUBJECT', 'THIN_DAY', 'SUBJECT_MIX', 'TASK_TOO_LONG', 'DUPLICATE_TITLE', 'SYLLABUS_THIN'].includes(issue.code))
+      || ['WEEK_PATTERN', 'MISSING_SUBJECT', 'SUBJECT_MIX', 'TASK_TOO_LONG', 'DUPLICATE_TITLE', 'SYLLABUS_THIN'].includes(issue.code))
     if (actionable) {
       report(70 + round * 3, 'repairing', '正在修复校验发现的问题(只改失败的部分)')
       const repaired = repairPlanSpec(spec, verification)

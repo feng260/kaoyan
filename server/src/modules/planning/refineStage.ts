@@ -104,7 +104,7 @@ function buildUserPrompt(input: StageRefineInput): string {
     }
   }
   if (input.weeklyTargetMinutes) {
-    lines.push(`本阶段每周实际可投入约 ${input.weeklyTargetMinutes} 分钟:每个周变体的任务总时长应接近这个值(允许 ±20%),不要明显排不满或超量。`)
+    lines.push(`本阶段每周实际可投入约 ${input.weeklyTargetMinutes} 分钟:每个周变体的任务总时长应接近这个值(允许 ±15%),不要为了填满空闲而加量。`)
   }
   if (input.subjectMix?.length) {
     const mix = input.subjectMix.map(item => `${item.subject} ${Math.round(item.share * 100)}%`).join('、')

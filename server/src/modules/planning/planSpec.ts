@@ -17,6 +17,7 @@ import {
   netAvailableMinutes,
   type PlanBrief,
 } from './document'
+import { REVIEW_SUBJECT, budgetView, type PlanBudget, type PlanBudgetView } from './planBudget'
 
 /**
  * PlanSpec —— 计划的可检查、可复算中间产物。
@@ -45,9 +46,15 @@ export type SpecSubject = {
   progress: string
   scope: string
   remainingMinutes: number
+  /** 本计划给该科定的目标分钟(预算版 = budgetMinutes,旧行为 = 剩余量) */
+  budgetMinutes: number
+  /** 校验用上限:超过即视为排超预算 */
+  upperMinutes: number
   milestone: string
   milestoneDate: string
   milestoneMinutes: number
+  /** 里程碑前至少完成的量(预算版按比例缩放) */
+  milestoneBudgetMinutes: number
   estimated: boolean
 }
 
@@ -92,6 +99,10 @@ export type PlanSpec = {
   examDate: string
   /** 确认事实快照:容量、日历区间、逐科里程碑都从这里读 */
   brief: PlanBrief
+  /** 预算版计划的硬约束;旧行为(无剩余任务)为 null */
+  budget: PlanBudgetView | null
+  /** 每天允许生成的上限(净空闲 × 85%);无预算时为空对象 */
+  dayCaps: Record<string, number>
   subjects: SpecSubject[]
   stages: SpecStage[]
   dayTemplates: DayTemplate[]
@@ -108,6 +119,8 @@ export type BuildPlanSpecInput = {
   weakSubjects: string[]
   /** 已排好连续日期、并挂上 L2 周变体的阶段 */
   stages: GeneratedStage[]
+  /** 有确认剩余任务时按预算生成,不再把空闲填满 */
+  budget?: PlanBudget | null
 }
 
 const DAY_MS = 24 * 3600_000
@@ -149,11 +162,13 @@ function fillRatio(phase: SpecPhase): number {
 
 function normalizeSubjectList(input: BuildPlanSpecInput): SpecSubject[] {
   const names = input.brief.examSubjects.map(subject => subject.name)
+  const budgetByName = new Map((input.budget?.subjects ?? []).map(subject => [subject.name, subject]))
   const subjects: SpecSubject[] = []
   for (const subject of input.brief.examSubjects) {
     const playbook = playbookForSubject(subject.name)
     let weight = playbook.weight
     if (input.weakSubjects.includes(subject.name)) weight *= 1.35
+    const spec = budgetByName.get(subject.name)
     subjects.push({
       name: subject.name,
       playbookId: playbook.id,
@@ -162,9 +177,12 @@ function normalizeSubjectList(input: BuildPlanSpecInput): SpecSubject[] {
       progress: subject.progress,
       scope: subject.scope,
       remainingMinutes: subject.remainingMinutes,
+      budgetMinutes: spec ? spec.budgetMinutes : subject.remainingMinutes,
+      upperMinutes: spec ? spec.upperMinutes : subject.remainingMinutes + 30,
       milestone: subject.milestone,
       milestoneDate: subject.milestoneDate,
       milestoneMinutes: subject.milestoneMinutes,
+      milestoneBudgetMinutes: spec ? spec.milestoneBudgetMinutes : subject.milestoneMinutes,
       estimated: subject.estimated,
     })
   }
@@ -179,7 +197,8 @@ function normalizeSubjectList(input: BuildPlanSpecInput): SpecSubject[] {
           name: task.subject, playbookId: playbookForSubject(task.subject).id,
           weight: playbookForSubject(task.subject).weight, weak: false,
           progress: '', scope: '',
-          remainingMinutes: 0, milestone: '', milestoneDate: '', milestoneMinutes: 0, estimated: true,
+          remainingMinutes: 0, budgetMinutes: 0, upperMinutes: 0,
+          milestone: '', milestoneDate: '', milestoneMinutes: 0, milestoneBudgetMinutes: 0, estimated: true,
         })
       }
     }
@@ -188,7 +207,13 @@ function normalizeSubjectList(input: BuildPlanSpecInput): SpecSubject[] {
 }
 
 function subjectMixFor(subjects: SpecSubject[], phase: SpecPhase): SpecSubjectShare[] {
+  // 有逐科预算时,配比必须服从预算:考生确认的剩余分钟才是各科目标,
+  // 用知识库权重算占比会让政治这类「低权重但确有剩余量」的科目系统性欠排。
+  const budgetTotal = subjects.reduce((sum, subject) => sum + Math.max(0, subject.budgetMinutes), 0)
   const values = subjects.map(subject => {
+    if (budgetTotal > 0) {
+      return { subject: subject.name, weight: Math.max(1, subject.budgetMinutes) }
+    }
     let weight = subject.weight
     // 政治在基础期不需要和数学同权:跟课+选择题即可,把整块时间让给硬科目
     if (playbookForSubject(subject.name).category === 'politics' && phase === 'foundation') weight *= 0.6
@@ -324,6 +349,72 @@ function buildStageWeeks(
   return weeks
 }
 
+/**
+ * 逐科预算上限:总和钉在 target×105% 内,且每科不低于自己的目标分钟。
+ * 直接把每科压到 upperMinutes 会因「+30 分钟余量 × 科目数」冲破全局上限,
+ * 所以按科目顺序分配:先保证后面科目的目标,剩余额度才给当前科目做上浮。
+ */
+function budgetCaps(budget: PlanBudget): Map<string, number> {
+  const totalCap = Math.floor(budget.targetMinutes * 1.05)
+  let remaining = totalCap
+  const caps = new Map<string, number>()
+  for (const [index, subject] of budget.subjects.entries()) {
+    const rest = budget.subjects.slice(index + 1).reduce((sum, item) => sum + item.budgetMinutes, 0)
+    // 逐科只留 15 分钟取整余量:余量再大就会挤占其它科目的目标,
+    // 表现为一科排超、另一科永远补不满(政治 551/1382 就是这么来的)
+    const cap = Math.max(subject.budgetMinutes, Math.min(subject.upperMinutes, subject.budgetMinutes + 15, remaining - rest))
+    caps.set(subject.name, cap)
+    remaining -= cap
+  }
+  return caps
+}
+
+function subjectTaskMinutes(week: SpecWeek, subject: string): number {
+  return week.tasks.filter(task => task.subject === subject).reduce((sum, task) => sum + task.minutes, 0)
+}
+
+/**
+ * 预算裁剪:把每科任务总量压进上限。按周等比缩到 5 分钟粒度(最低 15 分钟),
+ * 缩完仍超的周从末尾删任务 —— 每周都分到自己的那一份,计划才不会「前紧后空」。
+ * 最后把每周目标改成实际任务分钟数,细化轮拿到的就是预算口径而不是满容量口径。
+ */
+function applyBudgetCaps(stages: SpecStage[], subjects: SpecSubject[], budget: PlanBudget): void {
+  const caps = budgetCaps(budget)
+  const originalTargets = new Map<SpecWeek, number>()
+  for (const stage of stages) {
+    for (const week of stage.weeks) originalTargets.set(week, week.targetMinutes)
+  }
+
+  for (const subject of subjects) {
+    const cap = caps.get(subject.name) ?? 0
+    const weeks = stages.flatMap(stage => stage.weeks).filter(week => subjectTaskMinutes(week, subject.name) > 0)
+    const total = weeks.reduce((sum, week) => sum + subjectTaskMinutes(week, subject.name), 0)
+    if (total <= cap) continue
+    const scale = total > 0 ? cap / total : 0
+    for (const week of weeks) {
+      const tasks = week.tasks.filter(task => task.subject === subject.name)
+      const weekTotal = tasks.reduce((sum, task) => sum + task.minutes, 0)
+      const weekCap = Math.max(MIN_TASK_MINUTES, Math.floor((weekTotal * scale) / 5) * 5)
+      for (const task of tasks) {
+        task.minutes = Math.max(MIN_TASK_MINUTES, Math.round(task.minutes * scale / 5) * 5)
+      }
+      let sum = tasks.reduce((totalMinutes, task) => totalMinutes + task.minutes, 0)
+      for (let index = tasks.length - 1; index >= 1 && sum > weekCap; index--) {
+        sum -= tasks[index].minutes
+        const position = week.tasks.indexOf(tasks[index])
+        if (position >= 0) week.tasks.splice(position, 1)
+      }
+    }
+  }
+
+  for (const stage of stages) {
+    for (const week of stage.weeks) {
+      const actual = week.tasks.reduce((sum, task) => sum + task.minutes, 0)
+      week.targetMinutes = Math.min(originalTargets.get(week) ?? 0, actual)
+    }
+  }
+}
+
 export function buildPlanSpec(input: BuildPlanSpecInput): PlanSpec {
   const subjects = normalizeSubjectList(input)
   const stages: SpecStage[] = input.stages.map((stage, index) => {
@@ -342,6 +433,7 @@ export function buildPlanSpec(input: BuildPlanSpecInput): PlanSpec {
     specStage.weeks = buildStageWeeks(specStage, subjects, input.brief, stage.weekVariants ?? [], stage.startDate, stage.endDate)
     return specStage
   })
+  if (input.budget) applyBudgetCaps(stages, subjects, input.budget)
   return {
     version: 1,
     title: input.title,
@@ -349,6 +441,8 @@ export function buildPlanSpec(input: BuildPlanSpecInput): PlanSpec {
     startDate: iso(input.startDate),
     examDate: iso(input.examDate),
     brief: input.brief,
+    budget: input.budget ? budgetView(input.budget) : null,
+    dayCaps: input.budget ? Object.fromEntries(input.budget.dayCap) : {},
     subjects,
     stages,
     dayTemplates: DAY_TEMPLATES.map(template => ({ ...template, blocks: template.blocks.map(block => ({ ...block })) })),
@@ -402,27 +496,29 @@ function pickSlot(slots: OpenSlot[], taskMinutes: number): OpenSlot | null {
  * - 每条计划项带上开始时刻与时段,客户端按真实作息分组展示。
  */
 function compileDay(
+  spec: PlanSpec,
   stage: SpecStage,
   week: SpecWeek,
   date: Date,
-  brief: PlanBrief,
 ): GeneratedItem[] {
   const day = iso(date)
-  const capacity = netAvailableMinutes(brief, date)
-  if (capacity < MIN_TASK_MINUTES) return []
+  const capacity = netAvailableMinutes(spec.brief, date)
+  const dayCap = spec.dayCaps[day]
+  const budgetMinutes = dayCap === undefined ? capacity : Math.min(capacity, dayCap)
+  if (budgetMinutes < MIN_TASK_MINUTES) return []
   const weekday = isoWeekday(date)
   const tasks = week.tasks
     .filter(task => task.weekday === weekday && task.minutes >= MIN_TASK_MINUTES)
     .sort((a, b) => b.minutes - a.minutes)
     .slice(0, MAX_TASKS_PER_DAY)
   if (tasks.length === 0) return []
-  const slots: OpenSlot[] = freeSlots(brief, date)
+  const slots: OpenSlot[] = freeSlots(spec.brief, date)
     .map(slot => ({ start: clockMinutes(slot.start), end: clockMinutes(slot.end), used: 0 }))
     .filter(slot => slot.end - slot.start >= MIN_TASK_MINUTES)
   if (slots.length === 0) return []
 
   const picked: GeneratedItem[] = []
-  let budget = capacity
+  let budget = budgetMinutes
   for (const task of tasks) {
     if (budget < MIN_TASK_MINUTES) break
     const slot = pickSlot(slots, task.minutes)
@@ -464,7 +560,7 @@ export function compilePlanSpec(spec: PlanSpec): GeneratedPlan {
   for (const stage of spec.stages) {
     for (const week of stage.weeks) {
       for (let day = week.startDate; day <= week.endDate; day = addIsoDays(day, 1)) {
-        items.push(...compileDay(stage, week, fromIso(day), spec.brief))
+        items.push(...compileDay(spec, stage, week, fromIso(day)))
       }
     }
   }
@@ -478,10 +574,14 @@ export type SpecIssueCode =
   | 'UNKNOWN_SUBJECT'
   | 'DUPLICATE_TITLE'
   | 'DAILY_OVERFLOW'
+  | 'DAILY_OVER_BUDGET'
   | 'TASK_TOO_LONG'
   | 'THIN_DAY'
   | 'MISSING_SUBJECT'
   | 'SUBJECT_MIX'
+  | 'SUBJECT_OVER_BUDGET'
+  | 'SUBJECT_UNDER_BUDGET'
+  | 'TOTAL_OVER_BUDGET'
   | 'WEEK_PATTERN'
   | 'SYLLABUS_THIN'
   | 'MILESTONE_GAP'
@@ -508,6 +608,14 @@ export function verifyPlanSpec(spec: PlanSpec, plan: GeneratedPlan): SpecVerific
   const issues: SpecIssue[] = []
   const subjectNames = new Set(spec.subjects.map(subject => subject.name))
   const subjectByName = new Map(spec.subjects.map(subject => [subject.name, subject]))
+  const budgetRemaining = spec.budget
+    ? spec.subjects.reduce((sum, subject) => {
+        const scheduled = plan.items
+          .filter(item => item.subject === subject.name)
+          .reduce((total, item) => total + item.minutes, 0)
+        return sum + Math.max(0, subject.budgetMinutes - scheduled)
+      }, 0)
+    : 0
 
   // 阶段必须首尾相接,首日=开始日,末日=考前一天
   for (let index = 0; index < spec.stages.length; index++) {
@@ -555,7 +663,11 @@ export function verifyPlanSpec(spec: PlanSpec, plan: GeneratedPlan): SpecVerific
     if (total > capacity + 1) {
       issues.push({ code: 'DAILY_OVERFLOW', severity: 'error', stageIndex: items[0].stageOrder, date: day, message: `${day} 排了 ${total} 分钟,超过净空闲 ${capacity} 分钟`, hint: '删掉或缩短当天最后一条任务' })
     }
-    if (capacity >= 90 && total < capacity * 0.45) {
+    const dayCap = spec.dayCaps[day]
+    if (dayCap !== undefined && total > dayCap + 1) {
+      issues.push({ code: 'DAILY_OVER_BUDGET', severity: 'error', stageIndex: items[0].stageOrder, date: day, message: `${day} 排了 ${total} 分钟,超过预算上限 ${dayCap} 分钟`, hint: '把当天的任务压缩或顺延到后面的日子' })
+    }
+    if (capacity >= 90 && total < capacity * 0.45 && (!spec.budget || budgetRemaining >= 60)) {
       const stage = spec.stages[items[0]?.stageOrder ?? 0]
       const week = stage?.weeks.find(week => week.startDate <= day && day <= week.endDate)
       issues.push({
@@ -574,6 +686,7 @@ export function verifyPlanSpec(spec: PlanSpec, plan: GeneratedPlan): SpecVerific
     const actualMinutes = new Map<string, number>()
     for (const item of stageItems) actualMinutes.set(item.subject, (actualMinutes.get(item.subject) ?? 0) + item.minutes)
     for (const mix of stage.subjectMix) {
+      if (spec.budget && (subjectByName.get(mix.subject)?.budgetMinutes ?? 0) < 120) continue
       const targetMinutes = target * mix.share
       const actual = actualMinutes.get(mix.subject) ?? 0
       if (targetMinutes >= 120 && actual === 0) {
@@ -595,6 +708,29 @@ export function verifyPlanSpec(spec: PlanSpec, plan: GeneratedPlan): SpecVerific
     })
   }
 
+  // 预算闸:逐科不超上限,总排量不超目标的 105%
+  if (spec.budget) {
+    for (const subject of spec.subjects) {
+      const scheduled = plan.items
+        .filter(item => item.subject === subject.name)
+        .reduce((sum, item) => sum + item.minutes, 0)
+      if (scheduled > subject.upperMinutes + 1) {
+        issues.push({ code: 'SUBJECT_OVER_BUDGET', severity: 'error', subject: subject.name, message: `${subject.name} 排了 ${scheduled} 分钟,超过预算上限 ${subject.upperMinutes} 分钟`, hint: `把 ${subject.name} 的任务压缩到 ${subject.upperMinutes} 分钟以内` })
+      }
+      // 与 service 的落库闸同口径:允许一个 15 分钟取整档位,超过就必须补
+      if (scheduled + 15 < subject.budgetMinutes) {
+        issues.push({ code: 'SUBJECT_UNDER_BUDGET', severity: 'error', subject: subject.name, message: `${subject.name} 只排了 ${scheduled} 分钟,低于目标 ${subject.budgetMinutes} 分钟`, hint: `在还有空容量的日子给 ${subject.name} 补 ${subject.budgetMinutes - scheduled} 分钟任务` })
+      }
+    }
+    const totalScheduled = plan.items
+      .filter(item => item.subject !== REVIEW_SUBJECT)
+      .reduce((sum, item) => sum + item.minutes, 0)
+    const totalCap = Math.floor(spec.budget.targetMinutes * 1.05)
+    if (totalScheduled > totalCap) {
+      issues.push({ code: 'TOTAL_OVER_BUDGET', severity: 'error', message: `总排量 ${totalScheduled} 分钟超过预算上限 ${totalCap} 分钟`, hint: '按科目目标等比压缩任务总量' })
+    }
+  }
+
   // 科目标题多样性:长期只有两三个标题说明任务没有推进
   const titlesBySubject = new Map<string, Set<string>>()
   for (const item of plan.items) {
@@ -613,16 +749,17 @@ export function verifyPlanSpec(spec: PlanSpec, plan: GeneratedPlan): SpecVerific
     }
   }
 
-  // 逐科里程碑:截止前必须排够考生确认的目标分钟数
+  // 逐科里程碑:截止前必须排够考生确认的目标分钟数(预算版按缩放后的里程碑目标)
   for (const subject of spec.subjects) {
-    if (subject.estimated || subject.milestoneMinutes <= 0) continue
+    const milestoneTarget = spec.budget ? subject.milestoneBudgetMinutes : subject.milestoneMinutes
+    if (subject.estimated || milestoneTarget <= 0) continue
     const before = plan.items
       .filter(item => item.subject === subject.name && dateOf(item.planDate) <= subject.milestoneDate)
       .reduce((sum, item) => sum + item.minutes, 0)
-    if (before < subject.milestoneMinutes) {
+    if (before < milestoneTarget) {
       issues.push({
         code: 'MILESTONE_GAP', severity: 'error', subject: subject.name, date: subject.milestoneDate,
-        message: `${subject.name}「${subject.milestone}」在 ${subject.milestoneDate} 前只排了 ${before} 分钟,还差 ${subject.milestoneMinutes - before} 分钟`,
+        message: `${subject.name}「${subject.milestone}」在 ${subject.milestoneDate} 前只排了 ${before} 分钟,还差 ${milestoneTarget - before} 分钟`,
         hint: `在 ${subject.milestoneDate} 之前给 ${subject.name} 增加任务,优先安排该科目的核心知识点`,
       })
     }
@@ -673,11 +810,130 @@ function appendTask(spec: PlanSpec, stageIndex: number, weekIndex: number, subje
     .reduce((sum, task) => sum + task.minutes, 0)
   if (existing + MIN_TASK_MINUTES > (capacities.get(targetWeekday) ?? 0)) return false
   const seed = week.tasks.length + weekIndex * 7 + stageIndex
-  const minutes = Math.min(45, Math.max(20, Math.floor((capacities.get(targetWeekday) ?? 45) / 3 / 5) * 5))
+  let minutes = Math.min(45, Math.max(20, Math.floor((capacities.get(targetWeekday) ?? 45) / 3 / 5) * 5))
+  const subjectSpec = spec.subjects.find(item => item.name === subject)
+  if (spec.budget && subjectSpec) {
+    const scheduled = spec.stages
+      .flatMap(item => item.weeks)
+      .reduce((sum, item) => sum + subjectTaskMinutes(item, subject), 0)
+    const remaining = subjectSpec.budgetMinutes - scheduled
+    if (remaining < MIN_TASK_MINUTES) return false
+    minutes = Math.min(minutes, Math.floor(remaining / 5) * 5)
+  }
   const task = plannerTask(subject, stage.phase, seed, targetWeekday, minutes)
   if (!task || week.tasks.some(item => item.weekday === task.weekday && item.subject === task.subject && item.title === task.title)) return false
   week.tasks.push(task)
   return true
+}
+
+/**
+ * 逐科预算补足:细化轮/骨架轮漏掉的分钟数,在这里按「编译后的真实排量」
+ * 把缺口补进仍有余量的日期。修复只增不减,且优先填里程碑截止前的日子。
+ */
+function fillBudgetDeficits(spec: PlanSpec, actions: string[]): void {
+  if (!spec.budget) return
+  // 补一轮后编译器可能因窗口碎片少放几条,再跑一轮兜住取整误差;两轮足够收敛
+  for (let pass = 0; pass < 2; pass++) {
+    const plan = compilePlanSpec(spec)
+    const scheduled = new Map<string, number>()
+    const dayUsage = new Map<string, { minutes: number; count: number }>()
+    for (const item of plan.items) {
+      scheduled.set(item.subject, (scheduled.get(item.subject) ?? 0) + item.minutes)
+      const day = dateOf(item.planDate)
+      const usage = dayUsage.get(day) ?? { minutes: 0, count: 0 }
+      usage.minutes += item.minutes
+      usage.count += 1
+      dayUsage.set(day, usage)
+    }
+    const deficits = spec.subjects.filter(subject =>
+      subject.budgetMinutes - (scheduled.get(subject.name) ?? 0) >= MIN_TASK_MINUTES)
+    if (deficits.length === 0) return
+
+    let changed = false
+    for (const subject of deficits) {
+      let deficit = subject.budgetMinutes - (scheduled.get(subject.name) ?? 0)
+      const milestoneDeadline = !subject.estimated && subject.milestoneBudgetMinutes > 0
+        ? subject.milestoneDate
+        : ''
+      let milestoneDeficit = milestoneDeadline
+        ? Math.max(0, subject.milestoneBudgetMinutes - plan.items
+          .filter(item => item.subject === subject.name && dateOf(item.planDate) <= milestoneDeadline)
+          .reduce((sum, item) => sum + item.minutes, 0))
+        : 0
+
+      const candidates: Array<{ stageIndex: number; weekIndex: number; weekday: number; date: string; early: boolean }> = []
+      for (const [stageIndex, stage] of spec.stages.entries()) {
+        for (const week of stage.weeks) {
+          for (let day = week.startDate; day <= week.endDate; day = addIsoDays(day, 1)) {
+            candidates.push({
+              stageIndex, weekIndex: week.index, weekday: isoWeekday(fromIso(day)), date: day,
+              early: milestoneDeadline ? day <= milestoneDeadline : true,
+            })
+          }
+        }
+      }
+      candidates.sort((a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0)
+      const ordered = milestoneDeficit > 0
+        ? [...candidates.filter(item => item.early), ...candidates.filter(item => !item.early)]
+        : candidates
+
+      let added = 0
+      for (const candidate of ordered) {
+        if (deficit < MIN_TASK_MINUTES) break
+        // 截止前的容量用尽后,别为了里程碑卡住总量补足;里程碑缺口继续留在校验里上报
+        if (milestoneDeficit > 0 && !candidate.early) milestoneDeficit = 0
+        const stage = spec.stages[candidate.stageIndex]
+        const week = stage?.weeks[candidate.weekIndex]
+        if (!stage || !week) continue
+        const dayCap = spec.dayCaps[candidate.date] ?? netAvailableMinutes(spec.brief, fromIso(candidate.date))
+        const usage = dayUsage.get(candidate.date) ?? { minutes: 0, count: 0 }
+        if (usage.count >= MAX_TASKS_PER_DAY) continue
+        const free = dayCap - usage.minutes
+        // 差几分钟凑不满一条新任务时,把余量加到当天该科已有任务上,
+        // 否则每天 3-4 分钟的零头会白白浪费,总量就永远差最后一截
+        if (free > 0 && free < MIN_TASK_MINUTES) {
+          const extendable = week.tasks.find(item => item.weekday === candidate.weekday
+            && item.subject === subject.name && item.minutes + free <= MAX_TASK_MINUTES)
+          if (extendable) {
+            extendable.minutes += free
+            usage.minutes += free
+            dayUsage.set(candidate.date, usage)
+            deficit -= free
+            if (candidate.early) milestoneDeficit = Math.max(0, milestoneDeficit - free)
+            added += free
+            changed = true
+          }
+          continue
+        }
+        if (free < MIN_TASK_MINUTES) continue
+        const minutes = Math.min(45, Math.floor(deficit / 5) * 5, Math.floor(free / 5) * 5)
+        if (minutes < MIN_TASK_MINUTES) continue
+        const seedBase = week.tasks.length + week.index * 11 + candidate.stageIndex * 7
+        let task: SpecTask | null = null
+        for (let attempt = 0; attempt < 24; attempt++) {
+          const candidateTask = plannerTask(subject.name, stage.phase, seedBase + attempt, candidate.weekday, minutes)
+          if (!candidateTask) break
+          const clash = week.tasks.some(item => item.weekday === candidateTask.weekday
+            && item.subject === candidateTask.subject && item.title === candidateTask.title)
+          if (!clash) {
+            task = candidateTask
+            break
+          }
+        }
+        if (!task) continue
+        week.tasks.push(task)
+        usage.minutes += task.minutes
+        usage.count += 1
+        dayUsage.set(candidate.date, usage)
+        deficit -= task.minutes
+        if (candidate.early) milestoneDeficit = Math.max(0, milestoneDeficit - task.minutes)
+        added += task.minutes
+        changed = true
+      }
+      if (added > 0) actions.push(`给 ${subject.name} 补 ${added} 分钟任务(目标 ${subject.budgetMinutes} 分钟)`)
+    }
+    if (!changed) return
+  }
 }
 
 /**
@@ -729,6 +985,7 @@ export function repairPlanSpec(spec: PlanSpec, verification: SpecVerification): 
   // 缺科目 / 某天太薄:只在该阶段对应周补任务
   const handledStages = new Set<number>()
   for (const issue of verification.issues) {
+    if (issue.code === 'THIN_DAY' && next.budget) continue
     if (issue.code !== 'MISSING_SUBJECT' && issue.code !== 'THIN_DAY' && issue.code !== 'SUBJECT_MIX') continue
     if (issue.stageIndex === undefined) continue
     const stage = next.stages[issue.stageIndex]
@@ -762,6 +1019,9 @@ export function repairPlanSpec(spec: PlanSpec, verification: SpecVerification): 
       }
     }
   }
+
+  // 逐科总量兜底:前面只补了"整段消失/某周太薄"的零头,这里按编译后的真实排量补齐
+  fillBudgetDeficits(next, actions)
 
   return { spec: next, actions }
 }

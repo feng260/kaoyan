@@ -11,6 +11,7 @@ import {
   verifyPlanSpec,
   type PlanSpec,
 } from './planSpec'
+import { buildPlanBudget } from './planBudget'
 
 const SUBJECTS = ['数学二', '英语二', '政治', '数据结构']
 
@@ -291,4 +292,113 @@ test('planSpec: 假期区间覆盖平日作息,计划只排在假期整天里的
   for (const item of plan.items) {
     assert.ok(item.startTime! >= '08:00' && item.startTime! < '18:00', `${item.startTime} ${item.title}`)
   }
+})
+
+function budgetBrief(start: Date, remaining: number[]): PlanBrief {
+  const brief = sampleBrief(start)
+  brief.examSubjects = brief.examSubjects.map((subject, index) => ({
+    ...subject,
+    remainingMinutes: remaining[index] ?? 0,
+    milestoneMinutes: 0,
+    milestoneDate: '',
+    milestone: '',
+  }))
+  return brief
+}
+
+test('预算版:编译总量落在 105% 上限内,逐科不超上限', () => {
+  const start = new Date(Date.UTC(2026, 0, 1))
+  const exam = addDays(start, 30)
+  const brief = budgetBrief(start, [400, 300, 200, 300])
+  const budget = buildPlanBudget(brief, start, exam)
+  const spec = buildPlanSpec({
+    title: '预算版计划',
+    targetType: '考研',
+    startDate: start,
+    examDate: exam,
+    brief,
+    weakSubjects: ['数学二'],
+    stages: stagesFor(start, exam, phase => [sampleVariant(phase)]),
+    budget,
+  })
+  assert.ok(spec.budget)
+  assert.equal(Object.keys(spec.dayCaps).length, 30)
+  const plan = compilePlanSpec(spec)
+  const total = plan.items.reduce((sum, item) => sum + item.minutes, 0)
+  assert.ok(total <= Math.floor(budget.targetMinutes * 1.05), `总排量 ${total} 超过上限`)
+  for (const subject of budget.subjects) {
+    const scheduled = plan.items.filter(item => item.subject === subject.name).reduce((sum, item) => sum + item.minutes, 0)
+    assert.ok(scheduled <= subject.upperMinutes, `${subject.name} ${scheduled} > ${subject.upperMinutes}`)
+  }
+  const codes = verifyPlanSpec(spec, plan).issues.map(issue => issue.code)
+  assert.equal(codes.includes('SUBJECT_OVER_BUDGET'), false)
+  assert.equal(codes.includes('TOTAL_OVER_BUDGET'), false)
+  assert.equal(codes.includes('DAILY_OVER_BUDGET'), false)
+})
+
+test('预算版:某科被细化轮漏排时,定向修复会把缺口补到预算目标', () => {
+  const start = new Date(Date.UTC(2026, 0, 1))
+  const exam = addDays(start, 30)
+  const brief = budgetBrief(start, [400, 300, 200, 300])
+  const budget = buildPlanBudget(brief, start, exam)
+  // 变体里完全没有政治:模拟细化轮只盯着语数外,漏掉确认过的科目
+  const politicsFree = (phase: PlaybookPhase): AiWeekVariant[] => {
+    const base = sampleVariant(phase)
+    return [base.filter(task => task.subject !== '政治')]
+  }
+  const spec = buildPlanSpec({
+    title: '漏排政治的预算版',
+    targetType: '考研',
+    startDate: start,
+    examDate: exam,
+    brief,
+    weakSubjects: [],
+    stages: stagesFor(start, exam, politicsFree),
+    budget,
+  })
+  const plan = compilePlanSpec(spec)
+  const verification = verifyPlanSpec(spec, plan)
+  assert.ok(verification.issues.some(issue => issue.code === 'SUBJECT_UNDER_BUDGET' && issue.subject === '政治'))
+
+  const repaired = repairPlanSpec(spec, verification)
+  assert.ok(repaired.actions.some(action => action.includes('政治')), repaired.actions.join('；'))
+  const nextPlan = compilePlanSpec(repaired.spec)
+  const politics = nextPlan.items
+    .filter(item => item.subject === '政治')
+    .reduce((sum, item) => sum + item.minutes, 0)
+  const target = budget.subjects.find(subject => subject.name === '政治')!.budgetMinutes
+  assert.ok(politics + 15 >= target, `政治只补到 ${politics}/${target} 分钟`)
+  const codes = verifyPlanSpec(repaired.spec, nextPlan).issues
+    .filter(issue => issue.severity === 'error')
+    .map(issue => issue.code)
+  assert.equal(codes.includes('SUBJECT_UNDER_BUDGET'), false)
+  assert.equal(codes.includes('SUBJECT_OVER_BUDGET'), false)
+  assert.equal(codes.includes('TOTAL_OVER_BUDGET'), false)
+  assert.equal(codes.includes('DAILY_OVER_BUDGET'), false)
+})
+
+test('verifyPlanSpec:预算超发、总排量超限与单日超预算各自报错', () => {
+  const spec = baseSpec()
+  spec.dayCaps = { [spec.stages[0].startDate]: 100 }
+  spec.budget = {
+    ...(spec.budget ?? {
+      capacityMinutes: 0, effectiveCapacityMinutes: 0, confirmedMinutes: 0, estimatedMinutes: 0,
+      estimatedBudgetMinutes: 0, targetMinutes: 0, shortfallMinutes: 0, deficits: [], subjects: [], warnings: [],
+    }),
+    targetMinutes: 100,
+  }
+  spec.subjects[0].upperMinutes = 100
+  const item = {
+    stageOrder: 0,
+    subject: spec.subjects[0].name,
+    title: '超发任务',
+    planDate: new Date(`${spec.stages[0].startDate}T00:00:00.000Z`),
+    minutes: 2000,
+    priority: 0,
+    sortOrder: 0,
+  }
+  const codes = verifyPlanSpec(spec, { stages: [], items: [item] }).issues.map(issue => issue.code)
+  assert.ok(codes.includes('SUBJECT_OVER_BUDGET'))
+  assert.ok(codes.includes('TOTAL_OVER_BUDGET'))
+  assert.ok(codes.includes('DAILY_OVER_BUDGET'))
 })

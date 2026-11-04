@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  affectedDays, datesBetween, diffSnapshots, planL1Shuffle, shiftDate, windowFingerprint,
+  adjustWindow, affectedDays, datesBetween, diffSnapshots, planL1Shuffle, shiftDate, windowFingerprint,
   type AdjustableItem, type WindowSnapshotItem,
 } from './adjust'
 
@@ -96,14 +96,79 @@ test('diffSnapshots:moved/added/removed/updated 各归各位且排序稳定', ()
   assert.equal(removed.id, 3)
 })
 
-test('windowFingerprint:done 项不参与,内容变了指纹必变,顺序无关', () => {
+test('windowFingerprint:状态切换不改变指纹,内容变了指纹必变,顺序无关', () => {
   const base = [snap({ id: 1, planDate: '2026-09-29', minutes: 60 })]
-  const withDone = [...base, snap({ id: 2, planDate: '2026-09-30', minutes: 30, status: 'done' })]
-  assert.equal(windowFingerprint(base), windowFingerprint(withDone))
+  // 正常打卡只改 status,不会让调整单失效
+  assert.equal(windowFingerprint(base), windowFingerprint([snap({ id: 1, planDate: '2026-09-29', minutes: 60, status: 'done' })]))
   assert.notEqual(windowFingerprint(base), windowFingerprint([snap({ id: 1, planDate: '2026-09-29', minutes: 90 })]))
   assert.notEqual(windowFingerprint(base), windowFingerprint([snap({ id: 1, planDate: '2026-09-30', minutes: 60 })]))
   assert.equal(
     windowFingerprint([snap({ id: 1, planDate: '2026-09-29', minutes: 60 }), snap({ id: 2, planDate: '2026-09-30', minutes: 30 })]),
     windowFingerprint([snap({ id: 2, planDate: '2026-09-30', minutes: 30 }), snap({ id: 1, planDate: '2026-09-29', minutes: 60 })]),
   )
+})
+
+test('windowFingerprint:subject/title/locked/startTime/slot 与口径哈希都会让旧调整单失效', () => {
+  const base = [snap({ id: 1, planDate: '2026-09-29', minutes: 60 })]
+  for (const changed of [
+    snap({ id: 1, planDate: '2026-09-29', minutes: 60, subject: '英语' }),
+    snap({ id: 1, planDate: '2026-09-29', minutes: 60, title: '换了标题' }),
+    snap({ id: 1, planDate: '2026-09-29', minutes: 60, locked: true }),
+    snap({ id: 1, planDate: '2026-09-29', minutes: 60, startTime: '09:00' }),
+    snap({ id: 1, planDate: '2026-09-29', minutes: 60, slot: 'morning' }),
+  ]) {
+    assert.notEqual(windowFingerprint(base), windowFingerprint([changed]))
+  }
+  assert.notEqual(windowFingerprint(base), windowFingerprint(base, 'brief-a'))
+  assert.notEqual(windowFingerprint(base, 'brief-a'), windowFingerprint(base, 'brief-b'))
+})
+
+test('adjustWindow:未来 30 天封顶,并把近 30 天落后任务纳入起点', () => {
+  const future = adjustWindow({ planStart: '2026-09-01', examDate: '2027-06-01', today: '2026-11-03', unfinishedDates: [] })
+  assert.deepEqual(future, { from: '2026-11-03', to: '2026-12-02' })
+
+  const examBound = adjustWindow({ planStart: '2026-09-01', examDate: '2026-11-20', today: '2026-11-03', unfinishedDates: [] })
+  assert.deepEqual(examBound, { from: '2026-11-03', to: '2026-11-19' })
+
+  const overdue = adjustWindow({
+    planStart: '2026-09-01', examDate: '2027-06-01', today: '2026-11-03',
+    unfinishedDates: ['2026-10-04', '2026-10-20'],
+  })
+  assert.deepEqual(overdue, { from: '2026-10-04', to: '2026-12-02' })
+
+  const planStartsLater = adjustWindow({
+    planStart: '2026-10-31', examDate: '2027-06-01', today: '2026-11-03',
+    unfinishedDates: ['2026-10-30'],
+  })
+  assert.deepEqual(planStartsLater, { from: '2026-10-31', to: '2026-12-02' })
+
+  // 落后超过 30 天的不再纳入,避免把整份历史计划拖进调整窗口
+  const tooOld = adjustWindow({
+    planStart: '2026-09-01', examDate: '2027-06-01', today: '2026-11-03',
+    unfinishedDates: ['2026-09-20'],
+  })
+  assert.deepEqual(tooOld, { from: '2026-11-03', to: '2026-12-02' })
+
+  assert.equal(adjustWindow({ planStart: '2026-09-01', examDate: '2026-11-03', today: '2026-11-03', unfinishedDates: [] }), null)
+})
+
+test('L1:原日期在科目里程碑之前的任务,不会被推到里程碑之后', () => {
+  const result = planL1Shuffle({
+    pending: [item({ id: 1, planDate: '2026-09-29', minutes: 60, subject: '数学' })],
+    capacity: new Map([['2026-09-29', 0], ['2026-09-30', 0], ['2026-10-01', 120], ['2026-10-02', 120]]),
+    windowFrom: '2026-09-29',
+    windowTo: '2026-10-02',
+    milestones: [{ subject: '数学', date: '2026-09-30' }],
+  })
+  assert.equal(result.moves.length, 0)
+  assert.equal(result.overflow.length, 1, '越过里程碑不如实报缺口,交给用户选方案')
+
+  const beforeMilestone = planL1Shuffle({
+    pending: [item({ id: 1, planDate: '2026-10-02', minutes: 60, subject: '数学' })],
+    capacity: new Map([['2026-10-01', 120], ['2026-10-02', 0], ['2026-10-03', 120]]),
+    windowFrom: '2026-10-01',
+    windowTo: '2026-10-03',
+    milestones: [{ subject: '数学', date: '2026-09-30' }],
+  })
+  assert.deepEqual(beforeMilestone.moves.map(move => move.to), ['2026-10-03'], '原日期已在里程碑之后则不受限')
 })

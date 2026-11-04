@@ -30,6 +30,8 @@ export interface CheckupSummary {
   behindMinutes: number
   overdueCount: number
   suggestion: string
+  /** 一键交给 AI 调整的预填话术;没有需要主动干预的问题时为 null */
+  suggestedMessage: string | null
   weekPlanDone: number
   weekPlanTotal: number
   weekFocusMinutes: number
@@ -61,6 +63,7 @@ export function emptyCheckup(): CheckupSummary {
     behindMinutes: 0,
     overdueCount: 0,
     suggestion: '',
+    suggestedMessage: null,
     weekPlanDone: 0,
     weekPlanTotal: 0,
     weekFocusMinutes: 0,
@@ -124,6 +127,18 @@ function issueSuggestion(summary: CheckupSummary): string {
     }
   }
   return `${clauses.slice(0, 2).join('；')}。去调整一下。`
+}
+
+function lowCompletionRate(summary: CheckupSummary): boolean {
+  return summary.weekPlanTotal >= 4 && summary.weekPlanDone * 2 < summary.weekPlanTotal
+}
+
+/** 主动教练话术:只建议、不自动应用;按「落后 → 超载 → 完成率低」的优先级取一条 */
+function suggestedMessage(summary: CheckupSummary): string | null {
+  if (summary.overdueCount > 0) return '我有几项任务落后了，帮我把未来几天重新排一下'
+  if (summary.overloadedDays.length > 0) return '接下来几天安排太满，帮我压缩一下'
+  if (lowCompletionRate(summary)) return '最近完成率偏低，帮我把计划强度调低一点'
+  return null
 }
 
 export function buildCheckup(input: {
@@ -193,5 +208,6 @@ export function buildCheckup(input: {
   }
 
   summary.suggestion = issueSuggestion(summary)
+  summary.suggestedMessage = suggestedMessage(summary)
   return summary
 }

@@ -35,27 +35,51 @@ export interface L2Input {
   ledger: L2Ledger
   /** 窗口内现有待办(展开时按它复用 id) */
   pending: AdjustableItem[]
+  /** 校验模式:守恒 / 允许新增 / 允许删除 / 允许降低总量 */
+  mode?: L2Mode
+}
+
+/** L2 的四种校验模式:conserve=总量守恒;add=原总量+新增;drop=允许减少并点名删除;scope=允许降低目标 */
+export type L2Mode = 'conserve' | 'add' | 'drop' | 'scope'
+
+export interface L2ValidateOptions {
+  mode: L2Mode
+  /** add 模式新增的分钟数;conserve 下应为 0 */
+  allowedDelta?: number
+  /** drop 模式下必须缺席的任务 id */
+  droppedIds?: number[]
+  /** 锁定项:模型输出中不得出现(出现即视为移动/改内容) */
+  locked?: WindowSnapshotItem[]
 }
 
 const L2_MAX_TOKENS = 1600
 
-const L2_SYSTEM_PROMPT = [
-  '你是考研备考计划的重排引擎。给你一个调整窗口:每天的可用分钟数(账本)、窗口内现有的任务清单(科目/标题/分钟)、科目白名单和里程碑。',
-  '请输出一份重排方案,只输出 JSON:{"tasks":[{"dayOffset":数字,"subject":"科目","title":"标题","minutes":数字}]}。',
-  '规则:',
-  '- dayOffset 从 0 开始,0 表示窗口第一天;所有任务必须落在窗口内。',
-  '- subject 必须来自科目白名单;title 尽量沿用原任务标题,可以合并拆分,但每条不超过 30 字。',
-  '- 全部任务的 minutes 总和必须等于窗口内现有任务的总分钟数(总量守恒,不凭空加减)。',
-  '- 每天的 minutes 总和不得超过那天的可用分钟数。',
-  '- 里程碑日期之前要排紧凑,不能把该科任务排到里程碑日期之后。',
-  '- 可用分钟为 0 的日子(用户没空)不要排任何任务。',
-].join('\n')
+function l2SystemPrompt(mode: L2Mode): string {
+  const modeRule = mode === 'add'
+    ? '- 本次允许新增用户明确要求的任务;全部任务总分钟数必须等于原有总分钟数加新增分钟数,不得凭空增删其它任务。'
+    : mode === 'drop'
+      ? '- 本次允许删除用户点名的任务;删除后总分钟数不得大于原有总分钟数,其它任务保持完整。'
+      : mode === 'scope'
+        ? '- 本次目标已下调;总分钟数不得超过原有总分钟数,可以按新目标减少任务。'
+        : '- 全部任务的 minutes 总和必须等于窗口内现有任务的总分钟数(总量守恒,不凭空加减)。'
+  return [
+    '你是考研备考计划的重排引擎。给你一个调整窗口:每天的可用分钟数(账本)、窗口内现有的任务清单(科目/标题/分钟)、科目白名单和里程碑。',
+    '请输出一份重排方案,只输出 JSON:{"tasks":[{"dayOffset":数字,"subject":"科目","title":"标题","minutes":数字}]}。',
+    '规则:',
+    '- dayOffset 从 0 开始,0 表示窗口第一天;所有任务必须落在窗口内。',
+    '- subject 必须来自科目白名单;title 尽量沿用原任务标题,可以合并拆分,但每条不超过 30 字。',
+    modeRule,
+    '- 每天的 minutes 总和不得超过那天的可用分钟数。',
+    '- 里程碑日期之前要排紧凑,不能把该科任务排到里程碑日期之后。',
+    '- 可用分钟为 0 的日子(用户没空)不要排任何任务。',
+  ].join('\n')
+}
 
 export async function runAdjustL2(input: L2Input): Promise<L2Task[]> {
   try {
     const raw = await chatComplete({
       messages: [
-        { role: 'system', content: L2_SYSTEM_PROMPT },
+        { role: 'system', content: l2SystemPrompt(input.mode ?? 'conserve') },
         { role: 'user', content: buildL2UserPrompt(input) },
       ],
       json: true,
@@ -182,11 +206,33 @@ export function expandL2(tasks: L2Task[], windowFrom: string, pending: Adjustabl
   return target.sort((a, b) => a.planDate.localeCompare(b.planDate) || a.id - b.id)
 }
 
-/** 三条硬规则:总量守恒、每日不超容量、里程碑不推迟。返回第一个失败原因,便于回喂重试 */
-export function validateL2(target: WindowSnapshotItem[], ledger: L2Ledger): { ok: boolean; reason?: string } {
+/** 硬规则:模式对应的总量约束、每日不超容量、里程碑不推迟、锁定项不得出现在输出里 */
+export function validateL2(
+  target: WindowSnapshotItem[],
+  ledger: L2Ledger,
+  options: L2ValidateOptions = { mode: 'conserve' },
+): { ok: boolean; reason?: string } {
   const total = target.reduce((sum, item) => sum + item.minutes, 0)
-  if (total !== ledger.totalMinutes) {
+  const expected = ledger.totalMinutes + (options.mode === 'add' ? (options.allowedDelta ?? 0) : 0)
+  if (options.mode === 'conserve' && Math.abs(total - ledger.totalMinutes) > 1) {
     return { ok: false, reason: `重排后总分钟 ${total} 与原来的 ${ledger.totalMinutes} 不一致,总量必须守恒` }
+  }
+  if (options.mode === 'add' && Math.abs(total - expected) > 1) {
+    return { ok: false, reason: `重排后总分钟 ${total} 与预期的 ${expected} 不一致,新增后总量必须匹配` }
+  }
+  if ((options.mode === 'drop' || options.mode === 'scope') && total > expected + 1) {
+    return { ok: false, reason: `重排后总分钟 ${total} 超过允许的 ${expected},该模式只能减少或持平` }
+  }
+  for (const id of options.droppedIds ?? []) {
+    if (target.some(item => item.id === id)) {
+      return { ok: false, reason: `任务 ${id} 应被删除却仍在计划里` }
+    }
+  }
+  for (const locked of options.locked ?? []) {
+    const hit = target.find(item => item.id === locked.id)
+    if (hit) {
+      return { ok: false, reason: `锁定任务「${locked.title}」被改动` }
+    }
   }
   const perDay = new Map<string, number>()
   for (const item of target) {

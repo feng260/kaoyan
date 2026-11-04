@@ -6,10 +6,13 @@ import androidx.lifecycle.viewModelScope
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.db.TaskEntity
+import com.yanzhong.app.data.remote.AddPlanItemReq
 import com.yanzhong.app.data.remote.AdjustmentDto
 import com.yanzhong.app.data.remote.ApiClient
+import com.yanzhong.app.data.remote.CheckupResp
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.remote.PlanItemDto
+import com.yanzhong.app.data.remote.PlanItemEditReq
 import com.yanzhong.app.data.remote.PlanItemStatusReq
 import com.yanzhong.app.data.remote.PlanStageDto
 import com.yanzhong.app.data.remote.SyncNotice
@@ -25,6 +28,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import retrofit2.HttpException
 
 data class PlanUiState(
     val weekTasks: List<TaskEntity> = emptyList(),
@@ -90,6 +94,18 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
     val latestAdjustment: StateFlow<AdjustmentDto?> = _latestAdjustment
     private val _undoing = MutableStateFlow(false)
     val undoing: StateFlow<Boolean> = _undoing
+    private val _editingItem = MutableStateFlow<PlanItemDto?>(null)
+    val editingItem: StateFlow<PlanItemDto?> = _editingItem
+    private val _addingAtDate = MutableStateFlow<String?>(null)
+    val addingAtDate: StateFlow<String?> = _addingAtDate
+    private val _editBusy = MutableStateFlow(false)
+    val editBusy: StateFlow<Boolean> = _editBusy
+    private val _editError = MutableStateFlow<String?>(null)
+    val editError: StateFlow<String?> = _editError
+    private val _editSuggestShrinkMinutes = MutableStateFlow<Int?>(null)
+    val editSuggestShrinkMinutes: StateFlow<Int?> = _editSuggestShrinkMinutes
+    private val _checkup = MutableStateFlow<CheckupResp?>(null)
+    val checkup: StateFlow<CheckupResp?> = _checkup
 
     init {
         refreshPlan()
@@ -113,6 +129,7 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                         _serverPlan.value = null
                         _planUnavailable.value = false
                         _latestAdjustment.value = null
+                        _checkup.value = null
                         return@withLock
                     }
                     val plan = repo.fetchActivePlan()
@@ -121,6 +138,10 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                     _serverPlan.value = plan
                     _planUnavailable.value = plan == null
                     _latestAdjustment.value = runCatching { ApiClient.api().getLatestAdjustment().adjustment }.getOrNull()
+                    // 教练卡:体检建议缺失只是少一张提示卡,不能影响计划主卡
+                    _checkup.value = runCatching {
+                        ApiClient.api().planCheckup(tzOffset = TimeUtils.currentTzOffsetMinutes(), notify = 0)
+                    }.getOrNull()
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {
@@ -171,6 +192,179 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun openEditor(item: PlanItemDto) {
+        if (_editBusy.value || _planLoading.value) return
+        if (_serverPlan.value?.items?.none { it.id == item.id } != false) return
+        _editingItem.value = item
+        _addingAtDate.value = null
+        _editError.value = null
+        _editSuggestShrinkMinutes.value = null
+    }
+
+    fun startAdding(date: LocalDate) {
+        if (_editBusy.value || _planLoading.value) return
+        _editingItem.value = null
+        _addingAtDate.value = date.toString()
+        _editError.value = null
+        _editSuggestShrinkMinutes.value = null
+    }
+
+    fun closeEditor() {
+        if (_editBusy.value) return
+        _editingItem.value = null
+        _addingAtDate.value = null
+        _editError.value = null
+        _editSuggestShrinkMinutes.value = null
+    }
+
+    fun clearEditError() {
+        _editError.value = null
+        _editSuggestShrinkMinutes.value = null
+    }
+
+    /** 改日期/时长/内容/科目/锁定;先乐观合并到本地计划,失败整体回滚 */
+    fun editItem(item: PlanItemDto, edit: PlanItemEdit) {
+        if (_editBusy.value) return
+        viewModelScope.launch {
+            _editBusy.value = true
+            _editError.value = null
+            _editSuggestShrinkMinutes.value = null
+            val before = _serverPlan.value
+            try {
+                requestLock.withLock {
+                    val account = requirePlanAccount() ?: return@withLock
+                    val base = before ?: throw IllegalStateException("本地计划缓存丢失")
+                    val optimistic = base.copy(items = base.items.map {
+                        if (it.id == item.id) optimisticItemPatch(it, edit) else it
+                    })
+                    applyLocalPlan(optimistic, account)
+                    val resp = ApiClient.api().editPlanItem(
+                        item.id,
+                        PlanItemEditReq(
+                            planDate = edit.planDate,
+                            minutes = edit.minutes,
+                            title = edit.title,
+                            subject = edit.subject,
+                            locked = edit.locked
+                        )
+                    )
+                    if (resp.plan != null) applyLocalPlan(resp.plan, account) else refreshPlan()
+                    _editingItem.value = null
+                    _editError.value = null
+                    _editSuggestShrinkMinutes.value = null
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                before?.let { rollback -> applyLocalPlan(rollback, TokenStore.currentAccountGuid()) }
+                handleEditFailure(e, item)
+            } finally {
+                _editBusy.value = false
+            }
+        }
+    }
+
+    fun toggleLock(item: PlanItemDto) = editItem(item, PlanItemEdit(locked = !item.locked))
+
+    fun addItem(req: AddPlanItemReq) {
+        if (_editBusy.value) return
+        viewModelScope.launch {
+            _editBusy.value = true
+            _editError.value = null
+            _editSuggestShrinkMinutes.value = null
+            val before = _serverPlan.value
+            try {
+                requestLock.withLock {
+                    val account = requirePlanAccount() ?: return@withLock
+                    val resp = ApiClient.api().addPlanItem(req.copy(planId = req.planId ?: before?.id))
+                    if (resp.plan != null) applyLocalPlan(resp.plan, account) else refreshPlan()
+                    _addingAtDate.value = null
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                before?.let { rollback -> applyLocalPlan(rollback, TokenStore.currentAccountGuid()) }
+                handleEditFailure(e, null)
+            } finally {
+                _editBusy.value = false
+            }
+        }
+    }
+
+    fun deleteItem(item: PlanItemDto) {
+        if (_editBusy.value) return
+        viewModelScope.launch {
+            _editBusy.value = true
+            _editError.value = null
+            _editSuggestShrinkMinutes.value = null
+            val before = _serverPlan.value
+            try {
+                requestLock.withLock {
+                    val account = requirePlanAccount() ?: return@withLock
+                    val base = before ?: throw IllegalStateException("本地计划缓存丢失")
+                    applyLocalPlan(base.copy(items = base.items.filterNot { it.id == item.id }), account)
+                    val plan = ApiClient.api().deletePlanItem(item.id).plan
+                        ?: throw IllegalStateException("服务端未返回计划")
+                    applyLocalPlan(plan, account)
+                    _editingItem.value = null
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                before?.let { rollback -> applyLocalPlan(rollback, TokenStore.currentAccountGuid()) }
+                handleEditFailure(e, item)
+            } finally {
+                _editBusy.value = false
+            }
+        }
+    }
+
+    private suspend fun requirePlanAccount(): String? {
+        val account = TokenStore.currentAccountGuid()
+        if (TokenStore.currentAccess() == null || account.isNullOrBlank()) {
+            _loggedIn.value = false
+            _serverPlan.value = null
+            return null
+        }
+        return account
+    }
+
+    private suspend fun applyLocalPlan(plan: PlanDto, account: String?) {
+        if (account.isNullOrBlank()) return
+        repo.applyPlanProjection(plan, account, settingsRepo.current().currentPlan.focusMin)
+        _serverPlan.value = plan
+        _planError.value = null
+    }
+
+    private fun handleEditFailure(e: Exception, item: PlanItemDto?) {
+        val server = e.planServerError()
+        val friendly = server?.friendlyPlanError() ?: when (e) {
+            is HttpException -> when (e.code()) {
+                401, 403 -> "登录已过期，请重新登录"
+                else -> "保存失败(${e.code()})，请重试"
+            }
+            else -> "保存失败，请检查网络后重试"
+        }
+        if (server?.code == "PLAN_DAY_OVERLOADED") {
+            val capacity = server.detailInt("capacity")
+            val planned = server.detailInt("planned")
+            val overflow = server.detailInt("overflow")
+            val suggestion = server.detailString("suggestion")?.takeIf { it.isNotBlank() }
+            val detail = buildList {
+                if (capacity != null && planned != null) {
+                    add("当天容量 ${formatMinutesCn(capacity)}，已排 ${formatMinutesCn(planned)}")
+                }
+                suggestion?.let(::add)
+            }
+            _editError.value = (listOf(friendly) + detail).distinct().joinToString("；")
+            if (item != null && overflow != null && overflow > 0) {
+                _editSuggestShrinkMinutes.value = (item.minutes - overflow).coerceAtLeast(5)
+            }
+        } else {
+            _editError.value = friendly
+        }
+    }
+
     /** 撤销最近一次已生效的调整:服务端把 beforeJson 写回,planChanged 广播后各端自动更新 */
     fun undoLatestAdjustment() {
         val latest = _latestAdjustment.value?.takeIf { it.status == "applied" } ?: return
@@ -189,8 +383,9 @@ class PlanViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: CancellationException) {
                 throw e
-            } catch (_: Exception) {
-                _planError.value = "撤销失败，请重试；计划未改变"
+            } catch (e: Exception) {
+                // 计划被手工改过时服务端会拒绝撤销,原因要透传,否则考生只会反复点「撤销」
+                _planError.value = e.planServerError()?.friendlyPlanError() ?: "撤销失败，请重试；计划未改变"
             } finally {
                 _undoing.value = false
                 _latestAdjustment.value = runCatching { ApiClient.api().getLatestAdjustment().adjustment }.getOrNull()

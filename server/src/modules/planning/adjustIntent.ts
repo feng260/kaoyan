@@ -7,8 +7,14 @@ import type { PlanBrief } from './document'
  * 档位、日期、容量全部由服务端判定 —— 模型不输出任何计划内容。
  */
 
-/** unavailable=某几天完全没空 / reduce_capacity=几天可用时间变少 / change_commitment=每周固定占用变了 / chat=闲聊或没说清 */
-export type AdjustIntentKind = 'unavailable' | 'reduce_capacity' | 'change_commitment' | 'chat'
+/**
+ * unavailable=某几天完全没空 / reduce_capacity=几天可用时间变少 / change_commitment=每周固定占用变了
+ * / move_task=挪某条任务 / add_task=加一条任务 / drop_task=删一条任务
+ * / adjust_scope=调整科目剩余量或里程碑 / lock_task=锁定任务不再让 AI 动 / chat=闲聊或没说清
+ */
+export type AdjustIntentKind =
+  | 'unavailable' | 'reduce_capacity' | 'change_commitment'
+  | 'move_task' | 'add_task' | 'drop_task' | 'adjust_scope' | 'lock_task' | 'chat'
 
 /** change_commitment:每周固定的新占用(与 brief.fixedCommitments 同构) */
 export interface AdjustCommitment {
@@ -24,24 +30,54 @@ export interface AdjustCapacityWindow {
   minutes: number
 }
 
+/** move/drop/lock 指向的任务:subject+title+当前日期用于消歧 */
+export interface AdjustTaskRef {
+  subject: string
+  title?: string
+  date?: string
+  targetDate?: string
+}
+
+/** add_task 要新增的任务 */
+export interface AdjustNewTask {
+  subject: string
+  title: string
+  date: string
+  minutes: number
+}
+
+/** adjust_scope:要改的科目目标 */
+export interface AdjustScopeItem {
+  subject: string
+  remainingMinutes?: number
+  milestone?: string
+  milestoneDate?: string
+  milestoneMinutes?: number
+  estimated?: boolean
+}
+
 export interface AdjustIntent {
   kind: AdjustIntentKind
   /** unavailable:完全没空的日期(YYYY-MM-DD,已裁剪到调整窗口内) */
   days: string[]
   windows: AdjustCapacityWindow[]
   commitments: AdjustCommitment[]
+  tasks: AdjustTaskRef[]
+  newTasks: AdjustNewTask[]
+  scope: AdjustScopeItem[]
   /** 用户原话的补充说明,写入调整单 reason */
   note: string
   /** 给确认卡片的一句话摘要(模型写,服务端兜底) */
   summary: string
   needClarify: boolean
   clarifyQuestion: string
+  clarifyOptions: Array<{ label: string; value: string }>
 }
 
 export interface AdjustIntentInput {
   message: string
   today: string
-  /** 调整窗口上限(当前阶段末),模型给出的日期越界一律丢弃 */
+  /** 调整窗口上限(未来 30 天或考前一天),模型给出的日期越界一律丢弃 */
   windowTo: string
   /** 当前计划涉及的科目名 */
   subjects: string[]
@@ -52,12 +88,19 @@ export interface AdjustIntentInput {
    * 模型只能回「抱歉没接住上下文」再问一遍,考生答得越省事越被绕圈。
    */
   history?: Array<{ role: 'user' | 'assistant'; content: string }>
+  /** 窗口内任务摘要:模型据它消歧「数学那项」指的是哪一条 */
+  windowItems?: Array<{ planDate: string; subject: string; title: string; minutes: number; locked?: boolean }>
+  /** 预算余量:scope 调整时模型能判断还剩多少没排 */
+  budget?: { targetMinutes: number; scheduledMinutes: number }
 }
 
-const KINDS: AdjustIntentKind[] = ['unavailable', 'reduce_capacity', 'change_commitment', 'chat']
+const KINDS: AdjustIntentKind[] = [
+  'unavailable', 'reduce_capacity', 'change_commitment',
+  'move_task', 'add_task', 'drop_task', 'adjust_scope', 'lock_task', 'chat',
+]
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
-const ADJUST_MAX_TOKENS = 700
+const ADJUST_MAX_TOKENS = 900
 
 export async function runAdjustIntent(input: AdjustIntentInput): Promise<AdjustIntent> {
   // 小模型偶发吐非 JSON(截断/混入闲话),重试一次;两次都坏才向上抛
@@ -86,23 +129,34 @@ export async function runAdjustIntent(input: AdjustIntentInput): Promise<AdjustI
 function buildSystemPrompt(): string {
   return [
     '你是考研备考计划助手「研钟」的行程调整分析师。',
-    '用户会告诉你一件突发事情(临时有事、生病、加课、固定安排变了等)。',
+    '用户会告诉你一件突发事情、想改的任务或想调整的目标。',
     '你的任务是把这句话解析成结构化意图,只输出 JSON,不要输出多余文本。',
     'JSON 字段:',
-    '- kind: "unavailable"(某几天完全没空) | "reduce_capacity"(某几天可用时间变少) | "change_commitment"(每周固定占用变了,如换课表) | "chat"(闲聊或信息不足)',
+    '- kind: "unavailable"(某几天完全没空) | "reduce_capacity"(某几天可用时间变少) | "change_commitment"(每周固定占用变了,如换课表)',
+    '  | "move_task"(把某条任务挪到另一天) | "add_task"(新增一条任务) | "drop_task"(删掉某条任务)',
+    '  | "adjust_scope"(调整科目剩余量/里程碑) | "lock_task"(以后别再动某科/某条) | "chat"(闲聊或信息不足)',
     '- days: 完全没空的日期数组,格式 YYYY-MM-DD,必须在给定窗口内',
     '- windows: 数组,每项 {day: "YYYY-MM-DD", minutes: 数字},minutes = 用户当天扣除没空时段后「还能学」的总分钟数,',
     '  按该日课表净空闲总分钟 − 没空时段与课表重叠的分钟估算(取 5 的倍数即可);',
     '  禁止把没空时长本身填进 minutes;能从课表算就一定给出估算值,确实没有任何课表依据才留空。',
     '- commitments: 数组,每项 {weekday: 1-7(周一=1), start: "HH:mm", end: "HH:mm", label: "事项名"},表示每周固定的新占用',
+    '- tasks: move_task/drop_task/lock_task 指向的任务数组,每项 {subject, title?, date?, targetDate?};',
+    '  date 是任务当前所在日期(用于消歧),move_task 必须给 targetDate',
+    '- newTasks: add_task 要新增的任务数组,每项 {subject, title, date, minutes}',
+    '- scope: adjust_scope 的目标数组,每项 {subject, remainingMinutes?, milestone?, milestoneDate?, milestoneMinutes?, estimated?};至少要给一个数值或日期目标',
     '- note: 从用户原话提取的补充说明,一句话',
     '- summary: 用一句话向用户复述你的理解,不超过 30 字',
     '- needClarify: 布尔,信息不足需要追问时为 true',
     '- clarifyQuestion: 需要追问时的问题,不超过 50 字',
+    '- clarifyOptions: 追问时可点的选项数组 [{label, value}],最多 4 个',
     '规则:',
+    '- 一次只允许一个意图。用户一句话里有多件事(如「明天没空,顺便把数学减一点」)时,先追问要处理哪一件。',
     '- 用户没说清日期时先追问,不要猜测。',
-    '- 「明天」「后天」按给出的今天日期换算。',
+    '- 「明天」「后天」按给出的今天日期换算;所有日期必须在给定窗口内,超出就追问。',
     '- 生病、临时有事按 unavailable;换课表、长期占用按 change_commitment。',
+    '- 挪/删/锁任务时必须先从窗口任务清单里定位到唯一一条;匹配不到或多条匹配就追问,不要猜。',
+    '- add_task 缺日期或时长就追问;adjust_scope 缺目标值就追问。',
+    '- 「别再动数学」「把今天那项锁住」按 lock_task。',
     '- 与备考计划无关的闲聊一律 kind=chat。',
     '- 可能附带最近几轮对话:用户这次说的可能是对上一轮追问的简短确认(如「对」「嗯」「是的」「下午」),',
     '  必须先读懂上一轮助手问了什么,把确认掉的结论并入意图;信息仍缺时只追问缺的那一块,',
@@ -127,6 +181,15 @@ export function buildUserPrompt(input: AdjustIntentInput): string {
     `当前计划涉及的科目:${input.subjects.join('、') || '未知'}`,
     ...(briefLines.length > 0 ? ['', '各科概况:', ...briefLines] : []),
   ]
+  if (input.budget) {
+    lines.push('', `预算:目标 ${input.budget.targetMinutes} 分钟,已排 ${input.budget.scheduledMinutes} 分钟`)
+  }
+  if (input.windowItems?.length) {
+    lines.push('', '窗口内任务(最多 60 条,用于定位「那项」):')
+    for (const item of input.windowItems.slice(0, 60)) {
+      lines.push(`- ${item.planDate} | ${item.subject} | ${item.title} | ${item.minutes} 分钟${item.locked ? ' | 已锁定' : ''}`)
+    }
+  }
   // 只带最近 6 条、每条截 200 字:意图解析不需要完整史,足够定位「对」指的是哪个问题即可
   const history = (input.history ?? []).slice(-6)
   if (history.length > 0) {
@@ -143,12 +206,14 @@ export function buildUserPrompt(input: AdjustIntentInput): string {
 export function normalizeAdjustIntent(raw: any, input: AdjustIntentInput): AdjustIntent {
   const text = (value: unknown, max: number) => typeof value === 'string' ? value.trim().slice(0, max) : ''
   const kind = KINDS.includes(raw?.kind) ? raw.kind as AdjustIntentKind : 'chat'
-  const needClarify = raw?.needClarify === true
+  let needClarify = raw?.needClarify === true
+  let outOfRange = false
+  const inWindow = (day: string) => day >= input.today && day <= input.windowTo
 
-  // 模型给出的日期必须落在调整窗口内(不早于今天、不晚于阶段末),越界一律丢弃
+  // 模型给出的日期必须落在调整窗口内(不早于今天、不晚于窗口末),越界一律丢弃
   const days = Array.isArray(raw?.days)
     ? [...new Set(raw.days.filter((day: unknown) => typeof day === 'string' && DAY_PATTERN.test(day)
-        && day >= input.today && day <= input.windowTo) as string[])].sort()
+        && inWindow(day)) as string[])].sort()
     : []
 
   const windows: AdjustCapacityWindow[] = []
@@ -156,7 +221,7 @@ export function normalizeAdjustIntent(raw: any, input: AdjustIntentInput): Adjus
     for (const entry of raw.windows) {
       const day = typeof entry?.day === 'string' ? entry.day : ''
       const minutes = Math.round(Number(entry?.minutes))
-      if (!DAY_PATTERN.test(day) || day < input.today || day > input.windowTo) continue
+      if (!DAY_PATTERN.test(day) || !inWindow(day)) continue
       if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440) continue
       if (windows.some(existing => existing.day === day)) continue
       windows.push({ day, minutes })
@@ -179,12 +244,93 @@ export function normalizeAdjustIntent(raw: any, input: AdjustIntentInput): Adjus
     }
   }
 
+  const tasks: AdjustTaskRef[] = []
+  if (Array.isArray(raw?.tasks)) {
+    for (const entry of raw.tasks) {
+      const subject = text(entry?.subject, 32)
+      if (!subject) continue
+      const title = text(entry?.title, 64) || undefined
+      const date = text(entry?.date, 10)
+      const targetDate = text(entry?.targetDate, 10)
+      if (date && !DAY_PATTERN.test(date)) continue
+      if (targetDate && !DAY_PATTERN.test(targetDate)) continue
+      if ((date && !inWindow(date)) || (targetDate && !inWindow(targetDate))) outOfRange = true
+      if (tasks.length < 8) tasks.push({ subject, ...(title ? { title } : {}), ...(date ? { date } : {}), ...(targetDate ? { targetDate } : {}) })
+    }
+  }
+
+  const newTasks: AdjustNewTask[] = []
+  if (Array.isArray(raw?.newTasks)) {
+    for (const entry of raw.newTasks) {
+      const subject = text(entry?.subject, 32)
+      const title = text(entry?.title, 64)
+      const date = text(entry?.date, 10)
+      const minutes = Math.round(Number(entry?.minutes))
+      if (date && (!DAY_PATTERN.test(date) || !inWindow(date))) { outOfRange = true; continue }
+      if (!subject || !title) continue
+      newTasks.push({ subject, title, date, minutes: Number.isFinite(minutes) ? Math.max(0, Math.min(480, minutes)) : 0 })
+    }
+  }
+
+  const scope: AdjustScopeItem[] = []
+  if (Array.isArray(raw?.scope)) {
+    for (const entry of raw.scope) {
+      const subject = text(entry?.subject, 32)
+      if (!subject) continue
+      const item: AdjustScopeItem = { subject }
+      const remaining = Math.round(Number(entry?.remainingMinutes))
+      if (Number.isFinite(remaining) && remaining >= 0 && remaining <= 500000) item.remainingMinutes = remaining
+      const milestoneMinutes = Math.round(Number(entry?.milestoneMinutes))
+      if (Number.isFinite(milestoneMinutes) && milestoneMinutes >= 0 && milestoneMinutes <= 500000) item.milestoneMinutes = milestoneMinutes
+      const milestone = text(entry?.milestone, 64)
+      if (milestone) item.milestone = milestone
+      const milestoneDate = text(entry?.milestoneDate, 10)
+      if (milestoneDate && DAY_PATTERN.test(milestoneDate) && inWindow(milestoneDate)) item.milestoneDate = milestoneDate
+      if (typeof entry?.estimated === 'boolean') item.estimated = entry.estimated
+      scope.push(item)
+    }
+  }
+
+  const clarifyOptions = Array.isArray(raw?.clarifyOptions)
+    ? raw.clarifyOptions
+        .map((entry: any) => ({ label: text(entry?.label, 30), value: text(entry?.value, 100) }))
+        .filter((entry: { label: string; value: string }) => entry.label && entry.value)
+        .slice(0, 4)
+    : []
+
   // 降级:解析出的数据撑不起这个 kind,就当闲聊处理(needClarify 优先,让模型先问清楚)
   let finalKind = kind
+  const missingFor = (target: AdjustIntentKind): string => {
+    if (target === 'move_task') return '要把哪一条任务挪到哪天？'
+    if (target === 'add_task') return '要加什么任务、放在哪天、学多久？'
+    if (target === 'drop_task') return '要删掉哪一条任务？'
+    if (target === 'lock_task') return '要锁定哪一条任务或哪个科目？'
+    if (target === 'adjust_scope') return '要把哪一科的目标调成多少？'
+    return '能再说具体一点吗？'
+  }
+  if (outOfRange) {
+    needClarify = true
+  }
   if (!needClarify) {
     if (finalKind === 'unavailable' && days.length === 0 && windows.length === 0) finalKind = 'chat'
     if (finalKind === 'reduce_capacity' && windows.length === 0) finalKind = 'chat'
     if (finalKind === 'change_commitment' && commitments.length === 0) finalKind = 'chat'
+    if (finalKind === 'move_task' && (tasks.length === 0 || tasks.some(task => !task.targetDate))) {
+      finalKind = 'move_task'
+      needClarify = true
+    }
+    if (finalKind === 'add_task' && (newTasks.length === 0 || newTasks.some(task => !task.date || task.minutes <= 0))) {
+      finalKind = 'add_task'
+      needClarify = true
+    }
+    if ((finalKind === 'drop_task' || finalKind === 'lock_task') && tasks.length === 0) {
+      needClarify = true
+    }
+    if (finalKind === 'adjust_scope' && (scope.length === 0
+      || !scope.some(item => item.remainingMinutes !== undefined || item.milestoneMinutes !== undefined
+        || item.milestoneDate !== undefined || item.estimated !== undefined))) {
+      needClarify = true
+    }
   }
 
   // 确定性兜底:模型经常在 note 里写清了「今天 14:00-18:00 有事」「明天整个下午没空」却不产 windows(见实测)。
@@ -225,15 +371,20 @@ export function normalizeAdjustIntent(raw: any, input: AdjustIntentInput): Adjus
   }
 
   const summary = text(raw?.summary, 300) || defaultSummary(finalKind, days, windows, commitments)
+  const clarifyQuestion = text(raw?.clarifyQuestion, 200) || (needClarify ? missingFor(finalKind) : '')
   return {
     kind: finalKind,
     days,
     windows,
     commitments,
+    tasks,
+    newTasks,
+    scope,
     note,
     summary,
     needClarify,
-    clarifyQuestion: text(raw?.clarifyQuestion, 200),
+    clarifyQuestion,
+    clarifyOptions,
   }
 }
 
@@ -254,6 +405,11 @@ function defaultSummary(
       ? `每周固定安排多了${commitments.length}项,重新平衡近期计划`
       : '每周固定安排变了,重新平衡近期计划'
   }
+  if (kind === 'move_task') return '按你说的把任务挪到新日期'
+  if (kind === 'add_task') return '按你说的往计划里加任务'
+  if (kind === 'drop_task') return '按你说的删掉指定任务'
+  if (kind === 'lock_task') return '锁定指定任务,以后 AI 调整不再动它'
+  if (kind === 'adjust_scope') return '按你说的调整科目目标和里程碑'
   return '聊聊近期的备考安排'
 }
 

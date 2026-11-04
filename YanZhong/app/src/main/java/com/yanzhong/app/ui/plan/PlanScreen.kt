@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import com.yanzhong.app.data.remote.AddPlanItemReq
 import com.yanzhong.app.data.remote.AdjustmentDto
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.remote.PlanItemDto
@@ -93,6 +94,12 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
     val updatingItemId by vm.updatingItemId.collectAsStateWithLifecycle()
     val latestAdjustment by vm.latestAdjustment.collectAsStateWithLifecycle()
     val undoing by vm.undoing.collectAsStateWithLifecycle()
+    val editingItem by vm.editingItem.collectAsStateWithLifecycle()
+    val addingAtDate by vm.addingAtDate.collectAsStateWithLifecycle()
+    val editBusy by vm.editBusy.collectAsStateWithLifecycle()
+    val editError by vm.editError.collectAsStateWithLifecycle()
+    val editSuggestShrinkMinutes by vm.editSuggestShrinkMinutes.collectAsStateWithLifecycle()
+    val checkup by vm.checkup.collectAsStateWithLifecycle()
 
     val todayDate = remember(state.today) {
         Instant.ofEpochMilli(state.today).atZone(ZoneId.systemDefault()).toLocalDate()
@@ -148,14 +155,32 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
                                 onDismiss = vm::clearPlanError
                             )
                         }
+                        // 教练卡:服务端体检发现需要干预时,把一句话建议直接带进调整对话
+                        checkup?.suggestedMessage?.takeIf { it.isNotBlank() }?.let { prefill ->
+                            PlanCoachCard(
+                                message = checkup?.suggestion?.takeIf { it.isNotBlank() } ?: prefill,
+                                onAdjust = { navController.navigate(Routes.planInterview("adjust", prefill)) }
+                            )
+                        }
                         ServerPlanSummary(
                             plan = serverPlan!!,
                             today = todayDate,
                             updatingItemId = updatingItemId,
                             latestAdjustment = latestAdjustment,
                             undoing = undoing,
+                            editingItem = editingItem,
+                            addingAtDate = addingAtDate,
+                            editBusy = editBusy,
+                            editError = editError,
+                            editSuggestShrinkMinutes = editSuggestShrinkMinutes,
                             onUndo = vm::undoLatestAdjustment,
                             onToggle = vm::toggleItem,
+                            onOpenEditor = vm::openEditor,
+                            onStartAdding = vm::startAdding,
+                            onCloseEditor = vm::closeEditor,
+                            onEditItem = vm::editItem,
+                            onAddItem = vm::addItem,
+                            onDeleteItem = vm::deleteItem,
                             onOpenSetup = { navController.navigate(Routes.planSetup()) },
                             onOpenAssistant = {
                                 // 显式声明「调整模式」:面谈页只看有没有生效计划的话,这条入口也会被猜成制定
@@ -236,10 +261,37 @@ private fun PlanActionCard(
     }
 }
 
+/**
+ * 教练卡:体检给出的可执行建议。点「让 AI 调整」把这句话原样带进调整对话,
+ * 用户不用自己组织语言,也不会自动改计划——仍然要先确认方案。
+ */
+@Composable
+private fun PlanCoachCard(message: String, onAdjust: () -> Unit) {
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                AppIcons.Sparkles,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("AI 建议", style = MaterialTheme.typography.titleMedium)
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            message,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(8.dp))
+        TextAction("让 AI 调整", onClick = onAdjust, icon = AppIcons.Chat)
+    }
+}
+
 /** 加载卡:三条骨架直接示意"计划即将铺开",不转圈也不整卡脉冲 */
 @Composable
-private fun PlanLoadingCard() {
-    AppCard {
+private fun PlanLoadingCard() {    AppCard {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             SkeletonBlock(Modifier.fillMaxWidth(), height = 14.dp)
             SkeletonBlock(Modifier.fillMaxWidth(0.72f), height = 14.dp)
@@ -256,8 +308,19 @@ private fun ServerPlanSummary(
     updatingItemId: Long?,
     latestAdjustment: AdjustmentDto?,
     undoing: Boolean,
+    editingItem: PlanItemDto?,
+    addingAtDate: String?,
+    editBusy: Boolean,
+    editError: String?,
+    editSuggestShrinkMinutes: Int?,
     onUndo: () -> Unit,
     onToggle: (PlanItemDto) -> Unit,
+    onOpenEditor: (PlanItemDto) -> Unit,
+    onStartAdding: (LocalDate) -> Unit,
+    onCloseEditor: () -> Unit,
+    onEditItem: (PlanItemDto, PlanItemEdit) -> Unit,
+    onAddItem: (AddPlanItemReq) -> Unit,
+    onDeleteItem: (PlanItemDto) -> Unit,
     onOpenSetup: () -> Unit,
     onOpenAssistant: () -> Unit,
     onOpenDocument: () -> Unit,
@@ -274,7 +337,7 @@ private fun ServerPlanSummary(
     val (done, total) = plan.dailyProgress(selectedDate)
     val dayItems = plan.dailyItems(selectedDate)
     val agenda = remember(dayItems) { buildDayAgenda(dayItems) }
-    val busy = updatingItemId != null
+    val busy = updatingItemId != null || editBusy
     if (showDatePicker) {
         val picker = rememberDatePickerState(
             initialSelectedDateMillis = selectedDate.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()
@@ -417,6 +480,7 @@ private fun ServerPlanSummary(
                     onClick = { selectedDateText = today.toString() },
                     enabled = selectedDate != today
                 )
+                TextAction("+ 添加任务", onClick = { onStartAdding(selectedDate) }, enabled = !busy)
                 TextAction("选日期", onClick = { showDatePicker = true })
             }
             Spacer(Modifier.height(6.dp))
@@ -440,11 +504,48 @@ private fun ServerPlanSummary(
                     AgendaSlotHeader(slot)
                     slot.items.forEachIndexed { index, entry ->
                         if (index > 0) RowDivider(startIndent = 48.dp)
-                        AgendaTaskRow(entry = entry, busy = busy, onToggle = onToggle)
+                        AgendaTaskRow(entry = entry, busy = busy,
+                            onToggle = onToggle, onEdit = onOpenEditor)
                     }
                 }
             }
         }
+    }
+
+    val addDate = addingAtDate
+    if (editingItem != null || addDate != null) {
+        val subjectOptions = remember(plan.items, editingItem) {
+            (plan.items.map { it.subject } + listOf("复盘") + listOfNotNull(editingItem?.subject))
+                .filter { it.isNotBlank() }
+                .distinct()
+        }
+        PlanItemEditSheet(
+            initial = editingItem,
+            defaultDate = addDate ?: selectedDate.toString(),
+            subjectOptions = subjectOptions,
+            busy = editBusy,
+            error = editError,
+            suggestShrinkMinutes = editSuggestShrinkMinutes,
+            onSave = { edit ->
+                val target = editingItem
+                if (target != null) {
+                    onEditItem(target, edit)
+                } else {
+                    onAddItem(
+                        AddPlanItemReq(
+                            planId = plan.id,
+                            subject = edit.subject ?: subjectOptions.firstOrNull().orEmpty(),
+                            title = edit.title.orEmpty(),
+                            planDate = edit.planDate ?: selectedDate.toString(),
+                            minutes = edit.minutes ?: 30,
+                            locked = edit.locked
+                        )
+                    )
+                }
+            },
+            onDelete = onDeleteItem,
+            onDismiss = onCloseEditor
+        )
     }
 }
 
@@ -502,19 +603,18 @@ private fun AgendaSlotHeader(slot: AgendaSlot) {
     }
 }
 
-/** 单条计划:精确起止时间用主色突出,科目与时长退到次级信息 */
+/** 单条计划:勾选与编辑拆成两个触达区,锁定的任务带锁图标 */
 @Composable
 private fun AgendaTaskRow(
     entry: AgendaItem,
     busy: Boolean,
-    onToggle: (PlanItemDto) -> Unit
+    onToggle: (PlanItemDto) -> Unit,
+    onEdit: (PlanItemDto) -> Unit
 ) {
     val item = entry.item
     val done = item.status == "done"
     Row(
-        Modifier
-            .fillMaxWidth()
-            .clickable(enabled = !busy) { onToggle(item) },
+        Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
         CompletionCircle(
@@ -529,15 +629,28 @@ private fun AgendaTaskRow(
                 .background(planSubjectColor(item.subject))
         )
         Spacer(Modifier.width(10.dp))
-        Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
-            Text(
-                item.title,
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
-                textDecoration = if (done) TextDecoration.LineThrough else null,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+        Column(
+            Modifier
+                .weight(1f)
+                .clickable(enabled = !busy) { onEdit(item) }
+                .padding(vertical = 6.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (item.locked) {
+                    Icon(AppIcons.Lock, contentDescription = "已锁定",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp))
+                    Spacer(Modifier.width(4.dp))
+                }
+                Text(
+                    item.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                    textDecoration = if (done) TextDecoration.LineThrough else null,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
             Spacer(Modifier.height(2.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 entry.timeRange?.let { range ->
