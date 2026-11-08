@@ -495,7 +495,10 @@ internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
     )
 
     Spacer(Modifier.height(20.dp))
-    FieldLabel("有课表就传一张,我替你认", "单双周课表都行。认出来的占用会列在下面,和实际不符的直接删掉")
+    FieldLabel(
+        "有课表就传一张,我替你认",
+        "认出来的上课时间会列在下面,和实际不符的直接删掉。单双周的课会标出来,但要生效得填下面那个开学周"
+    )
     Spacer(Modifier.height(8.dp))
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) vm.parseTimetable(uri)
@@ -525,28 +528,68 @@ internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
         OnboardingMessage(state.timetableNotice, state.timetableNoticeIsError)
     }
 
+    Spacer(Modifier.height(16.dp))
+    FieldLabel(
+        "校历第 1 周是哪天(填那周的周一)",
+        "单双周要靠它才能落到具体日期。不填也行,那样单双周的课会保守按每周都上算"
+    )
+    Spacer(Modifier.height(8.dp))
+    var termAnchor by remember(state.termWeekOneStart) { mutableStateOf(state.termWeekOneStart) }
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(
+            value = termAnchor,
+            onValueChange = { termAnchor = it.take(10) },
+            label = { Text("比如 2026-09-07") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { vm.setTermWeekOneStart(termAnchor) }),
+            shape = MaterialTheme.shapes.medium,
+            modifier = Modifier.weight(1f)
+        )
+        Spacer(Modifier.width(8.dp))
+        SecondaryButton(
+            text = "记下",
+            onClick = { vm.setTermWeekOneStart(termAnchor) },
+            modifier = Modifier.width(88.dp)
+        )
+    }
+
     if (state.commitments.isNotEmpty()) {
         Spacer(Modifier.height(16.dp))
-        FieldLabel("已经记下的固定占用", "每周固定被占掉的时间,排课时不会往里塞任务")
+        FieldLabel("已经记下的固定占用", "每周固定被占掉的时间,排课时不会往里塞任务。点「单周/双周/每周」可以切换")
+        if (state.commitments.any { parityLabel(it.weekParity) != "每周" } && state.termWeekOneStart.isBlank()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "有课标了单双周,但还没填校历第 1 周 —— 现在会保守按每周都上算,填了才分得开",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Spacer(Modifier.height(4.dp))
         state.commitments.forEachIndexed { index, item ->
             ListRow(
                 title = "周${WEEKDAY_LABELS[item.weekday - 1]} ${item.start}-${item.end}  ${item.label}",
                 trailing = {
-                    TextAction(
-                        text = "删掉",
-                        onClick = { vm.removeCommitment(index) },
-                        danger = true
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextAction(
+                            text = parityLabel(item.weekParity),
+                            onClick = { vm.cycleCommitmentParity(index) }
+                        )
+                        TextAction(
+                            text = "删掉",
+                            onClick = { vm.removeCommitment(index) },
+                            danger = true
+                        )
+                    }
                 }
             )
         }
     }
 
     Spacer(Modifier.height(16.dp))
-    FieldLabel("没有课表?手动补一条", "上课、上班、通勤这类每周固定占掉的时间,补几条就够")
+    FieldLabel("没有课表?手动补一条", "上课、上班、通勤这类每周固定占掉的时间,补几条就够;只在单周或双周上的课,上面选一下")
     Spacer(Modifier.height(8.dp))
-    ManualCommitmentRow { weekday, start, end, label -> vm.addCommitment(weekday, start, end, label) }
+    ManualCommitmentRow { weekday, start, end, label, parity -> vm.addCommitment(weekday, start, end, label, parity) }
 }
 
 /** 课表里的一个钟点窗口胶囊:显示 "08:30-11:30",点一下删除(48dp 触达) */
@@ -679,17 +722,27 @@ private fun WindowEditorDialog(weekday: Int, onDismiss: () -> Unit, onAdd: (Stri
 }
 
 @Composable
-private fun ManualCommitmentRow(onAdd: (Int, String, String, String) -> Boolean) {
+private fun ManualCommitmentRow(onAdd: (Int, String, String, String, String?) -> Boolean) {
     var weekday by remember { mutableStateOf(1) }
     var label by remember { mutableStateOf("") }
     var start by remember { mutableStateOf("") }
     var end by remember { mutableStateOf("") }
+    // 0 = 每周都占,1 = 单周,2 = 双周
+    var parityIndex by remember { mutableStateOf(0) }
+    val parityOptions = listOf("每周", "单周", "双周")
+    val parityValue = listOf<String?>(null, "odd", "even")[parityIndex]
 
     Column {
         SegmentedChips(
             options = (1..7).map { "周${WEEKDAY_LABELS[it - 1]}" },
             selectedIndex = weekday - 1,
             onSelect = { weekday = it + 1 }
+        )
+        Spacer(Modifier.height(8.dp))
+        SegmentedChips(
+            options = parityOptions,
+            selectedIndex = parityIndex,
+            onSelect = { parityIndex = it }
         )
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
@@ -728,7 +781,7 @@ private fun ManualCommitmentRow(onAdd: (Int, String, String, String) -> Boolean)
             text = "记下这条",
             onClick = {
                 // 只有真记下了才清空:校验没过(时间格式/先后顺序)留着让用户改,不白打一遍
-                if (onAdd(weekday, start, end, label)) {
+                if (onAdd(weekday, start, end, label, parityValue)) {
                     label = ""
                     start = ""
                     end = ""
