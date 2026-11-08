@@ -249,13 +249,16 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                     _ui.update { s -> s.copy(phase = OnboardingPhase.SUCCESS, profile = p) }
                 } else {
                     // 老账号可能只有半份档案:能回填的全部回填,别让人重填一遍
+                    // 只有「直接落在最后一题」这一种情况才在这里铺网格:从第 1 题走起的人不铺,
+                    // 他的网格要等第 2 题勾完时段、由 next() 去铺 —— 提前铺只会拿默认时段盖住他的选择
+                    val landsOnLastStep = manage && p?.isComplete == true
                     _ui.update { s ->
                         s.copy(
                             phase = OnboardingPhase.EDITING,
                             // 主动来改档案、且档案本来就完整:直接落在最后一题。
                             // 上次的答案已全部回填,没必要再从第 1 题一路点「下一步」重走一遍;
                             // 真要改前面的题,点「返回上一步」即可。
-                            step = if (manage && p?.isComplete == true) ONBOARDING_STEPS - 1 else 0,
+                            step = if (landsOnLastStep) ONBOARDING_STEPS - 1 else 0,
                             profile = p,
                             profileSaved = p != null,
                             targetType = p?.targetType?.takeIf { it in TARGET_TYPES } ?: s.targetType,
@@ -266,13 +269,18 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                             // 之前答过的正式科目与真实空闲一并回填:重填问卷不该把上次确认过的事实抹掉
                             examSubjects = p?.brief?.examSubjects?.map { it.name }?.toSet()?.takeIf { it.isNotEmpty() }
                                 ?: s.examSubjects,
-                            // 主动来改档案时可能直接落在最后一题,这一屏的网格同样要铺满;
+                            // 直接落在最后一题时这一屏的网格要铺满;
                             // 档案里回填过真实空闲的话,seedAvailability 会原样返回不覆盖
-                            availability = seedAvailability(
-                                p?.studyWindows?.toSet()?.takeIf { it.isNotEmpty() } ?: s.studyWindows,
+                            availability = if (landsOnLastStep) {
+                                seedAvailability(
+                                    p?.studyWindows?.toSet()?.takeIf { it.isNotEmpty() } ?: s.studyWindows,
+                                    p?.brief?.let { briefToGrid(it.availability) }?.takeIf { it.isNotEmpty() }
+                                        ?: s.availability
+                                )
+                            } else {
                                 p?.brief?.let { briefToGrid(it.availability) }?.takeIf { it.isNotEmpty() }
                                     ?: s.availability
-                            ),
+                            },
                             commitments = p?.brief?.fixedCommitments?.takeIf { it.isNotEmpty() } ?: s.commitments
                         )
                     }
