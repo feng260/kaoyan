@@ -441,9 +441,15 @@ test('upsertProfile: 老载荷不带锚点时保留已确认的校历第 1 周',
   const availability = [{ weekday: 1, windows: [{ start: '08:00', end: '12:00' }] }]
   await service.upsertProfile(USER, validProfile({ availability, termWeekOneStart: '2026-09-07' }) as any)
 
-  await service.upsertProfile(USER, validProfile({ availability }) as any)
+  // 第二次故意换一个 weekday:既证明这次 update 真的重写了 briefJson(不是读到旧值假绿),
+  // 又证明重写时锚点没有被清掉
+  await service.upsertProfile(USER, validProfile({
+    availability: [{ weekday: 2, windows: [{ start: '08:00', end: '12:00' }] }],
+  }) as any)
 
-  assert.equal(JSON.parse(fake.state.profiles[0].briefJson).termWeekOneStart, '2026-09-07')
+  const stored = JSON.parse(fake.state.profiles[0].briefJson)
+  assert.equal(stored.availability[0].weekday, 2)
+  assert.equal(stored.termWeekOneStart, '2026-09-07')
 })
 
 test('upsertProfile: 载荷带了新锚点时覆盖旧值', async () => {

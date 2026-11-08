@@ -318,9 +318,9 @@ test('profileInputSchema: 非法 weekParity 被挡下', () => {
   assert.equal(parsed.success, false)
 })
 
-test('profileInputSchema: 格式不合法的锚点报的是格式提示,不是「日期不存在」', () => {
-  // 六个坏样本里只有 2026/09/07 这类能触发 regex;只断言 success=false 的话,
-  // 删掉 .regex 仍然全绿(refine 会把它们都拦下),所以必须钉住具体消息
+test('profileInputSchema: 格式不合法的锚点至少报出格式提示', () => {
+  // 六个坏样本里 '2026-02-30'/'2026-13-01' 只由 refine 拦下,其余四个靠 regex;
+  // 只断言 success=false 的话,删掉 .regex 仍然全绿,所以必须钉住具体消息
   const parsed = profileInputSchema.safeParse({ ...validPayload(), termWeekOneStart: '2026/09/07' })
   assert.equal(parsed.success, false)
   if (!parsed.success) {
@@ -329,7 +329,7 @@ test('profileInputSchema: 格式不合法的锚点报的是格式提示,不是�
   }
 })
 
-test('profileInputSchema: 锚点与 parity 传 null 都被拒(客户端只能省略键或发空串)', () => {
+test('profileInputSchema: 锚点与 parity 传 null 都被拒(parity 连空串都不行,只能省略键)', () => {
   // App 端 kotlinx.serialization 默认 explicitNulls=true:DTO 写成 String? = null 会发出 "key":null。
   // 这条把契约钉死 —— 客户端用 @EncodeDefault(NEVER) 或不发该键,服务端不放宽成 nullish
   assert.equal(profileInputSchema.safeParse({ ...validPayload(), termWeekOneStart: null }).success, false)
