@@ -278,3 +278,42 @@ test('an estimated milestone is kept but drops out of the capacity gate', () => 
   assert.equal(result.ready, true)
   assert.deepEqual(result.deficits, [])
 })
+
+test('profileInputSchema: 接受校历第 1 周与占用的单双周标记', () => {
+  const parsed = profileInputSchema.parse({
+    ...validPayload(),
+    termWeekOneStart: '2026-09-07',
+    fixedCommitments: [
+      { weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: 'odd' },
+      { weekday: 5, start: '10:00', end: '11:40', label: '编译原理' },
+    ],
+    commitmentsConfirmed: true,
+  })
+  assert.equal(parsed.termWeekOneStart, '2026-09-07')
+  assert.equal(parsed.fixedCommitments[0].weekParity, 'odd')
+  assert.equal(parsed.fixedCommitments[1].weekParity, undefined)
+})
+
+test('profileInputSchema: 老客户端不带新字段时锚点默认空串', () => {
+  const parsed = profileInputSchema.parse(validPayload())
+  assert.equal(parsed.termWeekOneStart, '')
+})
+
+test('profileInputSchema: 非法校历第 1 周被挡下', () => {
+  // 后两个样本是「格式对但日期不存在」:V8 会把 02-30 静默进位成 03-02、月份越界给 Invalid Date,
+  // 必须在入口就挡掉,不能让 briefJson 存进一个读回时会被归一成空串的脏值
+  for (const bad of ['2026-9-7', '下周一', '2026/09/07', '20260907', '2026-02-30', '2026-13-01']) {
+    const parsed = profileInputSchema.safeParse({ ...validPayload(), termWeekOneStart: bad })
+    assert.equal(parsed.success, false, `${bad} 本该被拒绝`)
+  }
+})
+
+test('profileInputSchema: 非法 weekParity 被挡下', () => {
+  // 必须报错而不是静默剥离:剥掉会让客户端以为「单周」存进去了,容量却按每周都占算
+  const parsed = profileInputSchema.safeParse({
+    ...validPayload(),
+    fixedCommitments: [{ weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: '单周' }],
+    commitmentsConfirmed: true,
+  })
+  assert.equal(parsed.success, false)
+})

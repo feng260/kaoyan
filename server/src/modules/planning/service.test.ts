@@ -1738,6 +1738,28 @@ test('change_commitment:确认前档案与计划不变,确认后按新容量顺�
   assert.deepEqual(JSON.parse(fake.state.profiles[0].briefJson), originalBrief)
 })
 
+test('change_commitment:同一时段的单周与双周占用是两条,不会互相吞掉', async () => {
+  // 去重键必须与 mergeBrief / 课表上传合并同构(四个时段字段 + parity):
+  // 只按时段+名称去重会把「单周实习」和「双周实习」当成同一条,确认后用户少掉一条占用
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [{ day: 1, minutes: 60, title: '阅读真题' }])
+  const weekday = weekdayOf(dayIso(1))
+  const service = serviceWithAdjust(fake, {
+    kind: 'change_commitment',
+    commitments: [
+      { weekday, start: '19:00', end: '20:00', label: '实习', weekParity: 'odd' },
+      { weekday, start: '19:00', end: '20:00', label: '实习', weekParity: 'even' },
+    ],
+    summary: '单双周各一小时实习',
+  })
+
+  const result = await service.adjust(USER, { message: '单周和双周那天晚上都有实习' })
+  assert.ok(result.adjustment)
+  const after = JSON.parse(fake.state.adjustments[0].profileAfterJson)
+  assert.equal(after.fixedCommitments.length, 2)
+  assert.deepEqual(after.fixedCommitments.map((item: Row) => item.weekParity).sort(), ['even', 'odd'])
+})
+
 test('adjust_scope:只改目标且任务量够用 → 零变动调整单,确认后写档案', async () => {
   const fake = createFakeDb()
   await seedActivePlan(fake, USER, [

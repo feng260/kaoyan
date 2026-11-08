@@ -138,6 +138,8 @@ const fixedCommitmentsSchema = z.preprocess(
           start: timeSchema,
           end: timeSchema,
           label: z.string().trim().min(1, '固定占用需要说明是什么事').max(16),
+          // 省略 = 每周都占。单双周只在填了 termWeekOneStart 时才真正参与容量计算
+          weekParity: z.enum(['odd', 'even']).optional(),
         })
         .refine(c => clockMinutes(c.start) < clockMinutes(c.end), '结束时间需要晚于开始时间'),
     )
@@ -170,6 +172,23 @@ export const profileInputSchema = z.object({
   examSubjects: examSubjectsSchema,
   availability: availabilitySchema,
   fixedCommitments: fixedCommitmentsSchema,
+  // 校历第 1 周的周一。空串表示不启用单双周(老客户端、或用户没填),
+  // 此时带 weekParity 的占用保守按每周都占计算
+  termWeekOneStart: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, '校历第 1 周要写成 2026-09-07 这样(年月日全都要)')
+    // 正则挡不住不存在的日期:格式合法但已失效的值会穿过去存进 briefJson,
+    // 而 normalizeBrief 读回时把它归一成空串 —— 接口说「存好了」、用户看到的日期却没生效
+    .refine(value => {
+      if (value === '') return true
+      const parsed = new Date(`${value}T00:00:00.000Z`)
+      // 日溢出(2026-02-30)会被 V8 静默进位成 3 月 2 日,只有往返比对挡得住;月份越界给 Invalid Date
+      return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
+    }, '校历第 1 周不是一个真实存在的日期')
+    .optional()
+    .or(z.literal(''))
+    .default(''),
   availabilityConfirmed: z.boolean().default(false),
   commitmentsConfirmed: z.boolean().default(false),
 })

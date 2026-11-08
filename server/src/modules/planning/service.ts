@@ -174,7 +174,7 @@ export interface BriefPatchSubjectInput {
 
 export interface BriefPatchInput {
   examSubjects?: BriefPatchSubjectInput[]
-  fixedCommitments?: Array<{ weekday: number; start: string; end: string; label: string }>
+  fixedCommitments?: Array<{ weekday: number; start: string; end: string; label: string; weekParity?: 'odd' | 'even' }>
 }
 
 export interface PlanItemEditInput {
@@ -1026,6 +1026,8 @@ function applyProfileFacts(brief: PlanBrief, input: ProfileInput): PlanBrief {
     availability: input.availability.length ? input.availability : brief.availability,
     availabilityConfirmed: brief.availabilityConfirmed || input.availabilityConfirmed,
     fixedCommitments: input.commitmentsConfirmed ? input.fixedCommitments : brief.fixedCommitments,
+    // 问卷没填校历第 1 周时保留旧锚点:老客户端提交档案不该把面谈里补过的开学周清掉
+    termWeekOneStart: input.termWeekOneStart || brief.termWeekOneStart || '',
     commitmentsConfirmed: brief.commitmentsConfirmed || input.commitmentsConfirmed,
   }
 }
@@ -1052,8 +1054,11 @@ function withCommitments(brief: PlanBrief, commitments: BriefPatchInput['fixedCo
   const incoming = commitments ?? []
   const merged = [...next.fixedCommitments]
   for (const item of incoming) {
+    // 去重键要含 parity:同一时段可以是「单周」和「双周」两条,只按时段+名称比会把其中一条吞掉。
+    // 与 mergeBrief、课表上传合并保持同一套键
     if (!merged.some(existing => existing.weekday === item.weekday
-      && existing.start === item.start && existing.end === item.end && existing.label === item.label)) {
+      && existing.start === item.start && existing.end === item.end && existing.label === item.label
+      && (existing.weekParity ?? '') === (item.weekParity ?? ''))) {
       merged.push(item)
     }
   }
@@ -1670,8 +1675,11 @@ export function createPlanningService(
         // 识别出的课程是「用户上传并确认过的事实」,因此把确认位置 true;
         // 与已有占用合并去重,重复上传同一张课表不会翻倍。
         const known = base.fixedCommitments
+        // 与 mergeBrief / withCommitments 同一套去重键(含 parity):否则重复上传同一张课表时,
+        // 「单周 A」和「双周 A」会被当成同一条,吞掉一条
         const added = result.fixedCommitments.filter(item => !known.some(existing => existing.weekday === item.weekday
-          && existing.start === item.start && existing.end === item.end && existing.label === item.label))
+          && existing.start === item.start && existing.end === item.end && existing.label === item.label
+          && (existing.weekParity ?? '') === (item.weekParity ?? '')))
         await db.userProfile.update({
           where: { userGuid },
           data: {
