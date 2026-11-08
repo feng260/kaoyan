@@ -239,6 +239,17 @@ internal fun normalizeTermAnchor(raw: String): String {
     }
 }
 
+/**
+ * 回填校历第 1 周:档案里有合法锚点就用它,否则沿用当前值。
+ *
+ * 服务端把空串当「用户显式清除」,而 App 每次保存都会把状态里的锚点发出去 ——
+ * 档案里的空串不能拿来覆盖用户本次输入,否则一次「补档案」就悄悄抹掉开学周。
+ */
+internal fun resolveLoadedTermAnchor(profileAnchor: String?, current: String): String {
+    val loaded = normalizeTermAnchor(profileAnchor.orEmpty())
+    return if (loaded.isEmpty()) current else loaded
+}
+
 class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     private val yanzhongApp = app as YanZhongApp
     private val repo = yanzhongApp.repository
@@ -349,8 +360,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                                 s.availability
                             ),
                             commitments = p?.brief?.fixedCommitments?.takeIf { it.isNotEmpty() } ?: s.commitments,
-                            termWeekOneStart = p?.brief?.termWeekOneStart?.takeIf { it.isNotBlank() }
-                                ?: s.termWeekOneStart
+                            termWeekOneStart = resolveLoadedTermAnchor(p?.brief?.termWeekOneStart, s.termWeekOneStart)
                         )
                     }
                 }
@@ -656,7 +666,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         return true
     }
 
-    /** 单双周要靠校历第 1 周才能落到具体日期;非法输入归一为空串(= 不启用) */
+    /** 单双周要靠校历第 1 周才能落到具体日期;非法输入提示格式并保留原值,留空才清空锚点 */
     fun setTermWeekOneStart(raw: String) {
         val normalized = normalizeTermAnchor(raw)
         _ui.update {

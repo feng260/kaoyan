@@ -38,4 +38,14 @@ class OnboardingCommitmentParityTest {
         assertEquals("", normalizeTermAnchor(""))
         assertEquals("", normalizeTermAnchor("2026-02-30"))
     }
+
+    @Test
+    fun `回填档案锚点时不拿空串覆盖本次输入`() {
+        // App 每次保存都会把状态里的锚点发出去,服务端把空串当「显式清除」;
+        // 档案里没有锚点时沿用当前值,否则一次「补档案」就悄悄抹掉开学周
+        assertEquals("2026-09-07", resolveLoadedTermAnchor("2026-09-07", ""))
+        assertEquals("2026-03-02", resolveLoadedTermAnchor("", "2026-03-02"))
+        assertEquals("2026-03-02", resolveLoadedTermAnchor(null, "2026-03-02"))
+        assertEquals("2026-03-02", resolveLoadedTermAnchor("2026-02-30", "2026-03-02"))
+    }
 }
