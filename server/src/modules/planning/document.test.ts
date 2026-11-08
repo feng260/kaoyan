@@ -165,7 +165,7 @@ test('netAvailableMinutes: 早于开学周的日期退回保守口径', () => {
   assert.equal(netAvailableMinutes(brief, utc('2026-09-02')), 600 - 100)
 })
 
-test('freeSlots: 双周有课的那天被切成两段,奇周是一整段', () => {
+test('freeSlots: 双周有课的那天空闲从课后开始,奇周是一整段', () => {
   const brief = parityBrief('even')
   assert.deepEqual(freeSlots(brief, utc('2026-09-16')), [{ start: '09:40', end: '18:00' }])
   assert.deepEqual(freeSlots(brief, utc('2026-09-23')), [{ start: '08:00', end: '18:00' }])
