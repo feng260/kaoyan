@@ -198,3 +198,19 @@ test('daySchedule: 区间内的占用同样按单双周过滤', () => {
   // 2026-09-23 是第 3 周的周三(奇周):区间里那条双周占用不生效,只扣平时那条
   assert.equal(netAvailableMinutes(brief, utc('2026-09-23')), 600 - 100)
 })
+
+test('normalizeBrief: 课表识别的原始 JSON 能带着单双周穿过收敛层', () => {
+  // timetable.ts 用 normalizeBrief 收敛模型输出,parity 必须活下来
+  const brief = normalizeBrief({
+    fixedCommitments: [
+      { weekday: 1, start: '08:00', end: '09:40', label: '高等数学' },
+      { weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: 'odd' },
+      { weekday: 3, start: '10:00', end: '11:40', label: '课程(待确认)', weekParity: 'EVEN' },
+    ],
+    commitmentsConfirmed: true,
+  })
+  assert.equal(brief.fixedCommitments.length, 3)
+  assert.equal(brief.fixedCommitments[0].weekParity, undefined)
+  assert.equal(brief.fixedCommitments[1].weekParity, 'odd')
+  assert.equal(brief.fixedCommitments[2].weekParity, undefined, '大写 EVEN 属非法值,只丢属性')
+})

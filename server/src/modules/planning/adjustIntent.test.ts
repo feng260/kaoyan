@@ -287,3 +287,24 @@ test('clarifyOptions 原样保留并最多 4 个', () => {
   }, input)
   assert.deepEqual(intent.clarifyOptions.map(option => option.label), ['A', 'B', 'C', 'D'])
 })
+
+test('commitments:单双周标注被保留,非法值只丢属性,同键不同 parity 不去重', () => {
+  // withCommitments 的去重键含 parity。若这里在归一阶段就把 parity 丢掉,
+  // 「单周实习 + 双周实习」会在这里被合成一条,下游再也分不开
+  const intent = normalizeAdjustIntent({
+    kind: 'change_commitment',
+    commitments: [
+      { weekday: 4, start: '19:00', end: '21:00', label: '实习', weekParity: 'odd' },
+      { weekday: 4, start: '19:00', end: '21:00', label: '实习', weekParity: 'even' },
+      { weekday: 4, start: '19:00', end: '21:00', label: '重复的 odd', weekParity: 'odd' },
+      { weekday: 4, start: '19:00', end: '21:00', label: '重复的 odd', weekParity: 'odd' },
+      { weekday: 5, start: '08:00', end: '10:00', label: '早课', weekParity: '单周' },
+    ],
+  }, input)
+  assert.deepEqual(intent.commitments, [
+    { weekday: 4, start: '19:00', end: '21:00', label: '实习', weekParity: 'odd' },
+    { weekday: 4, start: '19:00', end: '21:00', label: '实习', weekParity: 'even' },
+    { weekday: 4, start: '19:00', end: '21:00', label: '重复的 odd', weekParity: 'odd' },
+    { weekday: 5, start: '08:00', end: '10:00', label: '早课' },
+  ])
+})

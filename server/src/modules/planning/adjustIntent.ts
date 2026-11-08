@@ -22,6 +22,8 @@ export interface AdjustCommitment {
   start: string
   end: string
   label: string
+  /** 省略 = 每周都占;odd/even 由 daySchedule 按校历锚点判定 */
+  weekParity?: 'odd' | 'even'
 }
 
 /** reduce_capacity:某天可用时间只剩 minutes 分钟 */
@@ -139,7 +141,9 @@ function buildSystemPrompt(): string {
     '- windows: 数组,每项 {day: "YYYY-MM-DD", minutes: 数字},minutes = 用户当天扣除没空时段后「还能学」的总分钟数,',
     '  按该日课表净空闲总分钟 − 没空时段与课表重叠的分钟估算(取 5 的倍数即可);',
     '  禁止把没空时长本身填进 minutes;能从课表算就一定给出估算值,确实没有任何课表依据才留空。',
-    '- commitments: 数组,每项 {weekday: 1-7(周一=1), start: "HH:mm", end: "HH:mm", label: "事项名"},表示每周固定的新占用',
+    '- commitments: 数组,每项 {weekday: 1-7(周一=1), start: "HH:mm", end: "HH:mm", label: "事项名", weekParity?: "odd"|"even"},表示每周固定的新占用;',
+    '  用户说是单周(如「1-16 周单周」)填 "odd"、双周填 "even";没提周次就省略 weekParity,',
+    '  不要猜,也不要写 null 或空串。',
     '- tasks: move_task/drop_task/lock_task 指向的任务数组,每项 {subject, title?, date?, targetDate?};',
     '  date 是任务当前所在日期(用于消歧),move_task 必须给 targetDate',
     '- newTasks: add_task 要新增的任务数组,每项 {subject, title, date, minutes}',
@@ -238,9 +242,13 @@ export function normalizeAdjustIntent(raw: any, input: AdjustIntentInput): Adjus
       const label = text(entry?.label, 60) || '固定占用'
       if (!Number.isInteger(weekday) || weekday < 1 || weekday > 7) continue
       if (!TIME_PATTERN.test(start) || !TIME_PATTERN.test(end) || start >= end) continue
+      // 非法 parity 只丢属性不丢整条:说错「单周」不该让整条占用消失,退化成每周都占更安全
+      const parity = entry?.weekParity
+      const weekParity = parity === 'odd' || parity === 'even' ? parity : undefined
       if (commitments.some(existing => existing.weekday === weekday && existing.start === start
-        && existing.end === end && existing.label === label)) continue
-      commitments.push({ weekday, start, end, label })
+        && existing.end === end && existing.label === label
+        && (existing.weekParity ?? '') === (weekParity ?? ''))) continue
+      commitments.push({ weekday, start, end, label, ...(weekParity ? { weekParity } : {}) })
     }
   }
 
