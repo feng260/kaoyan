@@ -194,3 +194,29 @@ export const profileInputSchema = z.object({
 })
 
 export type ProfileInput = z.infer<typeof profileInputSchema>
+
+/**
+ * 口径手工修改:逐科剩余量/里程碑与每周固定占用。
+ * 放在这里而不是 routes.ts,是为了能直接单测 —— 路由文件会牵出 router/service/db 整条依赖链。
+ */
+export const briefPatchSchema = z.object({
+  examSubjects: z.array(z.object({
+    name: z.string().trim().min(1).max(32),
+    remainingMinutes: z.number().int().min(0).max(500000).nullish(),
+    milestone: z.string().max(64).nullish(),
+    // 空串表示「清掉截止日」,和未填一样按不修改处理
+    milestoneDate: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal('')]).nullish(),
+    milestoneMinutes: z.number().int().min(0).max(500000).nullish(),
+    estimated: z.boolean().nullish(),
+    scope: z.string().max(500).nullish(),
+    progress: z.string().max(500).nullish(),
+  })).max(20).nullish(),
+  fixedCommitments: z.array(z.object({
+    weekday: z.number().int().min(1).max(7),
+    start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    label: z.string().trim().min(1).max(32),
+    // 省略 = 每周都占。Zod 默认会剥掉未声明的键,少这一行会让手工改口径的入口静默丢掉单双周标记
+    weekParity: z.enum(['odd', 'even']).optional(),
+  })).max(40).nullish(),
+})

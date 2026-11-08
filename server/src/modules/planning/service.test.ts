@@ -433,6 +433,30 @@ test('upsertProfile overwrites an existing profile for the same user only', asyn
   assert.equal((await service.getProfile('other-user'))!.dailyMinutes, 60)
 })
 
+test('upsertProfile: 老载荷不带锚点时保留已确认的校历第 1 周', async () => {
+  // 面谈/课表识别补过开学周后,老客户端重填问卷不会发 termWeekOneStart ——
+  // 此时不能把锚点清成空串,否则整张课表的单双周判定退回「每周都占」
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  const availability = [{ weekday: 1, windows: [{ start: '08:00', end: '12:00' }] }]
+  await service.upsertProfile(USER, validProfile({ availability, termWeekOneStart: '2026-09-07' }) as any)
+
+  await service.upsertProfile(USER, validProfile({ availability }) as any)
+
+  assert.equal(JSON.parse(fake.state.profiles[0].briefJson).termWeekOneStart, '2026-09-07')
+})
+
+test('upsertProfile: 载荷带了新锚点时覆盖旧值', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  const availability = [{ weekday: 1, windows: [{ start: '08:00', end: '12:00' }] }]
+  await service.upsertProfile(USER, validProfile({ availability, termWeekOneStart: '2026-09-07' }) as any)
+
+  await service.upsertProfile(USER, validProfile({ availability, termWeekOneStart: '2027-02-22' }) as any)
+
+  assert.equal(JSON.parse(fake.state.profiles[0].briefJson).termWeekOneStart, '2027-02-22')
+})
+
 test('setItemStatus persists completion time and clears it when reopened', async () => {
   const fake = createFakeDb()
   const service = serviceWithConfirmedSubject(fake)
@@ -1572,10 +1596,13 @@ test('brief/overview:手工改口径可回读,草案预算按实排统计', asyn
 
   const payload = await service.patchBrief(USER, {
     examSubjects: [{ name: '英语一', remainingMinutes: 240 }],
-    fixedCommitments: [{ weekday: weekdayOf(dayIso(1)), start: '09:00', end: '10:00', label: '早课' }],
+    fixedCommitments: [{ weekday: weekdayOf(dayIso(1)), start: '09:00', end: '10:00', label: '早课', weekParity: 'odd' }],
   })
   assert.equal(payload.brief.examSubjects[0].remainingMinutes, 240)
   assert.equal(payload.brief.fixedCommitments.length, 1)
+  // service 层直接赋值,不做 schema 解析 —— 透传由这条锁,剥离由 schemas.test.ts 的
+  // briefPatchSchema 用例锁,两层各管一半
+  assert.equal(payload.brief.fixedCommitments[0].weekParity, 'odd')
   assert.ok(payload.budget)
 
   const overview = await service.getPlanOverview(USER, 900)
@@ -1749,6 +1776,8 @@ test('change_commitment:同一时段的单周与双周占用是两条,不会互�
     commitments: [
       { weekday, start: '19:00', end: '20:00', label: '实习', weekParity: 'odd' },
       { weekday, start: '19:00', end: '20:00', label: '实习', weekParity: 'even' },
+      // 与第一条完全同键(含 parity):去重键若漏了 parity、或干脆不去重,下面的长度断言会红
+      { weekday, start: '19:00', end: '20:00', label: '实习', weekParity: 'odd' },
     ],
     summary: '单双周各一小时实习',
   })

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { profileInputSchema, SUPPORTED_TARGET_TYPES } from './schemas'
+import { briefPatchSchema, profileInputSchema, SUPPORTED_TARGET_TYPES } from './schemas'
 import { normalizeBrief, briefIsEmpty, assessPlanningFacts, documentMatchesSubjects, mergeBrief } from './document'
 import { KAOYAN_KNOWN_SUBJECT_NAMES } from './planExemplar'
 
@@ -316,4 +316,45 @@ test('profileInputSchema: 非法 weekParity 被挡下', () => {
     commitmentsConfirmed: true,
   })
   assert.equal(parsed.success, false)
+})
+
+test('profileInputSchema: 格式不合法的锚点报的是格式提示,不是「日期不存在」', () => {
+  // 六个坏样本里只有 2026/09/07 这类能触发 regex;只断言 success=false 的话,
+  // 删掉 .regex 仍然全绿(refine 会把它们都拦下),所以必须钉住具体消息
+  const parsed = profileInputSchema.safeParse({ ...validPayload(), termWeekOneStart: '2026/09/07' })
+  assert.equal(parsed.success, false)
+  if (!parsed.success) {
+    const messages = parsed.error.issues.map(issue => issue.message)
+    assert.ok(messages.includes('校历第 1 周要写成 2026-09-07 这样(年月日全都要)'), messages.join(' / '))
+  }
+})
+
+test('profileInputSchema: 锚点与 parity 传 null 都被拒(客户端只能省略键或发空串)', () => {
+  // App 端 kotlinx.serialization 默认 explicitNulls=true:DTO 写成 String? = null 会发出 "key":null。
+  // 这条把契约钉死 —— 客户端用 @EncodeDefault(NEVER) 或不发该键,服务端不放宽成 nullish
+  assert.equal(profileInputSchema.safeParse({ ...validPayload(), termWeekOneStart: null }).success, false)
+  assert.equal(profileInputSchema.safeParse({
+    ...validPayload(),
+    fixedCommitments: [{ weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: null }],
+    commitmentsConfirmed: true,
+  }).success, false)
+})
+
+test('briefPatchSchema: 手工改口径时单双周标记不被剥离,非法值被挡下', () => {
+  // 路由 schema 曾漏声明 weekParity —— Zod 默认剥掉未声明的键,接口看着 200,
+  // 存进 briefJson 的占用却没有 parity,单双周课被当成每周都占
+  const parsed = briefPatchSchema.parse({
+    fixedCommitments: [
+      { weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: 'odd' },
+      { weekday: 5, start: '10:00', end: '11:40', label: '编译原理' },
+    ],
+  })
+  assert.equal(parsed.fixedCommitments?.[0].weekParity, 'odd')
+  assert.equal(parsed.fixedCommitments?.[1].weekParity, undefined)
+  assert.equal(briefPatchSchema.safeParse({
+    fixedCommitments: [{ weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: '单周' }],
+  }).success, false)
+  assert.equal(briefPatchSchema.safeParse({
+    fixedCommitments: [{ weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: null }],
+  }).success, false)
 })

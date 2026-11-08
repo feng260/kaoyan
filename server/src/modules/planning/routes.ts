@@ -4,7 +4,7 @@ import { ApiError } from '../../middlewares/error'
 import { requireAuth } from '../../middlewares/auth'
 import { apiLimit } from '../../middlewares/ratelimit'
 import { hub } from '../../shared/ws/Hub'
-import { profileInputSchema, type ProfileInput } from './schemas'
+import { briefPatchSchema, profileInputSchema, type ProfileInput } from './schemas'
 import { PLAN_ITEM_STATUSES, planningService, slimToggleResponse } from './service'
 import { maybeNotifyPlanReminder } from './planReminder'
 import { normalizeTzOffset, shouldNotifyPlanReminder } from './checkup'
@@ -53,29 +53,6 @@ const generateSchema = z.object({
   briefHash: z.string().length(64).nullish(),
   allowShortfall: z.boolean().nullish(),
 }).optional()
-
-/** 口径手工修改:逐科剩余量/里程碑与每周固定占用 */
-const briefPatchSchema = z.object({
-  examSubjects: z.array(z.object({
-    name: z.string().trim().min(1).max(32),
-    remainingMinutes: z.number().int().min(0).max(500000).nullish(),
-    milestone: z.string().max(64).nullish(),
-    // 空串表示「清掉截止日」,和未填一样按不修改处理
-    milestoneDate: z.union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal('')]).nullish(),
-    milestoneMinutes: z.number().int().min(0).max(500000).nullish(),
-    estimated: z.boolean().nullish(),
-    scope: z.string().max(500).nullish(),
-    progress: z.string().max(500).nullish(),
-  })).max(20).nullish(),
-  fixedCommitments: z.array(z.object({
-    weekday: z.number().int().min(1).max(7),
-    start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-    end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-    label: z.string().trim().min(1).max(32),
-    // 省略 = 每周都占。Zod 默认会剥掉未声明的键,少这一行会让手工改口径的入口静默丢掉单双周标记
-    weekParity: z.enum(['odd', 'even']).optional(),
-  })).max(40).nullish(),
-})
 
 const interviewSchema = z.object({
   // 整段对话历史由客户端携带;内容长度与角色在 aiCoach 里还会再收敛一次(裁到 24 条、每条 1000 字),
