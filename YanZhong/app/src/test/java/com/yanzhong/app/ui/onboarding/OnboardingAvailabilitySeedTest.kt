@@ -78,4 +78,22 @@ class OnboardingAvailabilitySeedTest {
             assertTrue("${window.start} 应早于 ${window.end}", window.start < window.end)
         }
     }
+
+    @Test
+    fun `服务端回填过的网格不被预设覆盖`() {
+        // loadInternal 会先用档案里的 availability 回填,再走 seed;
+        // 老账号已确认过的真实空闲必须原样保留
+        val fromProfile = mapOf(
+            1 to listOf(TimeWindow("07:00", "08:00")),
+            6 to listOf(TimeWindow("09:00", "17:00"))
+        )
+        assertEquals(fromProfile, seedAvailability(setOf("上午", "下午", "晚上"), fromProfile))
+    }
+
+    @Test
+    fun `第 2 步只勾早晨时不会混进别的时段`() {
+        val grid = seedAvailability(setOf("早晨"), emptyMap())
+        assertEquals(1, grid[1]!!.size)
+        assertEquals(TimeWindow("06:30", "08:00"), grid[1]!![0])
+    }
 }

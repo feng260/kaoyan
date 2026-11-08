@@ -266,8 +266,13 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                             // 之前答过的正式科目与真实空闲一并回填:重填问卷不该把上次确认过的事实抹掉
                             examSubjects = p?.brief?.examSubjects?.map { it.name }?.toSet()?.takeIf { it.isNotEmpty() }
                                 ?: s.examSubjects,
-                            availability = p?.brief?.let { briefToGrid(it.availability) }?.takeIf { it.isNotEmpty() }
-                                ?: s.availability,
+                            // 主动来改档案时可能直接落在最后一题,这一屏的网格同样要铺满;
+                            // 档案里回填过真实空闲的话,seedAvailability 会原样返回不覆盖
+                            availability = seedAvailability(
+                                p?.studyWindows?.toSet()?.takeIf { it.isNotEmpty() } ?: s.studyWindows,
+                                p?.brief?.let { briefToGrid(it.availability) }?.takeIf { it.isNotEmpty() }
+                                    ?: s.availability
+                            ),
                             commitments = p?.brief?.fixedCommitments?.takeIf { it.isNotEmpty() } ?: s.commitments
                         )
                     }
@@ -301,8 +306,19 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         // 只在用户还没动过这一屏的科目时补齐,免得把他在这一屏的删改覆盖掉
         val subjects = if (to == ONBOARDING_STEPS - 1 && s.examSubjects.isEmpty())
             s.weakSubjects.take(MAX_EXAM_SUBJECTS).toSet() else s.examSubjects
+        // 走进「真实空闲」这一屏就把网格按上一屏勾的时段铺满:
+        // 课表识别只产出占用,而净空闲是「窗口 - 占用」,不铺窗口就永远是 0,
+        // 用户传完课表照样被闸门拦住。已填过的不覆盖。
+        val availability = if (to == ONBOARDING_STEPS - 1)
+            seedAvailability(s.studyWindows, s.availability) else s.availability
         _ui.update {
-            it.copy(step = to, examSubjects = subjects, message = "", messageIsError = false)
+            it.copy(
+                step = to,
+                examSubjects = subjects,
+                availability = availability,
+                message = "",
+                messageIsError = false
+            )
         }
     }
 
