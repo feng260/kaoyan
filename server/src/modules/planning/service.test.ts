@@ -473,6 +473,7 @@ test('upsertProfile: 显式传空串能清除已确认的校历第 1 周', async
 
   assert.equal(JSON.parse(fake.state.profiles[0].briefJson).termWeekOneStart, '')
 })
+
 test('setItemStatus persists completion time and clears it when reopened', async () => {
   const fake = createFakeDb()
   const service = serviceWithConfirmedSubject(fake)

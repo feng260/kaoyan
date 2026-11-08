@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { addDays } from './schemas'
 import {
-  EMPTY_BRIEF, briefIsEmpty, freeSlots, mergeBrief, netAvailableMinutes, normalizeBrief, weekParityForDate,
+  EMPTY_BRIEF, briefIsEmpty, briefToPrompt, freeSlots, mergeBrief, netAvailableMinutes, normalizeBrief, weekParityForDate,
 } from './document'
 
 const utc = (day: string) => new Date(`${day}T00:00:00.000Z`)
@@ -223,4 +223,11 @@ test('briefIsEmpty: 只有固定占用或只有校历锚点都不算空简报', 
     commitmentsConfirmed: true,
   })), false)
   assert.equal(briefIsEmpty(normalizeBrief({ termWeekOneStart: '2026-09-07' })), false)
+})
+
+test('briefToPrompt: 有校历锚点时告知模型,没有时整行缺席', () => {
+  // 模型要按同一个锚点理解奇偶,否则会退回「从阶段起点算」;没有锚点时不能凭空多出一行干扰提示词
+  const withAnchor = briefToPrompt(normalizeBrief({ termWeekOneStart: '2026-09-07' }))
+  assert.ok(withAnchor.includes('校历第 1 周:2026-09-07'), withAnchor)
+  assert.ok(!briefToPrompt(normalizeBrief({})).includes('校历第 1 周'))
 })
