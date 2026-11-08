@@ -35,16 +35,18 @@ enum class OnboardingPhase { LOADING, EDITING, SUBMITTING, SUCCESS, FALLBACK }
 
 data class OnboardingUiState(
     val phase: OnboardingPhase = OnboardingPhase.LOADING,
-    /** 0 = 目标与考期,1 = 节奏与短板,2 = 正式科目与真实空闲(含课表上传) */
+    /** 0 = 目标与考期,1 = 正式科目,2 = 节奏与短板,3 = 真实空闲(含课表上传) */
     val step: Int = 0,
     val targetType: String = TARGET_TYPES.first(),
     val examDate: String = "",
     val studyWindows: Set<String> = setOf("上午", "下午", "晚上"),
     val foundation: String = "一般",
     val weakSubjects: Set<String> = emptySet(),
-    /** 薄弱科目可选清单:优先用本地已有科目,没有则给一组常用科目 */
+    /** 非考研类型的正式科目候选:题型预设在前,本地已有科目追加在后 */
     val subjectOptions: List<String> = emptyList(),
-    /** 正式考试科目名;逐科的进度与里程碑留给面谈 */
+    /** 考研科目分组状态;正式科目由它派生,组内互斥防止选出矛盾组合 */
+    val kaoyanSubjects: KaoyanSubjectSelection = KaoyanSubjectSelection(),
+    /** 正式考试科目名;考研时是 kaoyanSubjects 的派生缓存,逐科进度与里程碑留给面谈 */
     val examSubjects: Set<String> = emptySet(),
     /** 按星期记的真实空闲:weekday(1=周一) → 自定义钟点窗口列表(参考真实课表,支持任意 HH:mm) */
     val availability: Map<Int, List<TimeWindow>> = emptyMap(),
@@ -75,23 +77,20 @@ data class OnboardingUiState(
     val onlyPlanMissing: Boolean get() = profileSaved && plan == null
 }
 
-/** 考研兜底模板 */
-private val DEFAULT_WEAK_SUBJECTS = listOf("政治", "英语", "数学", "专业课")
+/** 「其他」与未知类型的兜底科目预设 */
+private val DEFAULT_SUBJECT_PRESETS = listOf("政治", "英语", "数学", "专业课")
 
 /**
  * 按 [TARGET_TYPES] 分型的科目预设(F3):选法考不该看到"数学"。
  * 用户仍可自由增删,本地已有科目会追加在预设之后供选择。
- *
- * 考研 preset 刻意只给公共课 + 泛化的"专业课":考研人未必考 408,
- * 自命题、数一数二、法硕西医都是常见路径,预设只是起点不是结论 ——
- * 统考科目(408/396/311…)让用户自己加,加出来的名字才是他真正要考的。
+ * 考研不在这里走预设 —— 它用 [KaoyanSubjectSelection] 分组选择器,
+ * 泛化的「英语/数学/专业课」正是上一版计划出错的根源。
  */
 private val SUBJECT_PRESETS: Map<String, List<String>> = mapOf(
-    "考研" to listOf("政治", "英语", "数学", "专业课"),
     "法考" to listOf("民法", "刑法", "行政法", "理论法", "商经法", "三国法", "刑诉", "民诉"),
     "考公" to listOf("行测", "申论"),
     "专升本" to listOf("英语", "政治", "大学语文", "高等数学"),
-    "其他" to DEFAULT_WEAK_SUBJECTS,
+    "其他" to DEFAULT_SUBJECT_PRESETS,
 )
 
 /**
@@ -102,10 +101,104 @@ private val SUBJECT_PRESETS: Map<String, List<String>> = mapOf(
  * 预设先行保证选项跟着备考类型走;本地科目去重后追加,用户自建的不丢。
  */
 private fun subjectOptionsFor(targetType: String, localSubjects: List<String>): List<String> =
-    ((SUBJECT_PRESETS[targetType] ?: DEFAULT_WEAK_SUBJECTS) + localSubjects).distinct()
+    ((SUBJECT_PRESETS[targetType] ?: DEFAULT_SUBJECT_PRESETS) + localSubjects).distinct()
 
-/** 问卷总步数:目标与考期 → 节奏与短板 → 正式科目与真实空闲 */
-const val ONBOARDING_STEPS = 3
+// ---------------- 考研科目分组 ----------------
+
+/** 「不考数学」是数学组的占位选项,不是考试科目,不进派生结果 */
+internal const val KAOYAN_NO_MATH = "不考数学"
+
+/** 管理类联考初试只考 199 + 外语,不考政治、没有专业课 */
+internal const val KAOYAN_MANAGEMENT = "199管理类联考"
+
+/** 外语组预设;其他语种(日语/俄语等)由用户自己写 */
+internal val KAOYAN_FOREIGN_PRESETS = listOf("英语一", "英语二")
+
+/** 数学·联考组:组内单选,选「不考数学」就不会混入任何数学科目 */
+internal val KAOYAN_MATH_OPTIONS = listOf("数学一", "数学二", "数学三", "396经济类联考", KAOYAN_MANAGEMENT, KAOYAN_NO_MATH)
+
+/** 专业课统考预设;自命题的名字猜不到,让用户自己写 */
+internal val KAOYAN_MAJOR_PRESETS = listOf(
+    "408计算机学科专业基础", "311教育学专业基础", "312心理学专业基础",
+    "306西医综合", "法硕（非法学）", "法硕（法学）"
+)
+
+/** 回填时能认出的外语语种(含预设之外的常见小语种) */
+private val KAOYAN_FOREIGN_LANGUAGES = setOf("英语一", "英语二", "日语", "俄语", "法语", "德语")
+
+/** 旧档案里的泛称科目:不是真实科目名,回填时丢弃,逼用户重新显式选具体科目 */
+private val GENERIC_SUBJECT_NAMES = setOf("英语", "数学", "专业课")
+
+/**
+ * 考研科目的分组选择状态。四组对应初试的真实结构:
+ * 政治(可取消) / 外语(单选) / 数学或联考(单选) / 专业课(可多选,含自命题)。
+ * 组内互斥,[deriveExamSubjects] 派生出的才是落库的正式科目。
+ */
+data class KaoyanSubjectSelection(
+    val politics: Boolean = true,
+    val foreign: String? = null,
+    val math: String? = null,
+    val majors: Set<String> = emptySet()
+) {
+    /** 选 199 自动取消政治(管综初试不考政治);从 199 切走恢复政治,其余切换不动政治 */
+    fun withMath(value: String): KaoyanSubjectSelection = when {
+        value == KAOYAN_MANAGEMENT -> copy(math = value, politics = false)
+        math == KAOYAN_MANAGEMENT -> copy(math = value, politics = true)
+        else -> copy(math = value)
+    }
+
+    /** 添加/移除专业课;派生总数超上限时添加无效(移除永远允许) */
+    fun toggleMajor(name: String): KaoyanSubjectSelection {
+        if (name in majors) return copy(majors = majors - name)
+        if (deriveExamSubjects(copy(majors = majors + name)).size > MAX_EXAM_SUBJECTS) return this
+        return copy(majors = majors + name)
+    }
+}
+
+/** 分组状态 → 正式科目,顺序固定:政治 → 外语 → 数学/联考 → 专业课 */
+internal fun deriveExamSubjects(selection: KaoyanSubjectSelection): Set<String> = buildSet {
+    if (selection.politics) add("政治")
+    selection.foreign?.takeIf { it.isNotBlank() }?.let { add(it) }
+    selection.math?.takeIf { it != KAOYAN_NO_MATH }?.let { add(it) }
+    addAll(selection.majors)
+}
+
+/**
+ * 旧档案科目名 → 分组状态。只认具体科目名;
+ * 「英语/数学/专业课」这种泛称一律丢弃 —— 它们正是计划出错的根源,留空让校验逼用户重选。
+ */
+internal fun kaoyanSelectionFromNames(names: Set<String>): KaoyanSubjectSelection {
+    val cleaned = names.map { it.trim() }.filter { it.isNotEmpty() }.toSet()
+    val foreign = cleaned.firstOrNull { it in KAOYAN_FOREIGN_LANGUAGES }
+    val math = cleaned.firstOrNull { it in KAOYAN_MATH_OPTIONS && it != KAOYAN_NO_MATH }
+    val majors = cleaned - GENERIC_SUBJECT_NAMES - setOfNotNull(foreign, math) - "政治" - KAOYAN_NO_MATH
+    return KaoyanSubjectSelection(
+        politics = "政治" in cleaned,
+        foreign = foreign,
+        math = math,
+        majors = majors
+    )
+}
+
+/** 科目步的闸门:考研四组必须显式作答(199 不要求专业课);其他类型至少一门 */
+internal fun validateSubjectStep(
+    targetType: String,
+    kaoyan: KaoyanSubjectSelection,
+    examSubjects: Set<String>
+): String? {
+    if (targetType != "考研") {
+        return if (examSubjects.isEmpty()) "把要考的科目写全,一门也算" else null
+    }
+    if (kaoyan.foreign.isNullOrBlank()) return "外语还没选:英语一、英语二,或其他语种自己写"
+    if (kaoyan.math == null) return "数学或联考选一项;不考数学就选「不考数学」"
+    if (kaoyan.math != KAOYAN_MANAGEMENT && kaoyan.majors.isEmpty()) {
+        return "专业课还没定:统考选代码,自命题自己写名字"
+    }
+    return if (examSubjects.isEmpty()) "把要考的科目写全,一门也算" else null
+}
+
+/** 问卷总步数:目标与考期 → 正式科目 → 节奏与短板 → 真实空闲 */
+const val ONBOARDING_STEPS = 4
 
 /** 周一~周日,给格子当行头 */
 internal val WEEKDAY_LABELS = listOf("一", "二", "三", "四", "五", "六", "日")
@@ -292,6 +385,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 profileSaved = false,
                 plan = null,
                 awaitingChoice = false,
+                kaoyanSubjects = KaoyanSubjectSelection(),
                 examSubjects = emptySet(),
                 availability = emptyMap(),
                 commitments = emptyList(),
@@ -336,6 +430,17 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                     // 他的网格要等第 2 题勾完时段、由 next() 去铺 —— 提前铺只会拿默认时段盖住他的选择
                     val landsOnLastStep = manage && p?.isComplete == true
                     _ui.update { s ->
+                        val targetType = p?.targetType?.takeIf { it in TARGET_TYPES } ?: s.targetType
+                        val loadedSubjects = p?.brief?.examSubjects?.map { it.name }?.toSet()?.takeIf { it.isNotEmpty() }
+                        // 考研回填需要过一遍分组映射:旧档案的泛称(英语/数学/专业课)在这里被丢弃,
+                        // 派生缓存同步重建,摘要条与分组看到的才是同一份事实
+                        val kaoyan = if (targetType == "考研" && loadedSubjects != null)
+                            kaoyanSelectionFromNames(loadedSubjects) else s.kaoyanSubjects
+                        val examSubjects = when {
+                            targetType == "考研" && loadedSubjects != null -> deriveExamSubjects(kaoyan)
+                            loadedSubjects != null -> loadedSubjects
+                            else -> s.examSubjects
+                        }
                         s.copy(
                             phase = OnboardingPhase.EDITING,
                             // 主动来改档案、且档案本来就完整:直接落在最后一题。
@@ -344,14 +449,15 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                             step = if (landsOnLastStep) ONBOARDING_STEPS - 1 else 0,
                             profile = p,
                             profileSaved = p != null,
-                            targetType = p?.targetType?.takeIf { it in TARGET_TYPES } ?: s.targetType,
+                            targetType = targetType,
                             examDate = p?.examDate?.takeIf { it.isNotBlank() } ?: s.examDate,
                             studyWindows = p?.studyWindows?.toSet()?.takeIf { it.isNotEmpty() } ?: s.studyWindows,
                             foundation = p?.foundation?.takeIf { it in FOUNDATION_LEVELS } ?: s.foundation,
-                            weakSubjects = p?.weakSubjects?.toSet() ?: s.weakSubjects,
+                            weakSubjects = (p?.weakSubjects?.toSet() ?: s.weakSubjects) intersect examSubjects,
+                            subjectOptions = (subjectOptionsFor(targetType, localSubjectNames) + s.subjectOptions).distinct(),
+                            kaoyanSubjects = kaoyan,
                             // 之前答过的正式科目与真实空闲一并回填:重填问卷不该把上次确认过的事实抹掉
-                            examSubjects = p?.brief?.examSubjects?.map { it.name }?.toSet()?.takeIf { it.isNotEmpty() }
-                                ?: s.examSubjects,
+                            examSubjects = examSubjects,
                             availability = resolveLoadedAvailability(
                                 landsOnLastStep,
                                 p?.studyWindows?.toSet(),
@@ -389,10 +495,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         val to = (s.step + 1).coerceAtMost(ONBOARDING_STEPS - 1)
-        // 上一屏已经勾过「最没底的几门」,这一屏的科目别再让用户重勾一遍;
-        // 只在用户还没动过这一屏的科目时补齐,免得把他在这一屏的删改覆盖掉
-        val subjects = if (to == ONBOARDING_STEPS - 1 && s.examSubjects.isEmpty())
-            s.weakSubjects.take(MAX_EXAM_SUBJECTS).toSet() else s.examSubjects
         // 走进「真实空闲」这一屏就把网格按上一屏勾的时段铺满:
         // 课表识别只产出占用,而净空闲是「窗口 - 占用」,不铺窗口就永远是 0,
         // 用户传完课表照样被闸门拦住。已填过的不覆盖。
@@ -400,7 +502,6 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update {
             it.copy(
                 step = to,
-                examSubjects = subjects,
                 availability = availability,
                 message = "",
                 messageIsError = false
@@ -504,13 +605,23 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     fun setTargetType(value: String) {
         _ui.update { s ->
             val oldSuggestion = suggestedExamDate(s.targetType)
+            val switched = value != s.targetType
+            // 换备考类型是大改:已选科目不能带过去(考公不该挂着考研的政治/英语),
+            // 但候选清单保留用户敲过的名字,重选时不用再打一遍
+            val kaoyan = if (switched) KaoyanSubjectSelection() else s.kaoyanSubjects
+            val examSubjects = when {
+                !switched -> s.examSubjects
+                value == "考研" -> deriveExamSubjects(kaoyan)
+                else -> emptySet()
+            }
             s.copy(
                 targetType = value,
                 // 只在日期还是"上一步的自动建议"或空着时才跟着换,已经手填过的日期不动
                 examDate = if (s.examDate.isBlank() || s.examDate == oldSuggestion) suggestedExamDate(value) else s.examDate,
-                // 换备考类型,科目候选跟着换(F3):选法考后不该还挂着"数学/政治"。
-                // 用户自己加过的科目保留在候选里,不丢他敲过的字。
                 subjectOptions = (subjectOptionsFor(value, localSubjectNames) + s.subjectOptions).distinct(),
+                kaoyanSubjects = kaoyan,
+                examSubjects = examSubjects,
+                weakSubjects = if (switched) emptySet() else s.weakSubjects,
                 message = "",
                 messageIsError = false
             )
@@ -534,24 +645,66 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update { it.copy(foundation = value, message = "", messageIsError = false) }
     }
 
+    // ---------------- 考研科目分组 ----------------
+
+    /** 分组变更的统一入口:派生正式科目,并把薄弱科目收敛到仍有效的范围内 */
+    private fun updateKaoyanSubjects(next: KaoyanSubjectSelection, message: String = "") {
+        _ui.update { s ->
+            val subjects = deriveExamSubjects(next)
+            s.copy(
+                kaoyanSubjects = next,
+                examSubjects = subjects,
+                weakSubjects = s.weakSubjects intersect subjects,
+                message = message,
+                messageIsError = false
+            )
+        }
+    }
+
+    fun toggleKaoyanPolitics() {
+        val current = _ui.value.kaoyanSubjects
+        updateKaoyanSubjects(current.copy(politics = !current.politics))
+    }
+
+    fun setKaoyanForeign(value: String) {
+        updateKaoyanSubjects(_ui.value.kaoyanSubjects.copy(foreign = value))
+    }
+
+    /** 其他语种自己写;空输入不算选择,保留原值 */
+    fun setCustomForeign(name: String) {
+        val trimmed = name.trim().take(16)
+        if (trimmed.isEmpty()) return
+        setKaoyanForeign(trimmed)
+    }
+
+    fun setKaoyanMath(value: String) {
+        val next = _ui.value.kaoyanSubjects.withMath(value)
+        // 199 初试不考政治,联动取消时说明一句,免得用户以为政治丢了
+        val notice = if (value == KAOYAN_MANAGEMENT) "管理类联考初试不考政治,已帮你取消" else ""
+        updateKaoyanSubjects(next, notice)
+    }
+
+    fun toggleKaoyanMajor(name: String) {
+        val current = _ui.value.kaoyanSubjects
+        val next = current.toggleMajor(name)
+        if (next == current && name !in current.majors) {
+            _ui.update { it.copy(message = "科目最多 $MAX_EXAM_SUBJECTS 门,先填最要紧的", messageIsError = true) }
+        } else {
+            updateKaoyanSubjects(next)
+        }
+    }
+
+    /** 自命题专业课的名字猜不到,让用户自己写;已加过的重复添加不算移除 */
+    fun addKaoyanMajor(name: String) {
+        val trimmed = name.trim().take(16)
+        if (trimmed.isEmpty() || trimmed in _ui.value.kaoyanSubjects.majors) return
+        toggleKaoyanMajor(trimmed)
+    }
+
     fun toggleWeakSubject(name: String) {
         _ui.update { s ->
             val next = if (name in s.weakSubjects) s.weakSubjects - name else s.weakSubjects + name
             s.copy(weakSubjects = next, message = "", messageIsError = false)
-        }
-    }
-
-    /** 清单里没有的科目让用户自己加:他的专业课名字我们猜不到 */
-    fun addWeakSubject(name: String) {
-        val trimmed = name.trim().take(16)
-        if (trimmed.isEmpty()) return
-        _ui.update { s ->
-            s.copy(
-                subjectOptions = (s.subjectOptions + trimmed).distinct(),
-                weakSubjects = if (trimmed in s.weakSubjects) s.weakSubjects else s.weakSubjects + trimmed,
-                message = "",
-                messageIsError = false
-            )
         }
     }
 
@@ -563,7 +716,12 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
             if (next.size > MAX_EXAM_SUBJECTS) {
                 s.copy(message = "科目最多 $MAX_EXAM_SUBJECTS 门,先填最要紧的", messageIsError = true)
             } else {
-                s.copy(examSubjects = next, message = "", messageIsError = false)
+                s.copy(
+                    examSubjects = next,
+                    weakSubjects = s.weakSubjects intersect next,
+                    message = "",
+                    messageIsError = false
+                )
             }
         }
     }
@@ -765,13 +923,15 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     private fun validate(s: OnboardingUiState, step: Int): String? {
         if (s.targetType !in TARGET_TYPES) return "先选一个备考目标吧"
         if (step >= 1) {
+            validateSubjectStep(s.targetType, s.kaoyanSubjects, s.examSubjects)?.let { return it }
+        }
+        if (step >= 2) {
             if (s.studyWindows.isEmpty()) return "至少选一个你真能固定下来的时段,哪怕只有「晚上」"
             if (s.weakSubjects.isEmpty()) return "挑一门最想补的科目,后面对它的排课会多一些"
             if (s.weakSubjects.size > 6) return "薄弱科目最多 6 门,先抓最要紧的几门"
             if (s.foundation !in FOUNDATION_LEVELS) return "选一下你现在的基础情况"
         }
-        if (step >= 2) {
-            if (s.examSubjects.isEmpty()) return "把要考的科目写全,一门也算"
+        if (step >= 3) {
             if (s.availability.isEmpty()) return "七天里至少给一天加一段空闲时段,点那天的「+」就行"
         }
         return validateExamDate(s.examDate)

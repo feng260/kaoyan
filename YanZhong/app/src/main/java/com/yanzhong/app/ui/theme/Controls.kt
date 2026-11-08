@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -210,6 +212,54 @@ fun SegmentedChips(
                     label,
                     style = MaterialTheme.typography.labelLarge,
                     color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** 换行分段选择:与 SegmentedChips 同款视觉,但用 FlowRow 自动换行,选项再多也不会被横向滚动藏住;单选组语义 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun SingleSelectChips(
+    options: List<String>,
+    selected: String?,
+    onSelect: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    FlowRow(
+        modifier = modifier.selectableGroup(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        options.forEach { label ->
+            val isSelected = label == selected
+            val shape = RoundedCornerShape(999.dp)
+            Box(
+                modifier = Modifier
+                    .height(48.dp)
+                    .clip(shape)
+                    .background(
+                        if (isSelected) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surface
+                    )
+                    .then(
+                        if (isSelected) Modifier
+                        else Modifier.border(1.dp, MaterialTheme.colorScheme.outlineVariant, shape)
+                    )
+                    .selectable(
+                        selected = isSelected,
+                        role = Role.RadioButton,
+                        onClick = { onSelect(label) }
+                    )
+                    .padding(horizontal = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer
                     else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }

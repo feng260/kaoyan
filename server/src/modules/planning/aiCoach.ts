@@ -154,6 +154,22 @@ function iso(d: Date): string {
   return dayStart(d).toISOString().slice(0, 10)
 }
 
+/** 旧问卷残留的泛称科目:不是真实科目名,面谈需要先澄清成具体科目 */
+const GENERIC_SUBJECT_NAMES = new Set(['英语', '数学', '专业课'])
+
+export function isGenericSubjectName(name: string): boolean {
+  return GENERIC_SUBJECT_NAMES.has(name.trim())
+}
+
+/** 问卷已确认科目给面谈的上下文行:具体科目锁定不问;含泛称时要求先澄清,别把泛科目锁死进计划 */
+export function subjectContextLine(names: string[]): string {
+  const joined = names.join('、')
+  if (names.some(isGenericSubjectName)) {
+    return `- 正式考试科目(问卷里填的是泛称,需要先澄清):${joined}。先问清「英语」是英语一还是英语二、「数学」是数几或396/不考、「专业课」具体考哪门,把 brief.examSubjects 更新为具体科目名后再继续`
+  }
+  return `- 正式考试科目(已确认,不要再问有哪些科):${joined}`
+}
+
 /** 档案里已有的信息不能让 AI 再问一遍 —— 直接写进系统侧上下文 */
 function profileContext(profile: ProfileInput | null, brief: PlanBrief | null): string {
   if (!profile) return '考生尚未填写问卷档案(考试日期等未知,需要你在对话里问清楚)。'
@@ -166,7 +182,7 @@ function profileContext(profile: ProfileInput | null, brief: PlanBrief | null): 
   ]
   // 问卷和课表已经确认过的事实写清楚,面谈就不必再逐项追问,只补「逐科的具体量」
   if (brief && brief.examSubjects.length) {
-    lines.push(`- 正式考试科目(已确认,不要再问有哪些科):${brief.examSubjects.map(s => s.name).join('、')}`)
+    lines.push(subjectContextLine(brief.examSubjects.map(s => s.name)))
   }
   if (brief && brief.availabilityConfirmed && brief.availability.length) {
     lines.push(`- 真实空闲时段(已确认,不要再问作息):${JSON.stringify(brief.availability)}`,

@@ -35,6 +35,7 @@ import com.yanzhong.app.ui.onboarding.OnboardingViewModel
 import com.yanzhong.app.ui.onboarding.StepDots
 import com.yanzhong.app.ui.onboarding.StepFacts
 import com.yanzhong.app.ui.onboarding.StepRhythm
+import com.yanzhong.app.ui.onboarding.StepSubjects
 import com.yanzhong.app.ui.onboarding.StepTarget
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.PrimaryButton
@@ -120,7 +121,8 @@ fun PlanSetupScreen(padding: PaddingValues, navController: NavHostController, pr
                         AppCard {
                             when (state.step) {
                                 0 -> StepTarget(state, vm)
-                                1 -> StepRhythm(state, vm)
+                                1 -> StepSubjects(state, vm)
+                                2 -> StepRhythm(state, vm)
                                 else -> StepFacts(state, vm)
                             }
                         }
@@ -168,7 +170,8 @@ fun PlanSetupScreen(padding: PaddingValues, navController: NavHostController, pr
 
 /** 当前步骤在卡片外的分组标题 */
 private fun stepSectionTitle(step: Int): String = when (step) {
-    0 -> "目标院校"
-    1 -> "每日时长"
-    else -> "考试科目与课表"
+    0 -> "目标与考期"
+    1 -> "考试科目"
+    2 -> "节奏与短板"
+    else -> "空闲与课表"
 }

@@ -52,8 +52,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -65,15 +63,16 @@ import com.yanzhong.app.data.remote.TARGET_TYPES
 import com.yanzhong.app.ui.legal.PolicyLinksRow
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
-import com.yanzhong.app.ui.theme.CompletionCircle
 import com.yanzhong.app.ui.theme.ListRow
 import com.yanzhong.app.ui.theme.PrimaryButton
 import com.yanzhong.app.ui.theme.ProgressLine
 import com.yanzhong.app.ui.theme.SecondaryButton
 import com.yanzhong.app.ui.theme.SegmentedChips
+import com.yanzhong.app.ui.theme.SingleSelectChips
 import com.yanzhong.app.ui.theme.SubPageHeader
 import com.yanzhong.app.ui.theme.SuccessGreen
 import com.yanzhong.app.ui.theme.TextAction
+import com.yanzhong.app.ui.theme.ToggleChip
 import com.yanzhong.app.ui.theme.successContentColor
 import java.time.Instant
 import java.time.LocalDate
@@ -82,11 +81,12 @@ import java.time.ZoneOffset
 /**
  * 首次问卷。
  *
- * 分三步不是为了"看起来很专业",是因为这三步问的东西性质不同:
+ * 分四步不是为了"看起来很专业",是因为这四步问的东西性质不同:
  * 第一步是目标和日子——不用想,谁都答得上来;
- * 第二步要用户回忆自己的作息和短板——这需要停下来想一想;
- * 第三步是正式科目与真实空闲,还得顺手把课表传上来——信息最重,放最后,
- * 前面两屏轻,用户愿意走到这里,也才愿意认真对准时间。
+ * 第二步是正式科目——考研按 政治/外语/数学联考/专业课 四组选准,这是计划不跑偏的地基;
+ * 第三步要用户回忆自己的作息和短板——这需要停下来想一想,薄弱科目就从第二步选定的科目里挑;
+ * 第四步是真实空闲,还得顺手把课表传上来——信息最重,放最后,
+ * 前面几屏轻,用户愿意走到这里,也才愿意认真对准时间。
  *
  * 全篇避免"请填写""提交表单"这类词。我们是在给一个真实的人排他的备考节奏,
  * 不是在收集数据。
@@ -152,7 +152,8 @@ fun OnboardingScreen(vm: OnboardingViewModel, modifier: Modifier = Modifier) {
                 AppCard {
                     when (state.step) {
                         0 -> StepTarget(state, vm)
-                        1 -> StepRhythm(state, vm)
+                        1 -> StepSubjects(state, vm)
+                        2 -> StepRhythm(state, vm)
                         else -> StepFacts(state, vm)
                     }
                 }
@@ -168,14 +169,16 @@ fun OnboardingScreen(vm: OnboardingViewModel, modifier: Modifier = Modifier) {
 
 private fun stepTitle(step: Int): String = when (step) {
     0 -> "先定个目标"
-    1 -> "说说你的节奏"
-    else -> "把科目和时间说准"
+    1 -> "把科目说准"
+    2 -> "说说你的节奏"
+    else -> "把时间说准"
 }
 
 private fun stepSubtitle(step: Int): String = when (step) {
     0 -> "知道你要考什么、哪天考,我才能把日子排开"
-    1 -> "这几个答案决定每天给你排多少、先补哪一科"
-    else -> "科目写全、空闲和固定占用标准,排出来的计划才不用返工"
+    1 -> "考哪几门就选哪几门,选准了计划才不会排进你不考的科目"
+    2 -> "这几个答案决定每天给你排多少、先补哪一科"
+    else -> "空闲和固定占用标准,排出来的计划才不用返工"
 }
 
 /** 底部主按钮固定在安全区:键盘弹起时随 imePadding 抬起,不遮住正在填的题 */
@@ -242,16 +245,11 @@ internal fun StepTarget(state: OnboardingUiState, vm: OnboardingViewModel) {
     val colors = MaterialTheme.colorScheme
     FieldLabel("你要准备的是", "不同考试的节奏差得很远,后面阶段的划分会跟着变")
     Spacer(Modifier.height(8.dp))
-    Column {
-        TARGET_TYPES.forEach { type ->
-            ChoiceRow(
-                title = type,
-                selected = state.targetType == type,
-                multi = false,
-                onClick = { vm.setTargetType(type) }
-            )
-        }
-    }
+    SingleSelectChips(
+        options = TARGET_TYPES,
+        selected = state.targetType,
+        onSelect = vm::setTargetType
+    )
 
     Spacer(Modifier.height(20.dp))
     FieldLabel("考试是哪天", "留出这一天,倒计时和阶段划分都以它为终点")
@@ -271,42 +269,115 @@ internal fun StepTarget(state: OnboardingUiState, vm: OnboardingViewModel) {
     }
 }
 
-/** 单选题用完成圆环收尾,多选题只在选中时露出勾;整行带单选/复选语义,圆环只作视觉 */
+/**
+ * 第二步:正式科目。
+ *
+ * 考研走分组选择器(政治/外语/数学联考/专业课),组内互斥、必须显式作答 ——
+ * 上一版「英语/数学/专业课」泛预设 + 从薄弱科目自动带出,正是计划排进不考科目的根源。
+ * 其他考试类型沿用预设胶囊多选。
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ChoiceRow(
-    title: String,
-    selected: Boolean,
-    multi: Boolean,
-    onClick: () -> Unit
-) {
-    ListRow(
-        title = title,
-        onClick = onClick,
-        showChevron = false,
-        selected = selected,
-        role = if (multi) Role.Checkbox else Role.RadioButton,
-        trailing = {
-            if (multi) {
-                if (selected) {
-                    Icon(
-                        AppIcons.Check,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            } else {
-                // 圆环只作视觉,语义交给整行的单选状态,避免 TalkBack 出现第二个焦点
-                Box(Modifier.clearAndSetSemantics {}) {
-                    CompletionCircle(
-                        checked = selected,
-                        onClick = onClick,
-                        description = if (selected) "已选择 $title" else "选择 $title"
-                    )
-                }
-            }
+internal fun StepSubjects(state: OnboardingUiState, vm: OnboardingViewModel) {
+    if (state.targetType == "考研") {
+        KaoyanSubjectPicker(state, vm)
+        return
+    }
+    FieldLabel("你要考的科目", "选全你要考的科目;清单里没有的自己加一门")
+    Spacer(Modifier.height(8.dp))
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        state.subjectOptions.forEach { name ->
+            ToggleChip(
+                text = name,
+                selected = name in state.examSubjects,
+                onClick = { vm.toggleExamSubject(name) }
+            )
         }
+    }
+    Spacer(Modifier.height(8.dp))
+    CustomAddRow(label = "没有你的科目就自己加", placeholder = "比如 数据结构") { vm.addExamSubject(it) }
+}
+
+/** 考研四组选择器 + 实时摘要条:把「到底确认了哪些科目」摆到明面上 */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun KaoyanSubjectPicker(state: OnboardingUiState, vm: OnboardingViewModel) {
+    val selection = state.kaoyanSubjects
+    val colors = MaterialTheme.colorScheme
+
+    FieldLabel("政治", "绝大多数专业初试必考;管理类联考等不考的可以取消")
+    Spacer(Modifier.height(8.dp))
+    FlowRow {
+        ToggleChip(text = "政治", selected = selection.politics, onClick = vm::toggleKaoyanPolitics)
+    }
+
+    Spacer(Modifier.height(20.dp))
+    FieldLabel("外国语", "英语一还是英语二,按报考专业的要求选;其他语种自己写")
+    Spacer(Modifier.height(8.dp))
+    val foreignOptions = KAOYAN_FOREIGN_PRESETS +
+        listOfNotNull(selection.foreign?.takeIf { it !in KAOYAN_FOREIGN_PRESETS })
+    SingleSelectChips(
+        options = foreignOptions,
+        selected = selection.foreign,
+        onSelect = vm::setKaoyanForeign
     )
+    Spacer(Modifier.height(8.dp))
+    CustomAddRow(label = "其他外语自己写", placeholder = "比如 日语") { vm.setCustomForeign(it) }
+
+    Spacer(Modifier.height(20.dp))
+    FieldLabel("数学或联考", "不考数学就选「不考数学」,计划绝不会给你排数学")
+    Spacer(Modifier.height(8.dp))
+    SingleSelectChips(
+        options = KAOYAN_MATH_OPTIONS,
+        selected = selection.math,
+        onSelect = vm::setKaoyanMath
+    )
+
+    Spacer(Modifier.height(20.dp))
+    FieldLabel("专业课", "统考选代码;自命题自己写名字,可以加多门")
+    Spacer(Modifier.height(8.dp))
+    val majorOptions = KAOYAN_MAJOR_PRESETS + (selection.majors - KAOYAN_MAJOR_PRESETS.toSet())
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        majorOptions.forEach { name ->
+            ToggleChip(
+                text = name,
+                selected = name in selection.majors,
+                onClick = { vm.toggleKaoyanMajor(name) }
+            )
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    CustomAddRow(label = "自命题专业课自己写", placeholder = "比如 金融综合") { vm.addKaoyanMajor(it) }
+
+    Spacer(Modifier.height(20.dp))
+    // 摘要直接读分组派生结果,和上面的勾选永远一致;空着时提示还差什么
+    val confirmed = deriveExamSubjects(selection)
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = colors.secondaryContainer,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(14.dp)) {
+            Text(
+                "已确认科目",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.onSecondaryContainer
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (confirmed.isEmpty()) "还没选——上面四组选完,这里会列出你真正要考的科目"
+                else confirmed.joinToString("、"),
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.onSecondaryContainer
+            )
+        }
+    }
 }
 
 /**
@@ -383,16 +454,19 @@ internal fun ExamDateField(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun StepRhythm(state: OnboardingUiState, vm: OnboardingViewModel) {
     FieldLabel("哪些时段你基本固定学得进去", "可以多选。排课会优先落进这些时段")
     Spacer(Modifier.height(8.dp))
-    Column {
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         STUDY_WINDOWS.forEach { window ->
-            ChoiceRow(
-                title = window,
+            ToggleChip(
+                text = window,
                 selected = window in state.studyWindows,
-                multi = true,
                 onClick = { vm.toggleStudyWindow(window) }
             )
         }
@@ -401,34 +475,42 @@ internal fun StepRhythm(state: OnboardingUiState, vm: OnboardingViewModel) {
     Spacer(Modifier.height(20.dp))
     FieldLabel("现在的基础大致是", "只影响前期的强度,后面会随着进度自己调整")
     Spacer(Modifier.height(8.dp))
-    // 三档基础是分档题,用分段选择而不是一排可勾选行
-    SegmentedChips(
+    SingleSelectChips(
         options = FOUNDATION_LEVELS,
-        selectedIndex = FOUNDATION_LEVELS.indexOf(state.foundation),
-        onSelect = { vm.setFoundation(FOUNDATION_LEVELS[it]) }
+        selected = state.foundation,
+        onSelect = vm::setFoundation
     )
 
     Spacer(Modifier.height(20.dp))
-    FieldLabel("哪几门最让你没底", "最多 6 门。选中的科目会分到更多时间")
+    FieldLabel("哪几门最让你没底", "就从你上一步选定的科目里挑,最多 6 门;选中的会分到更多时间")
     Spacer(Modifier.height(8.dp))
-    Column {
-        state.subjectOptions.forEach { name ->
-            ChoiceRow(
-                title = name,
-                selected = name in state.weakSubjects,
-                multi = true,
-                onClick = { vm.toggleWeakSubject(name) }
-            )
+    if (state.examSubjects.isEmpty()) {
+        Text(
+            "先去上一步把要考的科目选准,这里才有得挑",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    } else {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            state.examSubjects.forEach { name ->
+                ToggleChip(
+                    text = name,
+                    selected = name in state.weakSubjects,
+                    onClick = { vm.toggleWeakSubject(name) }
+                )
+            }
         }
     }
-    Spacer(Modifier.height(8.dp))
-    CustomAddRow(label = "写不下就自己加一门", placeholder = "比如 数据结构") { vm.addWeakSubject(it) }
 }
 
 /**
- * 第三步:正式科目 + 真实空闲 + 课表。
+ * 第四步:真实空闲 + 课表。
  *
- * 这一屏把面谈最爱反复追问的三件事一次问全,后面 AI 才有余力聊"你这科到哪了、还剩多少"。
+ * 科目已在第二步选准,这一屏只对准时间:把面谈最爱反复追问的空闲与固定占用一次问全,
+ * 后面 AI 才有余力聊"你这科到哪了、还剩多少"。
  * 课表上传是可选路径:传得上去就是白捡,传不上也挡不住人往前走。
  */
 @OptIn(ExperimentalLayoutApi::class)
@@ -436,22 +518,6 @@ internal fun StepRhythm(state: OnboardingUiState, vm: OnboardingViewModel) {
 internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
     val colors = MaterialTheme.colorScheme
 
-    FieldLabel("你要考的科目", "只填科目名就行。每科现在到哪了、还剩多少,面谈里再细聊")
-    Spacer(Modifier.height(8.dp))
-    Column {
-        state.subjectOptions.forEach { name ->
-            ChoiceRow(
-                title = name,
-                selected = name in state.examSubjects,
-                multi = true,
-                onClick = { vm.toggleExamSubject(name) }
-            )
-        }
-    }
-    Spacer(Modifier.height(8.dp))
-    CustomAddRow(label = "没有你的科目就自己加", placeholder = "比如 数据结构") { vm.addExamSubject(it) }
-
-    Spacer(Modifier.height(20.dp))
     FieldLabel(
         "每周课表:哪天几点到几点真坐得下来",
         "已经按你上一步选的时段铺好了,和实际不符的直接点胶囊删掉,或点「+」改钟点;这天没空就空着,排课不会往里塞任务"
@@ -733,10 +799,11 @@ private fun ManualCommitmentRow(onAdd: (Int, String, String, String, String?) ->
     val parityValue = listOf<String?>(null, "odd", "even")[parityIndex]
 
     Column {
-        SegmentedChips(
-            options = (1..7).map { "周${WEEKDAY_LABELS[it - 1]}" },
-            selectedIndex = weekday - 1,
-            onSelect = { weekday = it + 1 }
+        val dayOptions = (1..7).map { "周${WEEKDAY_LABELS[it - 1]}" }
+        SingleSelectChips(
+            options = dayOptions,
+            selected = dayOptions[weekday - 1],
+            onSelect = { weekday = dayOptions.indexOf(it) + 1 }
         )
         Spacer(Modifier.height(8.dp))
         SegmentedChips(
