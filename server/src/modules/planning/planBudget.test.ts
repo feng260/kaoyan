@@ -1,9 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  buildPlanBudget, buildPlanOverview, briefHash, capacityByWeekday, PLAN_LOAD_FACTOR,
+  buildPlanBudget, buildPlanOverview, briefHash, canonicalBrief, capacityByWeekday, PLAN_LOAD_FACTOR,
   type PlanBudget,
 } from './planBudget'
+import { normalizeBrief } from './document'
 import type { PlanBrief } from './document'
 
 function subject(over: Partial<PlanBrief['examSubjects'][number]> = {}): PlanBrief['examSubjects'][number] {
@@ -117,4 +118,63 @@ test('buildPlanOverview:超预算与总排量超限产生警告', () => {
   assert.ok(overview.warnings.some(warning => warning.code === 'SUBJECT_OVER_BUDGET'))
   assert.ok(overview.warnings.some(warning => warning.code === 'TOTAL_OVER_BUDGET'))
   assert.ok(overview.warnings.some(warning => warning.code === 'SHORTFALL') === false)
+})
+
+test('canonicalBrief: 旧简报不含任何单双周痕迹(哈希与改动前一致)', () => {
+  // 调整单指纹读的是 briefHash → canonicalBrief。老账号的简报里没有 weekParity,
+  // 也没有 termWeekOneStart;这两个键一旦出现,线上所有已有计划的调整单会集体失效。
+  const brief = normalizeBrief({
+    availability: [{ weekday: 1, windows: [{ start: '08:00', end: '12:00' }] }],
+    fixedCommitments: [{ weekday: 3, start: '08:00', end: '09:40', label: '人工智能' }],
+    availabilityConfirmed: true,
+    commitmentsConfirmed: true,
+  })
+  const canonical = canonicalBrief(brief, '2026-12-19')
+  assert.ok(!canonical.includes('termWeekOneStart'), canonical)
+  assert.ok(!canonical.includes('weekParity'), canonical)
+})
+
+test('canonicalBrief: 填了校历第 1 周才把锚点写进去', () => {
+  const brief = normalizeBrief({
+    availability: [{ weekday: 1, windows: [{ start: '08:00', end: '12:00' }] }],
+    termWeekOneStart: '2026-09-07',
+    availabilityConfirmed: true,
+    commitmentsConfirmed: true,
+  })
+  const canonical = canonicalBrief(brief, '2026-12-19')
+  assert.ok(canonical.includes('"termWeekOneStart":"2026-09-07"'), canonical)
+})
+
+test('canonicalBrief: 同一时段不同单双周的两条占用排序稳定', () => {
+  const brief = normalizeBrief({
+    availability: [{ weekday: 1, windows: [{ start: '08:00', end: '12:00' }] }],
+    fixedCommitments: [
+      { weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: 'even' },
+      { weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: 'odd' },
+    ],
+    termWeekOneStart: '2026-09-07',
+    availabilityConfirmed: true,
+    commitmentsConfirmed: true,
+  })
+  const canonical = canonicalBrief(brief, '2026-12-19')
+  // 排序键末尾是 parity:'even' 必须排在 'odd' 前,两次序列化结果一致
+  assert.ok(canonical.indexOf('"weekParity":"even"') < canonical.indexOf('"weekParity":"odd"'), canonical)
+  assert.equal(canonical, canonicalBrief(JSON.parse(JSON.stringify(brief)), '2026-12-19'))
+})
+
+test('canonicalBrief: 无 parity 的占用排在有 parity 的同键占用之前', () => {
+  // 旧行为里所有占用都没有 parity,追加排序键不能改变它们之间的相对顺序
+  const brief = normalizeBrief({
+    availability: [{ weekday: 1, windows: [{ start: '08:00', end: '12:00' }] }],
+    fixedCommitments: [
+      { weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: 'odd' },
+      { weekday: 3, start: '08:00', end: '09:40', label: '人工智能' },
+    ],
+    availabilityConfirmed: true,
+    commitmentsConfirmed: true,
+  })
+  const canonical = canonicalBrief(brief, '2026-12-19')
+  const list = JSON.parse(canonical).fixedCommitments as Array<{ weekParity?: string }>
+  assert.equal(list[0].weekParity, undefined)
+  assert.equal(list[1].weekParity, 'odd')
 })

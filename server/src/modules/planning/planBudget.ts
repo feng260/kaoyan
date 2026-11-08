@@ -185,10 +185,14 @@ export function canonicalBrief(brief: PlanBrief, examDate: string): string {
       })),
     availability: windows(brief.availability),
     fixedCommitments: [...brief.fixedCommitments]
-      .sort((a, b) => a.weekday - b.weekday || a.start.localeCompare(b.start) || a.end.localeCompare(b.end) || a.label.localeCompare(b.label)),
+      .sort((a, b) => a.weekday - b.weekday || a.start.localeCompare(b.start) || a.end.localeCompare(b.end)
+        || a.label.localeCompare(b.label) || (a.weekParity ?? '').localeCompare(b.weekParity ?? '')),
     periods: [...(brief.periods ?? [])].sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end)),
     availabilityConfirmed: brief.availabilityConfirmed,
     commitmentsConfirmed: brief.commitmentsConfirmed,
+    // 只有真填了校历第 1 周才写进哈希:空串一旦出现,所有旧简报的 briefHash 都会变,
+    // 线上已有计划的调整单(briefContextHash)会集体失效
+    ...(brief.termWeekOneStart ? { termWeekOneStart: brief.termWeekOneStart } : {}),
   })
 }
 
