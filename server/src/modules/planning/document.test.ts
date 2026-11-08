@@ -89,6 +89,12 @@ test('normalizeBrief: 非法锚点归一为空串', () => {
   assert.equal(normalizeBrief({ termWeekOneStart: '2026-9-7' }).termWeekOneStart, '')
   assert.equal(normalizeBrief({ termWeekOneStart: '下周一' }).termWeekOneStart, '')
   assert.equal(normalizeBrief({}).termWeekOneStart, '')
+  // 日溢出:V8 会把 2026-02-30 静默进位成 3 月 2 日,只有 isoDay 的往返校验挡得住。
+  // 放进档案就会让整张课表的奇偶平移两天,必须归一为空串(退回每周都占)。
+  assert.equal(normalizeBrief({ termWeekOneStart: '2026-02-30' }).termWeekOneStart, '')
+  assert.equal(normalizeBrief({ termWeekOneStart: '2026-13-01' }).termWeekOneStart, '')
+  // 裁定 1 接受的不 trim 口径:带空格的脏值判不出奇偶,失败方向是保守的
+  assert.equal(normalizeBrief({ termWeekOneStart: ' 2026-09-07 ' }).termWeekOneStart, '')
   assert.equal(EMPTY_BRIEF.termWeekOneStart, '')
 })
 
