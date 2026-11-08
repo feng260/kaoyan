@@ -86,7 +86,14 @@ export interface BriefWindow {
 }
 
 export type BriefAvailability = Array<{ weekday: number; windows: BriefWindow[] }>
-export type BriefCommitment = { weekday: number; start: string; end: string; label: string }
+export type BriefCommitment = {
+  weekday: number
+  start: string
+  end: string
+  label: string
+  /** 省略 = 每周都占(旧行为);odd/even 按 termWeekOneStart 锚点判定 */
+  weekParity?: 'odd' | 'even'
+}
 
 /**
  * 日历化作息:学期、寒暑假、冲刺闭关等区间的空闲与固定占用和平时不同。
@@ -119,6 +126,8 @@ export interface PlanBrief {
   examSubjects: Array<{ name: string; progress: string; scope: string; remainingMinutes: number; milestone: string; milestoneDate: string; milestoneMinutes: number; estimated: boolean }>
   availability: BriefAvailability
   fixedCommitments: BriefCommitment[]
+  /** 校历第 1 周的周一,YYYY-MM-DD。空 = 不启用单双周,带 parity 的占用按每周都占算 */
+  termWeekOneStart?: string
   /** 按日期区间覆盖平时作息;旧简报没有这一段时沿用 availability */
   periods?: BriefPeriod[]
   availabilityConfirmed: boolean
@@ -135,6 +144,7 @@ export const EMPTY_BRIEF: PlanBrief = {
   examSubjects: [],
   availability: [],
   fixedCommitments: [],
+  termWeekOneStart: '',
   periods: [],
   availabilityConfirmed: false,
   commitmentsConfirmed: false,
@@ -331,7 +341,17 @@ function normalizeCommitments(raw: unknown): BriefCommitment[] {
   return (Array.isArray(raw) ? raw : []).filter((item: any) => validWeekday(item?.weekday))
     .map((item: any) => {
       const window = briefWindow(item)
-      return window ? { ...window, weekday: Number(item.weekday), label: str(item.label) } : null
+      if (!window) return null
+      const commitment: BriefCommitment = {
+        ...window,
+        weekday: Number(item.weekday),
+        label: str(item.label),
+      }
+      // 非法 parity 只丢属性不丢整条:模型写成「单周」时,这条课仍然是真实占用,
+      // 退化成「每周都占」比整条消失安全得多
+      const parity = item.weekParity
+      if (parity === 'odd' || parity === 'even') commitment.weekParity = parity
+      return commitment
     })
     .filter((item): item is BriefCommitment => item !== null && Boolean(item.label))
     .slice(0, 20)
@@ -379,6 +399,7 @@ export function normalizeBrief(raw: any): PlanBrief {
     })).filter((item: PlanBrief['examSubjects'][number]) => item.name),
     availability: normalizeAvailability(raw.availability),
     fixedCommitments: normalizeCommitments(raw.fixedCommitments),
+    termWeekOneStart: isoDay(raw.termWeekOneStart),
     periods: normalizePeriods(raw.periods),
     availabilityConfirmed: raw.availabilityConfirmed === true,
     commitmentsConfirmed: raw.commitmentsConfirmed === true,
@@ -437,7 +458,8 @@ export function mergeBrief(base: PlanBrief, patch: PlanBrief): PlanBrief {
     availability: base.availabilityConfirmed ? base.availability : mergeByKey(base.availability, patch.availability, item => String(item.weekday)),
     fixedCommitments: [...base.fixedCommitments, ...patch.fixedCommitments.filter(item =>
       !base.fixedCommitments.some(existing => existing.weekday === item.weekday
-        && existing.start === item.start && existing.end === item.end && existing.label === item.label))],
+        && existing.start === item.start && existing.end === item.end && existing.label === item.label
+        && (existing.weekParity ?? '') === (item.weekParity ?? '')))],
     // 已确认的作息连同学期/假期区间一起锁定:面谈里改作息应该回「备考档案」,
     // 但考生主动补一段「寒假全天有空」属于新增信息,不与旧区间冲突时仍要收下。
     periods: mergeByKey(base.periods ?? [], patch.periods ?? [], item => `${item.start}|${item.end}`)
@@ -445,6 +467,8 @@ export function mergeBrief(base: PlanBrief, patch: PlanBrief): PlanBrief {
         || (base.periods ?? []).some(existing => existing.start === item.start && existing.end === item.end)
         || !(base.periods ?? []).some(existing => existing.start <= item.end && item.start <= existing.end))
       .sort((a, b) => a.start.localeCompare(b.start)),
+    // 补丁为空(老客户端、或面谈没问这一项)时保留旧锚点,别把用户填过的开学周清掉
+    termWeekOneStart: String(patch.termWeekOneStart ?? '').trim() || String(base.termWeekOneStart ?? '').trim(),
     availabilityConfirmed: base.availabilityConfirmed || patch.availabilityConfirmed,
     commitmentsConfirmed: base.commitmentsConfirmed || patch.commitmentsConfirmed,
   }
