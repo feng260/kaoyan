@@ -299,6 +299,8 @@ test('commitments:单双周标注被保留,非法值只丢属性,同键不同 pa
       { weekday: 4, start: '19:00', end: '21:00', label: '重复的 odd', weekParity: 'odd' },
       { weekday: 4, start: '19:00', end: '21:00', label: '重复的 odd', weekParity: 'odd' },
       { weekday: 5, start: '08:00', end: '10:00', label: '早课', weekParity: '单周' },
+      { weekday: 6, start: '09:00', end: '10:00', label: '大写脏值', weekParity: 'EVEN' },
+      { weekday: 6, start: '10:00', end: '11:00', label: 'null 脏值', weekParity: null },
     ],
   }, input)
   assert.deepEqual(intent.commitments, [
@@ -306,5 +308,7 @@ test('commitments:单双周标注被保留,非法值只丢属性,同键不同 pa
     { weekday: 4, start: '19:00', end: '21:00', label: '实习', weekParity: 'even' },
     { weekday: 4, start: '19:00', end: '21:00', label: '重复的 odd', weekParity: 'odd' },
     { weekday: 5, start: '08:00', end: '10:00', label: '早课' },
+    { weekday: 6, start: '09:00', end: '10:00', label: '大写脏值' },
+    { weekday: 6, start: '10:00', end: '11:00', label: 'null 脏值' },
   ])
 })
