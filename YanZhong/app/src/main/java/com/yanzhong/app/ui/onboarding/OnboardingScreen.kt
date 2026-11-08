@@ -454,7 +454,7 @@ internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
     Spacer(Modifier.height(20.dp))
     FieldLabel(
         "每周课表:哪天几点到几点真坐得下来",
-        "点「+」给那天加空闲时段,任意钟点都行;这天没空就空着,排课不会往里塞任务"
+        "已经按你上一步选的时段铺好了,和实际不符的直接点胶囊删掉,或点「+」改钟点;这天没空就空着,排课不会往里塞任务"
     )
     Spacer(Modifier.height(8.dp))
     var editorDay by remember { mutableStateOf<Int?>(null) }
@@ -489,7 +489,7 @@ internal fun StepFacts(state: OnboardingUiState, vm: OnboardingViewModel) {
     }
     Spacer(Modifier.height(8.dp))
     Text(
-        "想更快:加窗口时点「早晨/上午/下午/晚上」一键填好常见钟点,再自己改数字。这份课表就是排课的依据,填得越真,计划越贴身。",
+        "传了课表就更省事:认出来的上课时间会自动从这些窗口里挖掉,剩下的就是你能坐下来学的钟点。这份课表就是排课的依据,填得越真,计划越贴身。",
         style = MaterialTheme.typography.bodySmall,
         color = colors.onSurfaceVariant
     )
