@@ -1,6 +1,8 @@
 package com.yanzhong.app.data.remote
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.Interceptor
@@ -184,6 +186,8 @@ data class ProfileReq(
     val availability: List<BriefAvailabilityDto> = emptyList(),
     /** 固定占用（上课、上班、通勤等），可由课表图片识别得到 */
     val fixedCommitments: List<BriefCommitmentDto> = emptyList(),
+    /** 校历第 1 周的周一(YYYY-MM-DD);空串表示不启用单双周 */
+    val termWeekOneStart: String = "",
     val availabilityConfirmed: Boolean = false,
     val commitmentsConfirmed: Boolean = false
 )
@@ -628,6 +632,7 @@ data class PlanBriefDto(
     val examSubjects: List<BriefSubjectDto> = emptyList(),
     val availability: List<BriefAvailabilityDto> = emptyList(),
     val fixedCommitments: List<BriefCommitmentDto> = emptyList(),
+    val termWeekOneStart: String = "",
     val availabilityConfirmed: Boolean = false,
     val commitmentsConfirmed: Boolean = false
 )
@@ -648,7 +653,16 @@ data class BriefWindowDto(val start: String, val end: String)
 data class BriefAvailabilityDto(val weekday: Int, val windows: List<BriefWindowDto>)
 
 @Serializable
-data class BriefCommitmentDto(val weekday: Int, val start: String, val end: String, val label: String)
+@OptIn(ExperimentalSerializationApi::class)
+data class BriefCommitmentDto(
+    val weekday: Int,
+    val start: String,
+    val end: String,
+    val label: String,
+    /** 单双周:"odd"=单周 / "even"=双周 / null=每周都占。只在填了 termWeekOneStart 时生效 */
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val weekParity: String? = null
+)
 
 /** 面谈消息：role 只认 user / assistant */
 @Serializable
