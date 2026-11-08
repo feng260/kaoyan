@@ -154,6 +154,42 @@ internal fun seedAvailability(
     return (1..7).associateWith { windows }
 }
 
+/**
+ * 档案加载完，这一屏的网格该长什么样。
+ *
+ * 只有「直接落在最后一题」时才在这里铺预设:从第 1 题走起的人不铺 ——
+ * 他的网格要等第 2 题勾完时段、由 [nextStepAvailability] 去铺,
+ * 提前铺只会拿默认时段盖住他还没做的选择(这个坑真踩过一次)。
+ *
+ * [profileGrid] 是档案里存过的真实空闲,不管铺不铺预设都要先回填,
+ * 所以两条臂共用同一份 [fromProfile],差别只在要不要再走一遍 [seedAvailability]。
+ */
+internal fun resolveLoadedAvailability(
+    landsOnLastStep: Boolean,
+    profileWindows: Set<String>?,
+    profileGrid: Map<Int, List<TimeWindow>>?,
+    fallbackStudyWindows: Set<String>,
+    currentGrid: Map<Int, List<TimeWindow>>
+): Map<Int, List<TimeWindow>> {
+    val fromProfile = profileGrid?.takeIf { it.isNotEmpty() } ?: currentGrid
+    if (!landsOnLastStep) return fromProfile
+    val windows = profileWindows?.takeIf { it.isNotEmpty() } ?: fallbackStudyWindows
+    return seedAvailability(windows, fromProfile)
+}
+
+/**
+ * 点「下一步」时这一屏的网格该长什么样。
+ *
+ * 只有目的地是最后一题才铺,而且 [seedAvailability] 见到非空网格会原样返回 ——
+ * 用户在第 3 题删掉的某一天,回第 2 题再进来也不会被重新铺回。
+ */
+internal fun nextStepAvailability(
+    landsOnLastStep: Boolean,
+    studyWindows: Set<String>,
+    currentGrid: Map<Int, List<TimeWindow>>
+): Map<Int, List<TimeWindow>> =
+    if (landsOnLastStep) seedAvailability(studyWindows, currentGrid) else currentGrid
+
 /** 一段空闲窗口(HH:mm 24 小时制);问卷课表的原子单位,直接对应服务端 BriefWindowDto */
 data class TimeWindow(val start: String, val end: String) {
     override fun toString(): String = "$start-$end"
@@ -269,18 +305,13 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                             // 之前答过的正式科目与真实空闲一并回填:重填问卷不该把上次确认过的事实抹掉
                             examSubjects = p?.brief?.examSubjects?.map { it.name }?.toSet()?.takeIf { it.isNotEmpty() }
                                 ?: s.examSubjects,
-                            // 直接落在最后一题时这一屏的网格要铺满;
-                            // 档案里回填过真实空闲的话,seedAvailability 会原样返回不覆盖
-                            availability = if (landsOnLastStep) {
-                                seedAvailability(
-                                    p?.studyWindows?.toSet()?.takeIf { it.isNotEmpty() } ?: s.studyWindows,
-                                    p?.brief?.let { briefToGrid(it.availability) }?.takeIf { it.isNotEmpty() }
-                                        ?: s.availability
-                                )
-                            } else {
-                                p?.brief?.let { briefToGrid(it.availability) }?.takeIf { it.isNotEmpty() }
-                                    ?: s.availability
-                            },
+                            availability = resolveLoadedAvailability(
+                                landsOnLastStep,
+                                p?.studyWindows?.toSet(),
+                                p?.brief?.let { briefToGrid(it.availability) },
+                                s.studyWindows,
+                                s.availability
+                            ),
                             commitments = p?.brief?.fixedCommitments?.takeIf { it.isNotEmpty() } ?: s.commitments
                         )
                     }
@@ -317,8 +348,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
         // 走进「真实空闲」这一屏就把网格按上一屏勾的时段铺满:
         // 课表识别只产出占用,而净空闲是「窗口 - 占用」,不铺窗口就永远是 0,
         // 用户传完课表照样被闸门拦住。已填过的不覆盖。
-        val availability = if (to == ONBOARDING_STEPS - 1)
-            seedAvailability(s.studyWindows, s.availability) else s.availability
+        val availability = nextStepAvailability(to == ONBOARDING_STEPS - 1, s.studyWindows, s.availability)
         _ui.update {
             it.copy(
                 step = to,
