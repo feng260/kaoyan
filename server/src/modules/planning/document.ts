@@ -1,3 +1,5 @@
+import { addDays, dayStart, diffDays } from './schemas'
+
 /**
  * 计划长文档的数据契约(对标「468 天考研全程作战计划」)。
  *
@@ -275,6 +277,30 @@ export function normalizeDocument(raw: any, fallbackTitle: string): PlanDocument
 
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/
 const clockMinutes = (time: string) => Number(time.slice(0, 2)) * 60 + Number(time.slice(3))
+
+/**
+ * 某一天属于校历的奇周还是偶周。
+ *
+ * 为什么要一个绝对锚点:`aiGenerator` 原先按「阶段起点」算奇偶,而课表上的单双周
+ * 是按「校历第 1 周」算的 —— 两个锚点不同步,输入侧标了双周的课和输出侧排到双周的
+ * 任务就会错开。统一到这里之后,两端读同一个数。
+ *
+ * 返回 null 表示「这一天无从判断奇偶」(没填锚点、锚点非法、或日期早于开学周),
+ * 调用方一律退回「每周都占」的保守口径 —— 宁可少算可用时间,也不能因为漏算占用
+ * 把任务排到上课时间里。
+ */
+export function weekParityForDate(termWeekOneStart: string, date: Date): 'odd' | 'even' | null {
+  // 走本文件既有的 isoDay():它对日期做往返校验,`2026-02-30` 这种会被 V8 悄悄进位成
+  // 3 月 2 日的写法会被挡下来。锚点错了整张课表的奇偶都会翻,宁可判不出也不能判错。
+  const raw = isoDay(String(termWeekOneStart ?? '').trim())
+  if (!raw) return null
+  const anchor = dayStart(new Date(`${raw}T00:00:00.000Z`))
+  // 归一到所在周的周一:用户填了周三也不该让整张课表错位两天
+  const monday = addDays(anchor, -((anchor.getUTCDay() || 7) - 1))
+  const weeks = Math.floor(diffDays(date, monday) / 7)
+  if (weeks < 0) return null
+  return weeks % 2 === 0 ? 'odd' : 'even'
+}
 
 const isoDayPattern = /^\d{4}-\d{2}-\d{2}$/
 function isoDay(value: unknown): string {
