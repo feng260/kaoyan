@@ -77,20 +77,18 @@ data class OnboardingUiState(
     val onlyPlanMissing: Boolean get() = profileSaved && plan == null
 }
 
-/** 「其他」与未知类型的兜底科目预设 */
-private val DEFAULT_SUBJECT_PRESETS = listOf("政治", "英语", "数学", "专业课")
-
 /**
  * 按 [TARGET_TYPES] 分型的科目预设(F3):选法考不该看到"数学"。
  * 用户仍可自由增删,本地已有科目会追加在预设之后供选择。
  * 考研不在这里走预设 —— 它用 [KaoyanSubjectSelection] 分组选择器,
  * 泛化的「英语/数学/专业课」正是上一版计划出错的根源。
+ * 「其他」(事业编/考证/雅思等)没有统一科目结构,不给预设,完全由用户自己写,
+ * 免得套一套考研味的泛称误导用户确认进不考的科目。
  */
 private val SUBJECT_PRESETS: Map<String, List<String>> = mapOf(
     "法考" to listOf("民法", "刑法", "行政法", "理论法", "商经法", "三国法", "刑诉", "民诉"),
     "考公" to listOf("行测", "申论"),
     "专升本" to listOf("英语", "政治", "大学语文", "高等数学"),
-    "其他" to DEFAULT_SUBJECT_PRESETS,
 )
 
 /**
@@ -99,9 +97,19 @@ private val SUBJECT_PRESETS: Map<String, List<String>> = mapOf(
  * 不能"本地优先、为空才用预设"——本地科目在老安装里是首启硬编码种入的考研四科,
  * 本地永远不空,预设就永远轮不到,选了考公看到的还是 408(用户实测踩中)。
  * 预设先行保证选项跟着备考类型走;本地科目去重后追加,用户自建的不丢。
+ * 没有预设的类型(其他/未知)只返回用户自建科目。
  */
-private fun subjectOptionsFor(targetType: String, localSubjects: List<String>): List<String> =
-    ((SUBJECT_PRESETS[targetType] ?: DEFAULT_SUBJECT_PRESETS) + localSubjects).distinct()
+internal fun subjectOptionsFor(targetType: String, localSubjects: List<String>): List<String> =
+    ((SUBJECT_PRESETS[targetType] ?: emptyList()) + localSubjects).distinct()
+
+/** 科目步的分型引导文案:贴合各自考试结构;「其他」无预设,引导用户自己写 */
+internal fun subjectStepSubtitle(targetType: String): String = when (targetType) {
+    "考公" -> "国考选行测+申论;省考、事业编按当地要求加科目"
+    "法考" -> "按你报考的阶段选全;清单里没有的自己加"
+    "专升本" -> "按你省份的统考科目选;不一样的自己加"
+    "其他" -> "没有预设清单,直接把要考的科目写出来,一门也算"
+    else -> "选全你要考的科目;清单里没有的自己加一门"
+}
 
 // ---------------- 考研科目分组 ----------------
 

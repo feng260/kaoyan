@@ -283,22 +283,52 @@ internal fun StepSubjects(state: OnboardingUiState, vm: OnboardingViewModel) {
         KaoyanSubjectPicker(state, vm)
         return
     }
-    FieldLabel("你要考的科目", "选全你要考的科目;清单里没有的自己加一门")
+    val colors = MaterialTheme.colorScheme
+    FieldLabel("你要考的科目", subjectStepSubtitle(state.targetType))
     Spacer(Modifier.height(8.dp))
-    FlowRow(
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+    if (state.subjectOptions.isNotEmpty()) {
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            state.subjectOptions.forEach { name ->
+                ToggleChip(
+                    text = name,
+                    selected = name in state.examSubjects,
+                    onClick = { vm.toggleExamSubject(name) }
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+    CustomAddRow(
+        label = if (state.subjectOptions.isEmpty()) "写下你要考的科目" else "没有你的科目就自己加",
+        placeholder = "科目名字"
+    ) { vm.addExamSubject(it) }
+
+    Spacer(Modifier.height(20.dp))
+    // 与考研一致:把「真正确认了哪些科目」摆到明面上,空着时提示还差什么
+    val confirmed = state.examSubjects
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = colors.secondaryContainer,
+        modifier = Modifier.fillMaxWidth()
     ) {
-        state.subjectOptions.forEach { name ->
-            ToggleChip(
-                text = name,
-                selected = name in state.examSubjects,
-                onClick = { vm.toggleExamSubject(name) }
+        Column(Modifier.padding(14.dp)) {
+            Text(
+                "已确认科目",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.onSecondaryContainer
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (confirmed.isEmpty()) "还没选——上面选完或自己加完,这里会列出你真正要考的科目"
+                else confirmed.joinToString("、"),
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.onSecondaryContainer
             )
         }
     }
-    Spacer(Modifier.height(8.dp))
-    CustomAddRow(label = "没有你的科目就自己加", placeholder = "比如 数据结构") { vm.addExamSubject(it) }
 }
 
 /** 考研四组选择器 + 实时摘要条:把「到底确认了哪些科目」摆到明面上 */
