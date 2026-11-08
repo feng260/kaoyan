@@ -294,9 +294,10 @@ test('profileInputSchema: 接受校历第 1 周与占用的单双周标记', () 
   assert.equal(parsed.fixedCommitments[1].weekParity, undefined)
 })
 
-test('profileInputSchema: 老客户端不带新字段时锚点默认空串', () => {
+test('profileInputSchema: 老客户端不带新字段时锚点是 undefined(由写入层保留旧值)', () => {
+  // 不能默认成空串:空串现在表示「用户显式清除」,默认成空串会让老客户端的每次提交都清掉开学周
   const parsed = profileInputSchema.parse(validPayload())
-  assert.equal(parsed.termWeekOneStart, '')
+  assert.equal(parsed.termWeekOneStart, undefined)
 })
 
 test('profileInputSchema: 非法校历第 1 周被挡下', () => {

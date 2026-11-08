@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { addDays } from './schemas'
 import {
-  EMPTY_BRIEF, freeSlots, mergeBrief, netAvailableMinutes, normalizeBrief, weekParityForDate,
+  EMPTY_BRIEF, briefIsEmpty, freeSlots, mergeBrief, netAvailableMinutes, normalizeBrief, weekParityForDate,
 } from './document'
 
 const utc = (day: string) => new Date(`${day}T00:00:00.000Z`)
@@ -213,4 +213,14 @@ test('normalizeBrief: 课表识别的原始 JSON 能带着单双周穿过收敛�
   assert.equal(brief.fixedCommitments[0].weekParity, undefined)
   assert.equal(brief.fixedCommitments[1].weekParity, 'odd')
   assert.equal(brief.fixedCommitments[2].weekParity, undefined, '大写 EVEN 属非法值,只丢属性')
+})
+
+test('briefIsEmpty: 只有固定占用或只有校历锚点都不算空简报', () => {
+  // 课表上传只产出固定占用、问卷里也可能只填开学周:这两类简报必须能落库、能进提示词
+  assert.equal(briefIsEmpty(normalizeBrief({})), true)
+  assert.equal(briefIsEmpty(normalizeBrief({
+    fixedCommitments: [{ weekday: 1, start: '08:00', end: '09:40', label: '高等数学' }],
+    commitmentsConfirmed: true,
+  })), false)
+  assert.equal(briefIsEmpty(normalizeBrief({ termWeekOneStart: '2026-09-07' })), false)
 })

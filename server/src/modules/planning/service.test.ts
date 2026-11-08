@@ -463,6 +463,16 @@ test('upsertProfile: 载荷带了新锚点时覆盖旧值', async () => {
   assert.equal(JSON.parse(fake.state.profiles[0].briefJson).termWeekOneStart, '2027-02-22')
 })
 
+test('upsertProfile: 显式传空串能清除已确认的校历第 1 周', async () => {
+  const fake = createFakeDb()
+  const service = serviceWith(fake)
+  const availability = [{ weekday: 1, windows: [{ start: '08:00', end: '12:00' }] }]
+  await service.upsertProfile(USER, validProfile({ availability, termWeekOneStart: '2026-09-07' }) as any)
+
+  await service.upsertProfile(USER, validProfile({ availability, termWeekOneStart: '' }) as any)
+
+  assert.equal(JSON.parse(fake.state.profiles[0].briefJson).termWeekOneStart, '')
+})
 test('setItemStatus persists completion time and clears it when reopened', async () => {
   const fake = createFakeDb()
   const service = serviceWithConfirmedSubject(fake)

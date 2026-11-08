@@ -172,8 +172,9 @@ export const profileInputSchema = z.object({
   examSubjects: examSubjectsSchema,
   availability: availabilitySchema,
   fixedCommitments: fixedCommitmentsSchema,
-  // 校历第 1 周的周一。空串表示不启用单双周(老客户端、或用户没填),
-  // 此时带 weekParity 的占用保守按每周都占计算
+  // 校历第 1 周的周一。三种取值:缺键(undefined)= 客户端没提供、写入层保留旧值;
+  // 空串 = 用户显式清除;合法日期 = 设置。老客户端不带该字段,不能因此把已确认的开学周清掉。
+  // 空串表示不启用单双周,带 weekParity 的占用保守按每周都占计算
   termWeekOneStart: z
     .string()
     .trim()
@@ -187,8 +188,7 @@ export const profileInputSchema = z.object({
       return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value
     }, '校历第 1 周不是一个真实存在的日期')
     .optional()
-    .or(z.literal(''))
-    .default(''),
+    .or(z.literal('')),
   availabilityConfirmed: z.boolean().default(false),
   commitmentsConfirmed: z.boolean().default(false),
 })

@@ -335,3 +335,54 @@ test('预算版:400 天也不超发,总量围绕考生确认的 3000 分钟', ()
   assert.equal(plan.items.length > 0, true)
   assertItemsInsideStages(plan, exam)
 })
+
+// ---------- 单双周锚点统一(校历第 1 周) ----------
+
+/** 校历第 1 周 = 2026-09-07(周一),于是 09-14 起是第 2 周 = 偶周、09-21 起是第 3 周 = 奇周 */
+const TERM_ANCHOR_BRIEF = {
+  availability: weekAvailability([{ start: '08:00', end: '18:00' }]),
+  fixedCommitments: [],
+  termWeekOneStart: '2026-09-07',
+}
+
+/** 与 TERM_ANCHOR_BRIEF 同样的窗口,只是不填锚点 —— 用来锁旧口径不被改坏 */
+const NO_ANCHOR_BRIEF = {
+  availability: weekAvailability([{ start: '08:00', end: '18:00' }]),
+  fixedCommitments: [],
+}
+
+const titlesOn = (items: Array<{ planDate: Date; title: string }>, day: string) => items
+  .filter(item => item.planDate.toISOString().slice(0, 10) === day).map(item => item.title)
+
+test('expandStage: 有校历锚点时按校历算奇偶,不按阶段起点', () => {
+  // 阶段起点 2026-09-14 是校历第 2 周(偶周)。旧口径把 offset 0 当奇周,
+  // 当周排的是「奇周阅读」;统一锚点后当周应该排「偶周阅读」。
+  const start = new Date('2026-09-14T00:00:00.000Z')
+  const items = expandStage({
+    name: '基础',
+    weeklySlots: [
+      { weekdays: [1], subject: '英语一', title: '偶周阅读', minutes: 60, weekParity: 'even' },
+      { weekdays: [1], subject: '英语一', title: '奇周阅读', minutes: 60, weekParity: 'odd' },
+    ],
+  }, { name: '基础', startDate: start, endDate: new Date('2026-09-27T00:00:00.000Z'), sortOrder: 0 }, TERM_ANCHOR_BRIEF)
+
+  assert.ok(titlesOn(items, '2026-09-14').includes('偶周阅读'), titlesOn(items, '2026-09-14').join(','))
+  assert.ok(!titlesOn(items, '2026-09-14').includes('奇周阅读'))
+  // 第 3 周(09-21)是奇周,轮到「奇周阅读」
+  assert.ok(titlesOn(items, '2026-09-21').includes('奇周阅读'), titlesOn(items, '2026-09-21').join(','))
+})
+
+test('expandStage: 没填校历锚点时保持阶段起点的旧口径', () => {
+  // 同一个阶段起点、同一套窗口,只因缺锚点而结果相反 —— 这条锁的是向后兼容
+  const start = new Date('2026-09-14T00:00:00.000Z')
+  const items = expandStage({
+    name: '基础',
+    weeklySlots: [
+      { weekdays: [1], subject: '英语一', title: '偶周阅读', minutes: 60, weekParity: 'even' },
+      { weekdays: [1], subject: '英语一', title: '奇周阅读', minutes: 60, weekParity: 'odd' },
+    ],
+  }, { name: '基础', startDate: start, endDate: new Date('2026-09-27T00:00:00.000Z'), sortOrder: 0 }, NO_ANCHOR_BRIEF)
+
+  assert.ok(titlesOn(items, '2026-09-14').includes('奇周阅读'), titlesOn(items, '2026-09-14').join(','))
+  assert.ok(titlesOn(items, '2026-09-21').includes('偶周阅读'), titlesOn(items, '2026-09-21').join(','))
+})

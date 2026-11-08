@@ -4,7 +4,7 @@ import type { AiWeekVariant, GeneratedItem, GeneratedPlan, GeneratedStage } from
 import { generatePlanDocument } from './aiDocument'
 import { refineStageToWeeks } from './refineStage'
 import { KAOYAN_KNOWN_SUBJECT_NAMES, PLAN_STRUCTURE_EXEMPLAR } from './planExemplar'
-import { briefIsEmpty, briefToPrompt, documentMatchesSubjects, netAvailableMinutes, type PlanBrief, type PlanDocument } from './document'
+import { briefIsEmpty, briefToPrompt, documentMatchesSubjects, netAvailableMinutes, weekParityForDate, type PlanBrief, type PlanDocument } from './document'
 import { phaseOfStage, playbookPrompt } from './playbooks'
 import {
   buildPlanSpec,
@@ -132,7 +132,8 @@ const SYSTEM_PROMPT = `你是一位资深的中国备考全程规划师,只根�
 2. 各阶段的相对长度要符合该考试的一般备考规律:基础期最长,强化期次之,冲刺期最短。若考期在半年内则压缩为基础/强化/冲刺三段。
    每个阶段都要覆盖全部已确认科目(政治可在基础期少排,但不能整段消失);阶段主线要写清这一阶段各科分别推进到什么程度。
 3. weeklySlots 是按科目和星期匹配的任务队列:同一科目的后续条目在后续周推进,不可每周重放已完成的标题。
-   - weekdays 用 1-7 表示周一到周日;weekParity 用 odd/even 区分从本阶段起点算起的奇周/偶周,省略表示不限定;任务完成后不循环重播;
+   - weekdays 用 1-7 表示周一到周日;weekParity 用 odd/even 区分奇周/偶周,省略表示不限定;任务完成后不循环重播;
+     奇偶按考生的校历第 1 周算(见下文的考生简报),简报里没有校历信息时按本阶段起点算;
    - 每个阶段提供足够覆盖实际空闲时段的任务,按先修顺序排列;
    - 单条任务 30-60 分钟;需要更长时间时拆成多个不同的子任务(如「真题套卷限时写作」「套卷批改与错题归档」),禁止 90 分钟以上的单条大任务;
    - 同一科目在队列里要准备 6-10 条互不相同的子任务轮换推进,标题写清"动作+对象",让每天的同科目学习内容各不相同;
@@ -334,7 +335,7 @@ export function alignSubjectsToConfirmed(
  *   - 队列全部消费完则清空标记进入新一轮复习轮(备考本就多轮刷同类任务),
  *     避免 394 天的长周期计划在头一个月耗尽队列后大面积空天。
  */
-export function expandStage(stage: AiStage, range: GeneratedStage, brief: Pick<PlanBrief, 'availability' | 'fixedCommitments'>): GeneratedItem[] {
+export function expandStage(stage: AiStage, range: GeneratedStage, brief: Pick<PlanBrief, 'availability' | 'fixedCommitments' | 'termWeekOneStart'>): GeneratedItem[] {
   const variants = (range.weekVariants ?? []).filter(v => v.length > 0)
   if (variants.length > 0) return expandStageFromVariants(range, brief, variants)
   const items: GeneratedItem[] = []
@@ -346,7 +347,9 @@ export function expandStage(stage: AiStage, range: GeneratedStage, brief: Pick<P
     let dayBudget = netAvailableMinutes(brief, planDate)
     if (dayBudget < MIN_SLOT_MINUTES) continue
     const dow = isoWeekday(planDate)
-    const weekParity = Math.floor(offset / 7) % 2 === 0 ? 'odd' : 'even'
+    // 有校历锚点就按校历算奇偶,和课表上的单双周对齐;没锚点时退回「从阶段起点算」的旧口径
+    const weekParity = weekParityForDate(brief.termWeekOneStart ?? '', planDate)
+      ?? (Math.floor(offset / 7) % 2 === 0 ? 'odd' : 'even')
 
     let sortOrder = 0
     // 单日防御上限:预算再大也最多 12 条,避免极端小分钟的 slot 把清单刷成流水账
@@ -393,7 +396,7 @@ export function expandStage(stage: AiStage, range: GeneratedStage, brief: Pick<P
  */
 function expandStageFromVariants(
   range: GeneratedStage,
-  brief: Pick<PlanBrief, 'availability' | 'fixedCommitments'>,
+  brief: Pick<PlanBrief, 'availability' | 'fixedCommitments' | 'termWeekOneStart'>,
   variants: AiWeekVariant[],
 ): GeneratedItem[] {
   const items: GeneratedItem[] = []

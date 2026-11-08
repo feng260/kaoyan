@@ -497,6 +497,8 @@ export function briefIsEmpty(brief: PlanBrief): boolean {
     && brief.notes.length === 0
     && brief.examSubjects.length === 0
     && brief.availability.length === 0
+    && brief.fixedCommitments.length === 0
+    && !brief.termWeekOneStart
     && (brief.periods ?? []).length === 0
 }
 
@@ -634,6 +636,7 @@ export function briefToPrompt(brief: PlanBrief): string {
   if (brief.materials.length) lines.push(`资料情况:${brief.materials.join(';')}`)
   if (brief.notes.length) lines.push(`其它补充:${brief.notes.join(';')}`)
   if (brief.examSubjects.length) lines.push(`正式考试科目与逐科事实:${JSON.stringify(brief.examSubjects)}`)
+  if (brief.termWeekOneStart) lines.push(`校历第 1 周(周一):${brief.termWeekOneStart},单双周按此推算`)
   if (brief.availability.length) lines.push(`平时真实空闲时段:${JSON.stringify(brief.availability)}`)
   if (brief.commitmentsConfirmed) lines.push(`平时固定占用(空数组表示确认没有):${JSON.stringify(brief.fixedCommitments)}`)
   if ((brief.periods ?? []).length) {

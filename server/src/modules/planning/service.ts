@@ -1026,8 +1026,10 @@ function applyProfileFacts(brief: PlanBrief, input: ProfileInput): PlanBrief {
     availability: input.availability.length ? input.availability : brief.availability,
     availabilityConfirmed: brief.availabilityConfirmed || input.availabilityConfirmed,
     fixedCommitments: input.commitmentsConfirmed ? input.fixedCommitments : brief.fixedCommitments,
-    // 问卷没填校历第 1 周时保留旧锚点:老客户端提交档案不该把面谈里补过的开学周清掉
-    termWeekOneStart: input.termWeekOneStart || brief.termWeekOneStart || '',
+    // 缺键 = 老客户端没提供,保留旧锚点;空串 = 用户在问卷里清空,真的清掉
+    termWeekOneStart: input.termWeekOneStart === undefined
+      ? (brief.termWeekOneStart ?? '')
+      : input.termWeekOneStart,
     commitmentsConfirmed: brief.commitmentsConfirmed || input.commitmentsConfirmed,
   }
 }
