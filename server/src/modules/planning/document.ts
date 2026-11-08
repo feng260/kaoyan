@@ -500,7 +500,7 @@ export function briefIsEmpty(brief: PlanBrief): boolean {
     && (brief.periods ?? []).length === 0
 }
 
-type BriefSchedule = Pick<PlanBrief, 'availability' | 'fixedCommitments'> & { periods?: BriefPeriod[] }
+type BriefSchedule = Pick<PlanBrief, 'availability' | 'fixedCommitments' | 'termWeekOneStart'> & { periods?: BriefPeriod[] }
 
 /** 命中的日期区间:多个区间重叠时取开始最晚的那段(更具体的安排优先) */
 export function periodForDate(brief: BriefSchedule, date: Date): BriefPeriod | null {
@@ -514,6 +514,8 @@ export function periodForDate(brief: BriefSchedule, date: Date): BriefPeriod | n
  * 某一天的真实作息:区间内按星期覆盖平时作息,未列出的星期回落到平时。
  * 寒暑假不再叠加学期里的固定占用(课都不上了,再扣一遍就排不出任何任务);
  * 其它区间(冲刺/自定义)与平时固定占用取并集,因为上班/通勤不会因为放假自动消失。
+ * 单双周的课只在它生效的那一周扣掉 —— parity 为 null(没填校历第 1 周、或日期早于
+ * 开学周)时保守按「每周都占」,宁可少算可用时间,也不能把任务排进上课时间。
  */
 export function daySchedule(brief: BriefSchedule, date: Date): {
   windows: BriefWindow[]
@@ -526,10 +528,11 @@ export function daySchedule(brief: BriefSchedule, date: Date): {
   const windows = periodDays.flatMap(day => day.windows)
   const fallbackWindows = brief.availability.filter(day => day.weekday === weekday).flatMap(day => day.windows)
   const dropWeeklyCommitments = period?.kind === 'vacation' || period?.kind === 'summer'
-  const weekly = dropWeeklyCommitments
-    ? []
-    : brief.fixedCommitments.filter(event => event.weekday === weekday)
-  const inPeriod = period ? period.fixedCommitments.filter(event => event.weekday === weekday) : []
+  const parity = weekParityForDate(brief.termWeekOneStart ?? '', date)
+  const applies = (event: BriefCommitment) => event.weekday === weekday
+    && (!event.weekParity || parity === null || event.weekParity === parity)
+  const weekly = dropWeeklyCommitments ? [] : brief.fixedCommitments.filter(applies)
+  const inPeriod = period ? period.fixedCommitments.filter(applies) : []
   return {
     windows: windows.length > 0 ? windows : fallbackWindows,
     commitments: [...weekly, ...inPeriod],

@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { addDays } from './schemas'
-import { EMPTY_BRIEF, mergeBrief, normalizeBrief, weekParityForDate } from './document'
+import {
+  EMPTY_BRIEF, freeSlots, mergeBrief, netAvailableMinutes, normalizeBrief, weekParityForDate,
+} from './document'
 
 const utc = (day: string) => new Date(`${day}T00:00:00.000Z`)
 
@@ -116,4 +118,83 @@ test('mergeBrief: 补丁的锚点非空时覆盖,为空时保留旧值', () => {
   const base = normalizeBrief({ termWeekOneStart: '2026-09-07' })
   assert.equal(mergeBrief(base, normalizeBrief({ termWeekOneStart: '' })).termWeekOneStart, '2026-09-07')
   assert.equal(mergeBrief(base, normalizeBrief({ termWeekOneStart: '2027-02-22' })).termWeekOneStart, '2027-02-22')
+})
+
+/** 周三全天 08:00-18:00 有空,一条 08:00-09:40 的课;按 parity 决定是否扣掉 */
+function parityBrief(weekParity?: 'odd' | 'even', termWeekOneStart = '2026-09-07') {
+  return normalizeBrief({
+    availability: [{ weekday: 3, windows: [{ start: '08:00', end: '18:00' }] }],
+    fixedCommitments: [weekParity
+      ? { weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity }
+      : { weekday: 3, start: '08:00', end: '09:40', label: '人工智能' }],
+    termWeekOneStart,
+    availabilityConfirmed: true,
+    commitmentsConfirmed: true,
+  })
+}
+
+test('netAvailableMinutes: 双周的课只在偶周扣掉容量', () => {
+  const brief = parityBrief('even')
+  // 2026-09-16 是第 2 周的周三(偶周) → 扣掉 100 分钟
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-16')), 600 - 100)
+  // 2026-09-23 是第 3 周的周三(奇周) → 不扣
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-23')), 600)
+})
+
+test('netAvailableMinutes: 单周的课只在奇周扣掉容量', () => {
+  const brief = parityBrief('odd')
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-16')), 600)
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-23')), 600 - 100)
+})
+
+test('netAvailableMinutes: 不标 parity 的课每周都扣(旧行为不破)', () => {
+  const brief = parityBrief(undefined)
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-16')), 600 - 100)
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-23')), 600 - 100)
+})
+
+test('netAvailableMinutes: 标了 parity 但没填锚点时保守按每周都占', () => {
+  const brief = parityBrief('even', '')
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-16')), 600 - 100)
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-23')), 600 - 100)
+})
+
+test('netAvailableMinutes: 早于开学周的日期退回保守口径', () => {
+  const brief = parityBrief('even')
+  // 2026-09-02 是开学前的周三,weekParityForDate 返回 null → 照常扣
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-02')), 600 - 100)
+})
+
+test('freeSlots: 双周有课的那天被切成两段,奇周是一整段', () => {
+  const brief = parityBrief('even')
+  assert.deepEqual(freeSlots(brief, utc('2026-09-16')), [{ start: '09:40', end: '18:00' }])
+  assert.deepEqual(freeSlots(brief, utc('2026-09-23')), [{ start: '08:00', end: '18:00' }])
+})
+
+test('daySchedule 的假期口径不变:假期里平时的单双周占用都不生效', () => {
+  const brief = parityBrief('even')
+  brief.periods = [{
+    start: '2026-09-14', end: '2026-09-20', kind: 'vacation', note: '中秋假',
+    availability: [{ weekday: 3, windows: [{ start: '08:00', end: '18:00' }] }],
+    fixedCommitments: [],
+  }]
+  // 假期区间内 dropWeeklyCommitments 生效,连偶周的课也不扣
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-16')), 600)
+})
+
+test('daySchedule: 区间内的占用同样按单双周过滤', () => {
+  // normalizePeriods 复用 normalizeCommitments,所以区间里的课也带 parity;
+  // 只给平时占用加过滤、漏掉区间这一侧,冲刺周里的双周课照样会被算成每周都占。
+  const brief = parityBrief(undefined)
+  brief.periods = [{
+    start: '2026-09-14', end: '2026-09-27', kind: 'sprint', note: '冲刺闭关',
+    availability: [{ weekday: 3, windows: [{ start: '08:00', end: '18:00' }] }],
+    fixedCommitments: [
+      { weekday: 3, start: '14:00', end: '15:40', label: '模拟考', weekParity: 'even' },
+    ],
+  }]
+  // 2026-09-16 是第 2 周的周三(偶周):平时那条不带 parity 的课扣 100,区间里那条双周占用再扣 100
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-16')), 600 - 100 - 100)
+  // 2026-09-23 是第 3 周的周三(奇周):区间里那条双周占用不生效,只扣平时那条
+  assert.equal(netAvailableMinutes(brief, utc('2026-09-23')), 600 - 100)
 })
