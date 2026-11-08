@@ -132,6 +132,9 @@ test('canonicalBrief: 旧简报不含任何单双周痕迹(哈希与改动前一
   const canonical = canonicalBrief(brief, '2026-12-19')
   assert.ok(!canonical.includes('termWeekOneStart'), canonical)
   assert.ok(!canonical.includes('weekParity'), canonical)
+  // 只断言两个子串缺席抓不住回归:删掉 periods、调换键序都会改掉旧哈希,却仍然「不含这两个键」。
+  // 下面这串字节是改动前 canonicalBrief 对同一份简报的真实输出,已用 5b1ada8 版本对拍验证过。
+  assert.equal(canonical, '{"examDate":"2026-12-19","subjects":[],"availability":[{"weekday":1,"windows":[{"start":"08:00","end":"12:00"}]}],"fixedCommitments":[{"start":"08:00","end":"09:40","weekday":3,"label":"人工智能"}],"periods":[],"availabilityConfirmed":true,"commitmentsConfirmed":true}')
 })
 
 test('canonicalBrief: 填了校历第 1 周才把锚点写进去', () => {
@@ -143,23 +146,31 @@ test('canonicalBrief: 填了校历第 1 周才把锚点写进去', () => {
   })
   const canonical = canonicalBrief(brief, '2026-12-19')
   assert.ok(canonical.includes('"termWeekOneStart":"2026-09-07"'), canonical)
+  // 锚点必须追加在返回对象最末 —— 挪到中间会让其它字段的键位整体移位,旧哈希随之改变
+  assert.ok(canonical.endsWith(',"termWeekOneStart":"2026-09-07"}'), canonical)
 })
 
 test('canonicalBrief: 同一时段不同单双周的两条占用排序稳定', () => {
-  const brief = normalizeBrief({
+  const build = (order: Array<'odd' | 'even'>) => normalizeBrief({
     availability: [{ weekday: 1, windows: [{ start: '08:00', end: '12:00' }] }],
-    fixedCommitments: [
-      { weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: 'even' },
-      { weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity: 'odd' },
-    ],
+    fixedCommitments: order.map(weekParity => (
+      { weekday: 3, start: '08:00', end: '09:40', label: '人工智能', weekParity }
+    )),
     termWeekOneStart: '2026-09-07',
     availabilityConfirmed: true,
     commitmentsConfirmed: true,
   })
-  const canonical = canonicalBrief(brief, '2026-12-19')
-  // 排序键末尾是 parity:'even' 必须排在 'odd' 前,两次序列化结果一致
+  const evenFirst = build(['even', 'odd'])
+  const oddFirst = build(['odd', 'even'])
+  const canonical = canonicalBrief(evenFirst, '2026-12-19')
+  // 排序键末尾是 parity:'even' 必须排在 'odd' 前
   assert.ok(canonical.indexOf('"weekParity":"even"') < canonical.indexOf('"weekParity":"odd"'), canonical)
-  assert.equal(canonical, canonicalBrief(JSON.parse(JSON.stringify(brief)), '2026-12-19'))
+  // 输入顺序相反也必须得到同一份 canonical JSON:两条占用其余四项全同,先后只由 parity 决定。
+  // 少了这一条,「排序键没加 parity」也能通过 —— 输入顺序恰好就是期望顺序时看不出问题。
+  assert.equal(canonical, canonicalBrief(oddFirst, '2026-12-19'))
+  // canonicalBrief 只能排副本:就地排序会改掉调用方的简报,而它在服务层被反复取哈希
+  assert.deepEqual(evenFirst.fixedCommitments.map(item => item.weekParity), ['even', 'odd'])
+  assert.deepEqual(oddFirst.fixedCommitments.map(item => item.weekParity), ['odd', 'even'])
 })
 
 test('canonicalBrief: 无 parity 的占用排在有 parity 的同键占用之前', () => {
