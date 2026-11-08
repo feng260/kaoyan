@@ -121,6 +121,39 @@ internal val WINDOW_CLOCK: Map<String, Pair<String, String>> = linkedMapOf(
     "深夜" to ("22:30" to "23:59")
 )
 
+/**
+ * 时段交集为空时的兜底三段。
+ * 第 2 步的闸门本来就要求至少勾一个时段,这里只是防御:
+ * 万一铺出一张空网格,用户点下一步又会被同一个提示挡回去,那就白铺了。
+ */
+private val DEFAULT_SEED_WINDOWS = linkedSetOf("上午", "下午", "晚上")
+
+/**
+ * 进第 3 步时把空闲网格铺满七天。
+ *
+ * 为什么要铺:课表识别只往「固定占用」里写,而服务端算净空闲是「窗口 - 占用」
+ * (document.ts 的 netAvailableMinutes)—— 只有占用、没有窗口,净空闲恒为 0。
+ * 用户上传完课表看到「认到 12 段固定占用」,却仍被「至少给一天加一段空闲时段」拦住,
+ * 就是因为这两个字段谁也不推导谁。铺上窗口之后,课表的课会自动挖成洞。
+ *
+ * 只在 [existing] 为空时生效:用户删改过的网格是他的真实答案,不能被预设覆盖回去。
+ * 顺序按 [STUDY_WINDOWS] 而不是 Set 的迭代序 —— 勾「晚上、上午」和勾「上午、晚上」
+ * 应该铺出一样的结果。
+ */
+internal fun seedAvailability(
+    studyWindows: Set<String>,
+    existing: Map<Int, List<TimeWindow>>
+): Map<Int, List<TimeWindow>> {
+    if (existing.isNotEmpty()) return existing
+    val picked = STUDY_WINDOWS.filter { it in studyWindows && it in WINDOW_CLOCK }
+    val names = picked.ifEmpty { STUDY_WINDOWS.filter { it in DEFAULT_SEED_WINDOWS } }
+    val windows = names.mapNotNull { name ->
+        WINDOW_CLOCK[name]?.let { (start, end) -> TimeWindow(start, end) }
+    }
+    if (windows.isEmpty()) return emptyMap()
+    return (1..7).associateWith { windows }
+}
+
 /** 一段空闲窗口(HH:mm 24 小时制);问卷课表的原子单位,直接对应服务端 BriefWindowDto */
 data class TimeWindow(val start: String, val end: String) {
     override fun toString(): String = "$start-$end"
