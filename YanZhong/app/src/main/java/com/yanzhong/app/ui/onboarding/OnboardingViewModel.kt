@@ -50,6 +50,8 @@ data class OnboardingUiState(
     val availability: Map<Int, List<TimeWindow>> = emptyMap(),
     /** 固定占用(上课/上班/通勤),可由课表图片识别得到,也可手动补 */
     val commitments: List<BriefCommitmentDto> = emptyList(),
+    /** 校历第 1 周的周一(YYYY-MM-DD);空串表示不启用单双周,服务端按每周都占算 */
+    val termWeekOneStart: String = "",
     /** 课表识别的进行中/结果提示,和表单校验提示分开,免得互相覆盖 */
     val timetableBusy: Boolean = false,
     val timetableNotice: String = "",
@@ -204,6 +206,39 @@ private const val MAX_COMMITMENTS = 20
 /** 正式科目上限,和服务端 examSubjectsSchema 保持一致 */
 private const val MAX_EXAM_SUBJECTS = 12
 
+/** 服务端与 OCR 约定的单双周取值;其它一律退化成「每周都占」 */
+private val WEEK_PARITY_VALUES = setOf("odd", "even")
+
+/**
+ * 收敛单双周标记:只认 odd/even,其它(含模型写成「单周」、大写、空串)都退化成 null。
+ *
+ * 为什么退化而不是丢弃整条:一门课标错单双周,最坏结果是那一周少算/多算 100 分钟;
+ * 整条占用消失则会把它当成空闲,任务会被直接排进上课时间。
+ */
+internal fun normalizeWeekParity(raw: String?): String? =
+    raw?.trim()?.takeIf { it in WEEK_PARITY_VALUES }
+
+/** 界面上说人话:odd/even 是给服务端的,备考者看的是单周/双周/每周 */
+internal fun parityLabel(weekParity: String?): String = when (normalizeWeekParity(weekParity)) {
+    "odd" -> "单周"
+    "even" -> "双周"
+    else -> "每周"
+}
+
+/**
+ * 校历第 1 周的周一。只接受完整的 YYYY-MM-DD 且是真实存在的日子,否则归一为空串
+ * (空串 = 不启用单双周,服务端会保守按每周都占计算)。
+ */
+internal fun normalizeTermAnchor(raw: String): String {
+    val text = raw.trim()
+    if (!Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(text)) return ""
+    return try {
+        LocalDate.parse(text).toString()
+    } catch (e: DateTimeParseException) {
+        ""
+    }
+}
+
 class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
     private val yanzhongApp = app as YanZhongApp
     private val repo = yanzhongApp.repository
@@ -249,6 +284,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 examSubjects = emptySet(),
                 availability = emptyMap(),
                 commitments = emptyList(),
+                termWeekOneStart = "",
                 timetableBusy = false,
                 timetableNotice = "",
                 timetableNoticeIsError = false,
@@ -312,7 +348,9 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                                 s.studyWindows,
                                 s.availability
                             ),
-                            commitments = p?.brief?.fixedCommitments?.takeIf { it.isNotEmpty() } ?: s.commitments
+                            commitments = p?.brief?.fixedCommitments?.takeIf { it.isNotEmpty() } ?: s.commitments,
+                            termWeekOneStart = p?.brief?.termWeekOneStart?.takeIf { it.isNotBlank() }
+                                ?: s.termWeekOneStart
                         )
                     }
                 }
@@ -393,6 +431,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 examSubjects = s.examSubjects.toList(),
                 availability = availabilityPayload(s.availability),
                 fixedCommitments = s.commitments,
+                termWeekOneStart = s.termWeekOneStart,
                 // 走到这一步就已经把科目、空闲和占用逐条看过并确认了,面谈不用再复问同一批问题
                 availabilityConfirmed = true,
                 commitmentsConfirmed = true
@@ -576,21 +615,25 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * 手动补一条固定占用(没传课表或课表上没印全的时候用)。
-     * [start]/[end] 是用户敲的钟点,这里只做格式与先后校验,不猜。
+     * [start]/[end] 是用户敲的钟点,[weekParity] 是单双周标记(null = 每周都占)。
+     * 这里只做格式与先后校验,不猜。
      * 返回是否真的记下,好让输入框只在成功时清空 —— 校验没过就留着让用户改。
      */
-    fun addCommitment(weekday: Int, start: String, end: String, label: String): Boolean {
+    fun addCommitment(weekday: Int, start: String, end: String, label: String, weekParity: String? = null): Boolean {
         val s = _ui.value
         val from = normalizeClock(start)
         val to = normalizeClock(end)
         val name = label.trim().take(16)
+        val parity = normalizeWeekParity(weekParity)
         val error = when {
             name.isEmpty() -> "这条占用是什么事,写两个字就行(比如 上课)"
             from == null || to == null -> "时间按 8:00 或 08:00 这样填"
             from >= to -> "结束时间要晚于开始时间"
             s.commitments.size >= MAX_COMMITMENTS -> "固定占用最多 $MAX_COMMITMENTS 条"
-            s.commitments.any { it.weekday == weekday && it.start == from && it.end == to && it.label == name } ->
-                "这条已经记下了"
+            s.commitments.any {
+                it.weekday == weekday && it.start == from && it.end == to && it.label == name
+                    && normalizeWeekParity(it.weekParity) == parity
+            } -> "这条已经记下了"
             else -> null
         }
         if (error != null) {
@@ -603,13 +646,43 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                     weekday = weekday,
                     start = from!!,
                     end = to!!,
-                    label = name
+                    label = name,
+                    weekParity = parity
                 ),
                 message = "",
                 messageIsError = false
             )
         }
         return true
+    }
+
+    /** 单双周要靠校历第 1 周才能落到具体日期;非法输入归一为空串(= 不启用) */
+    fun setTermWeekOneStart(raw: String) {
+        val normalized = normalizeTermAnchor(raw)
+        _ui.update {
+            if (raw.isNotBlank() && normalized.isEmpty()) {
+                it.copy(message = "校历第 1 周要写成 2026-09-07 这样(年月日全都要)", messageIsError = true)
+            } else {
+                it.copy(termWeekOneStart = normalized, message = "", messageIsError = false)
+            }
+        }
+    }
+
+    /** 占用列表上点单双周标记时轮换:每周 → 单周 → 双周 → 每周 */
+    fun cycleCommitmentParity(index: Int) {
+        _ui.update { s ->
+            if (index !in s.commitments.indices) return@update s
+            val current = normalizeWeekParity(s.commitments[index].weekParity)
+            val next = when (current) {
+                null -> "odd"
+                "odd" -> "even"
+                else -> null
+            }
+            val updated = s.commitments.toMutableList().also {
+                it[index] = it[index].copy(weekParity = next)
+            }
+            s.copy(commitments = updated)
+        }
     }
 
     /**
@@ -640,7 +713,7 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
                 .fold({ resp ->
                     _ui.update { s ->
                         val merged = (s.commitments + resp.fixedCommitments)
-                            .distinctBy { "${it.weekday}-${it.start}-${it.end}-${it.label}" }
+                            .distinctBy { "${it.weekday}-${it.start}-${it.end}-${it.label}-${normalizeWeekParity(it.weekParity)}" }
                             .take(MAX_COMMITMENTS)
                         s.copy(
                             commitments = merged,
