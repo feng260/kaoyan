@@ -72,6 +72,8 @@ const briefPatchSchema = z.object({
     start: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     end: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
     label: z.string().trim().min(1).max(32),
+    // 省略 = 每周都占。Zod 默认会剥掉未声明的键,少这一行会让手工改口径的入口静默丢掉单双周标记
+    weekParity: z.enum(['odd', 'even']).optional(),
   })).max(40).nullish(),
 })
 
