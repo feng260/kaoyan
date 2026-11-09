@@ -1398,6 +1398,32 @@ test('adjust B:窗口内塞不下时给出可执行的删减方案,草稿不落�
   assert.equal(dayOnlyRow(fake.state.items[0].planDate), dayIso(1))
 })
 
+test('adjust reschedule:落后任务从今天起重新排进空档;确认前零副作用,确认后挪到今天', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [
+    { day: -2, minutes: 60, title: '落后甲' },
+    { day: -1, minutes: 60, title: '落后乙' },
+  ], { stageFrom: -5 })
+  const service = serviceWithAdjust(fake, { kind: 'reschedule', summary: '把落后的任务重新排一下' })
+
+  const result = await service.adjust(USER, { message: '我有几项任务落后了,帮我把未来几天重新排一下' })
+  assert.ok(result.adjustment)
+  assert.equal(result.adjustment.status, 'draft')
+  assert.equal(result.adjustment.tier, 'L1')
+  assert.deepEqual(result.adjustment.changes.map(change => change.kind), ['moved', 'moved'])
+  // 落后项都被挪到今天或之后,而不是留在过去的日期上
+  for (const change of result.adjustment.changes) {
+    assert.ok(change.to!.planDate >= dayIso(0))
+  }
+  // 草稿阶段原项不动
+  assert.equal(dayOnlyRow(fake.state.items.find(row => row.id === 1000)!.planDate), dayIso(-2))
+  assert.equal(dayOnlyRow(fake.state.items.find(row => row.id === 1001)!.planDate), dayIso(-1))
+
+  const plan = await service.confirmAdjustment(USER, result.adjustment.id)
+  assert.equal(plan.items.find(row => row.id === 1000)!.planDate, dayIso(0))
+  assert.equal(plan.items.find(row => row.id === 1001)!.planDate, dayIso(0))
+})
+
 test('adjust C:已有 draft 时再次调整原地覆盖,不产生第二张', async () => {
   const fake = createFakeDb()
   await seedActivePlan(fake, USER, [{ day: 1, minutes: 120 }, { day: 2, minutes: 60 }])

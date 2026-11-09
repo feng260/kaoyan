@@ -2173,6 +2173,30 @@ export function createPlanningService(
         return finishSingle(option, '已按新的目标重新算过,确认后生效。')
       }
 
+      // 落后重排:用户明确要把落后/未完成任务整体重新排进后面的空档。
+      // 与日期类不同——放置下限钳到今天(落后项必须前移),且不设 L1 影响天数上限(用户就是要整体重排)。
+      if (intent.kind === 'reschedule') {
+        const l1 = planL1Shuffle({ pending: open, capacity: free, windowFrom: today, windowTo: to, milestones })
+        if (l1.overflow.length === 0) {
+          const after = applyMoves(before, l1.moves)
+          if (overloadedDays(after, capacity, today, to).length === 0) {
+            const option = manualOption('manual', '重新排过',
+              `把 ${open.length} 项未完成任务从今天起重新排进空档`, 'L1', before, after, capacity, deferredProfileAfter)
+            if (!option) return clarify('任务本来就排得下,不用重排。')
+            return finishSingle(option, '已把落后的任务重新排进后面的空档,确认后生效。')
+          }
+        }
+        // 从今天起仍塞不下:交给方案引擎(压缩/顺延/删减),窗口头同样钳到今天
+        const options = attachProfile(buildAdjustmentOptions({ ...optionsInput, windowFrom: today }), deferredProfileAfter)
+        if (options.length === 0) {
+          noOptions(overloadedDays(before, capacity, today, to))
+          return clarify('没有找到可行的重排方式')
+        }
+        return finishMulti(options, options.length >= 2
+          ? `有 ${options.length} 种重排方式,影响不同,选一个再确认。`
+          : '已重新排过,确认后生效。')
+      }
+
       // 纯日期类(unavailable / reduce_capacity / change_commitment):先 L1 顺延
       const l1 = planL1Shuffle({ pending: open, capacity: free, windowFrom: from, windowTo: to, milestones })
       const l1Safe = l1.overflow.length === 0 && affectedDays(l1.moves) <= L1_MAX_AFFECTED_DAYS

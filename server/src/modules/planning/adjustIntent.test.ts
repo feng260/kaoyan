@@ -312,3 +312,10 @@ test('commitments:单双周标注被保留,非法值只丢属性,同键不同 pa
     { weekday: 6, start: '10:00', end: '11:00', label: 'null 脏值' },
   ])
 })
+
+test('reschedule:整体重排意图原样保留,无需任务/日期,缺省摘要兜底', () => {
+  const intent = normalizeAdjustIntent({ kind: 'reschedule' }, input)
+  assert.equal(intent.kind, 'reschedule')
+  assert.equal(intent.needClarify, false)
+  assert.match(intent.summary, /重排|重新排/)
+})

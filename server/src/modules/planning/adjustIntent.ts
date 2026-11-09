@@ -14,7 +14,7 @@ import type { PlanBrief } from './document'
  */
 export type AdjustIntentKind =
   | 'unavailable' | 'reduce_capacity' | 'change_commitment'
-  | 'move_task' | 'add_task' | 'drop_task' | 'adjust_scope' | 'lock_task' | 'chat'
+  | 'move_task' | 'add_task' | 'drop_task' | 'adjust_scope' | 'lock_task' | 'reschedule' | 'chat'
 
 /** change_commitment:每周固定的新占用(与 brief.fixedCommitments 同构) */
 export interface AdjustCommitment {
@@ -98,11 +98,14 @@ export interface AdjustIntentInput {
 
 const KINDS: AdjustIntentKind[] = [
   'unavailable', 'reduce_capacity', 'change_commitment',
-  'move_task', 'add_task', 'drop_task', 'adjust_scope', 'lock_task', 'chat',
+  'move_task', 'add_task', 'drop_task', 'adjust_scope', 'lock_task', 'reschedule', 'chat',
 ]
 const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
-const ADJUST_MAX_TOKENS = 900
+// 与面谈/文档生成器同口径:意图 JSON 含 tasks/windows/commitments/scope/clarifyOptions/summary/note,
+// 900 会在数组中途截断(finish_reason=length)→ extractJson 失败 → 同 prompt 重试必复现 → 502。
+// 厂商上限更低时由 LLM 客户端的 400/422 降级阶梯自动收紧。
+const ADJUST_MAX_TOKENS = 4096
 
 export async function runAdjustIntent(input: AdjustIntentInput): Promise<AdjustIntent> {
   // 小模型偶发吐非 JSON(截断/混入闲话),重试一次;两次都坏才向上抛
@@ -136,7 +139,7 @@ function buildSystemPrompt(): string {
     'JSON 字段:',
     '- kind: "unavailable"(某几天完全没空) | "reduce_capacity"(某几天可用时间变少) | "change_commitment"(每周固定占用变了,如换课表)',
     '  | "move_task"(把某条任务挪到另一天) | "add_task"(新增一条任务) | "drop_task"(删掉某条任务)',
-    '  | "adjust_scope"(调整科目剩余量/里程碑) | "lock_task"(以后别再动某科/某条) | "chat"(闲聊或信息不足)',
+    '  | "adjust_scope"(调整科目剩余量/里程碑) | "lock_task"(以后别再动某科/某条) | "reschedule"(把落后/未完成的任务整体重新排进后面的空档) | "chat"(闲聊或信息不足)',
     '- days: 完全没空的日期数组,格式 YYYY-MM-DD,必须在给定窗口内',
     '- windows: 数组,每项 {day: "YYYY-MM-DD", minutes: 数字},minutes = 用户当天扣除没空时段后「还能学」的总分钟数,',
     '  按该日课表净空闲总分钟 − 没空时段与课表重叠的分钟估算(取 5 的倍数即可);',
@@ -161,6 +164,9 @@ function buildSystemPrompt(): string {
     '- 挪/删/锁任务时必须先从窗口任务清单里定位到唯一一条;匹配不到或多条匹配就追问,不要猜。',
     '- add_task 缺日期或时长就追问;adjust_scope 缺目标值就追问。',
     '- 「别再动数学」「把今天那项锁住」按 lock_task。',
+    '- 用户说「任务落后了/重新排一下/重排/把未来几天重新排/填满空档/重新分配」这类整体重排诉求时,按 reschedule:',
+    '  不需要逐条任务、也不需要具体日期,直接 needClarify=false,服务端会确定性地把未完成任务从今天起排进空档;',
+    '  不要追问「哪几条落后」「挪到哪天」「顺延几天还是填满空档」——这些服务端自己处理。只有用户明确只挪某一条时才用 move_task。',
     '- 与备考计划无关的闲聊一律 kind=chat。',
     '- 可能附带最近几轮对话:用户这次说的可能是对上一轮追问的简短确认(如「对」「嗯」「是的」「下午」),',
     '  必须先读懂上一轮助手问了什么,把确认掉的结论并入意图;信息仍缺时只追问缺的那一块,',
@@ -418,6 +424,7 @@ function defaultSummary(
   if (kind === 'drop_task') return '按你说的删掉指定任务'
   if (kind === 'lock_task') return '锁定指定任务,以后 AI 调整不再动它'
   if (kind === 'adjust_scope') return '按你说的调整科目目标和里程碑'
+  if (kind === 'reschedule') return '把落后的任务从今天起重新排进空档'
   return '聊聊近期的备考安排'
 }
 
