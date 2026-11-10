@@ -407,11 +407,32 @@ private fun YanZhongBottomBar(navController: NavHostController) {
     }
 }
 
+/**
+ * 底部页签的导航选项。
+ *
+ * 非 inclusive 的 `popUpTo(HOME) { saveState = true }` 会把刚弹出的栈登记到 HOME 名下
+ * (navigation-runtime executePopOperations 的既定行为),若同一次 navigate 的目标又带
+ * restoreState,被弹掉的页面会被立即恢复——首页正是锚点本身,所以回首页必须关掉恢复,
+ * 否则退出专注后点「今日」会原地弹回专注页。
+ */
+internal data class TabNavPlan(
+    val popUpToRoute: String,
+    val saveState: Boolean,
+    val restoreState: Boolean
+)
+
+internal fun tabNavPlan(target: String) = TabNavPlan(
+    popUpToRoute = Routes.HOME,
+    saveState = true,
+    restoreState = target != Routes.HOME
+)
+
 private fun navigateTab(navController: NavHostController, route: String) {
+    val plan = tabNavPlan(route)
     navController.navigate(route) {
         launchSingleTop = true
-        popUpTo(Routes.HOME) { saveState = true }
-        restoreState = true
+        popUpTo(plan.popUpToRoute) { saveState = plan.saveState }
+        restoreState = plan.restoreState
     }
 }
 
