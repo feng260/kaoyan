@@ -455,7 +455,8 @@ function stageIdFor(stages: any[], day: string): number {
  * 目标快照里的 done 项可能落在窗口外,只查窗口内会把它们误判成「新增」。
  */
 async function syncWindowItems(tx: PlanningDb, planId: number, windowFrom: string, windowTo: string,
-  target: WindowSnapshotItem[], stages: any[], brief: PlanBrief | null = null): Promise<void> {
+  target: WindowSnapshotItem[], stages: any[], brief: PlanBrief | null = null,
+  blocked?: Record<string, Array<{ start: number; end: number }>>): Promise<void> {
   const allRows = await tx.planItem.findMany({ where: { planId } })
   const existingById = new Map<number, any>(allRows.map(row => [Number(row.id), row]))
   const targetIds = new Set(target.filter(item => item.id > 0 && existingById.has(item.id)).map(item => item.id))
@@ -517,11 +518,12 @@ async function syncWindowItems(tx: PlanningDb, planId: number, windowFrom: strin
     })
   }
 
-  if (brief) await reflowDates(tx, planId, [...affected], brief)
+  if (brief) await reflowDates(tx, planId, [...affected], brief, blocked)
 }
 
 /** 按天重排时段与开始时刻:改期、增删、确认调整后都必须调用,保证 startTime 与日期一致 */
-async function reflowDates(tx: PlanningDb, planId: number, days: string[], brief: PlanBrief | null): Promise<void> {
+async function reflowDates(tx: PlanningDb, planId: number, days: string[], brief: PlanBrief | null,
+  blocked?: Record<string, Array<{ start: number; end: number }>>): Promise<void> {
   if (!brief) return
   const unique = [...new Set(days)].filter(Boolean).sort()
   if (unique.length === 0) return
@@ -532,6 +534,7 @@ async function reflowDates(tx: PlanningDb, planId: number, days: string[], brief
     const placements = reflowDay({
       date: day,
       brief,
+      blocked: blocked?.[day],
       items: dayRows.map(row => ({
         id: Number(row.id), subject: String(row.subject ?? ''), title: String(row.title ?? ''),
         minutes: Number(row.minutes ?? 0), status: String(row.status ?? 'pending'),
@@ -2328,6 +2331,12 @@ export function createPlanningService(
           overflow: result.overflow.length, engine: 'elastic',
         }))
         const residualOverload = overloadedDays(result.after, capacity, from, result.extendedTo)
+        // 没空时段随调整单一起持久化,确认落库时按时段重排(保护项也只改时间/日期,不缩分钟)
+        const blockedRanges: Record<string, Array<{ start: number; end: number }>> = {}
+        for (const windowDay of intent.windows) {
+          if (!windowDay.blocked) continue
+          ;(blockedRanges[windowDay.day] ??= []).push(windowDay.blocked)
+        }
         if (result.overflow.length === 0 && residualOverload.length === 0) {
           // 过去日期的「清理」不算影响面;L1 只看今天及以后真正被改动的天数
           const futureTouched = result.touchedDays.filter(day => day >= today)
@@ -2335,6 +2344,7 @@ export function createPlanningService(
             result.shrinkMinutes > 0 || futureTouched.length > 2 ? 'L2' : 'L1',
             before, result.after, capacity, deferredProfileAfter, result.notes)
           if (option) {
+            if (Object.keys(blockedRanges).length > 0) option.blockedRanges = blockedRanges
             return finishSingle(option, result.shrinkMinutes > 0
               ? '已按重要性腾好时间,确认后生效。'
               : '已按你说的调整,确认后生效。')
@@ -2355,6 +2365,7 @@ export function createPlanningService(
               const modelOption = manualOption('manual', '局部重排',
                 '窗口内放不下,已生成一份局部调整', 'L2', before, checked.after, capacity, deferredProfileAfter)
               if (modelOption) {
+                if (Object.keys(blockedRanges).length > 0) modelOption.blockedRanges = blockedRanges
                 console.info('[planning] 行程调整', JSON.stringify({
                   kind: intent.kind, touchedDays: result.touchedDays.length, engine: 'incremental',
                 }))
@@ -2520,8 +2531,13 @@ export function createPlanningService(
         if (windowFingerprint(toSnapshot(inWindow), briefContextHash(briefBefore, examDate)) !== String(row.fingerprint)) {
           throw new ApiError(409, 'ADJUSTMENT_STALE', '计划在生成调整单之后又被改过,这张调整单已失效,请重新说一遍')
         }
+        const storedOptions = jsonList<any>(row.optionsJson)
+        const selected = storedOptions.find(option => option.id === row.selectedOption) ?? storedOptions[0]
+        const blockedRanges = selected?.blockedRanges && typeof selected.blockedRanges === 'object'
+          ? selected.blockedRanges as Record<string, Array<{ start: number; end: number }>>
+          : undefined
         await syncWindowItems(tx, planRow.id, from, to,
-          jsonList<WindowSnapshotItem>(row.afterJson), stages, briefAfter)
+          jsonList<WindowSnapshotItem>(row.afterJson), stages, briefAfter, blockedRanges)
         if (row.profileAfterJson) {
           await tx.userProfile.update({
             where: { userGuid },

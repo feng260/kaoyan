@@ -1594,6 +1594,43 @@ test('adjust 弹性:重排只拉落后任务,未来本来排得下的任务不�
   assert.deepEqual(result.adjustment.changes.map(change => change.title), ['落后'])
 })
 
+test('adjust 弹性:下午没空 → 确认后当天任务不留在没空时段', async () => {
+  const fake = createFakeDb()
+  const brief = qualityBrief()
+  brief.availability = [1, 2, 3, 4, 5, 6, 7].map(weekday => ({
+    weekday,
+    windows: [
+      { start: '08:30', end: '11:30' },
+      { start: '14:00', end: '17:30' },
+      { start: '19:00', end: '22:00' },
+    ],
+  }))
+  await seedActivePlan(fake, USER, [
+    { day: 1, minutes: 120, subject: '数学', title: '保护任务' },
+    { day: 1, minutes: 120, subject: '政治', title: '政治一' },
+    { day: 1, minutes: 120, subject: '政治', title: '政治二' },
+    { day: 1, minutes: 60, subject: '英语一', title: '英语' },
+  ], { brief })
+  const service = serviceWithAdjust(fake, {
+    kind: 'reduce_capacity',
+    windows: [{ day: dayIso(1), minutes: 360, blocked: { start: 12 * 60, end: 18 * 60 } }],
+    importance: [{ subject: '数学', level: 'protect' }],
+    summary: '明天下午没空',
+  })
+
+  const result = await service.adjust(USER, { message: '明天下午没空,数学很重要' })
+  assert.ok(result.adjustment)
+  const plan = await service.confirmAdjustment(USER, result.adjustment.id)
+  const day1 = plan.items.filter(item => dayOnlyRow(item.planDate) === dayIso(1))
+  assert.ok(day1.length >= 3, '当天应保留大部分任务')
+  for (const item of day1) {
+    assert.ok(item.startTime, `${item.title} 应该有时间`)
+    const start = Number(item.startTime!.slice(0, 2)) * 60 + Number(item.startTime!.slice(3))
+    assert.ok(start < 12 * 60 || start >= 18 * 60, `${item.title} 落在下午 12:00-18:00 没空时段`)
+  }
+  assert.ok(day1.some(item => item.startTime! >= '19:00'), '上午装不下的任务应排到晚上')
+})
+
 test('adjust 弹性:确定性引擎溢出 → 模型增量兜底,硬校验通过后单方案待确认', async () => {
   const fake = createFakeDb()
   await seedActivePlan(fake, USER, [

@@ -52,6 +52,32 @@ test('windows:越界/负数/重复日被过滤,分钟取整', () => {
   assert.deepEqual(intent.windows, [{ day: '2026-09-30', minutes: 91 }])
 })
 
+test('reduce_capacity:消息点明时段时,窗口带上没空区间(确认后按这个时段重排)', () => {
+  const intent = normalizeAdjustIntent({
+    kind: 'reduce_capacity',
+    windows: [{ day: '2026-09-30', minutes: 300 }],
+  }, { ...input, message: '明天下午没空,只有上午和晚上能学' })
+  assert.deepEqual(intent.windows, [
+    { day: '2026-09-30', minutes: 300, blocked: { start: 12 * 60, end: 18 * 60 } },
+  ])
+})
+
+test('reduce_capacity:模型漏了 windows 时,兜底算分钟并保留没空区间', () => {
+  const brief = {
+    summary: '', goals: [], constraints: [], focus: [], materials: [], notes: [],
+    examSubjects: [], fixedCommitments: [], periods: [],
+    availability: [{ weekday: 3, windows: [{ start: '08:00', end: '12:00' }, { start: '14:00', end: '18:00' }] }],
+    availabilityConfirmed: true, commitmentsConfirmed: true,
+  }
+  const intent = normalizeAdjustIntent({ kind: 'chat' }, {
+    ...input, message: '明天下午没空', brief,
+  })
+  assert.equal(intent.kind, 'reduce_capacity')
+  assert.deepEqual(intent.windows, [
+    { day: '2026-09-30', minutes: 240, blocked: { start: 12 * 60, end: 18 * 60 } },
+  ])
+})
+
 test('commitments:非法星期/时间段被过滤,label 缺省兜底', () => {
   const intent = normalizeAdjustIntent({
     kind: 'change_commitment',
@@ -116,7 +142,7 @@ test('确定性兜底:模型降级为 chat 但 note 带日期+时段时,按课�
     { ...briefWithTimetable, message: '14点到18点' },
   )
   assert.equal(intent.kind, 'reduce_capacity')
-  assert.deepEqual(intent.windows, [{ day: '2026-09-29', minutes: 210 }])
+  assert.deepEqual(intent.windows, [{ day: '2026-09-29', minutes: 210, blocked: { start: 14 * 60, end: 18 * 60 } }])
   // 14:00-18:00 与课表重叠 180m,390-180=210;不该出现被占用时长 240
   assert.notEqual(intent.windows[0].minutes, 240)
 })
@@ -149,7 +175,7 @@ test('确定性兜底:「一整个下午」时段词按课表算剩余(用户截
     briefThu,
   )
   assert.equal(intent.kind, 'reduce_capacity')
-  assert.deepEqual(intent.windows, [{ day: '2026-10-08', minutes: 360 }])
+  assert.deepEqual(intent.windows, [{ day: '2026-10-08', minutes: 360, blocked: { start: 12 * 60, end: 18 * 60 } }])
   assert.equal(intent.needClarify, false)
 })
 
@@ -190,7 +216,7 @@ test('矫正:模型把「整段下午没空」误归 unavailable → 按课表�
   )
   assert.equal(intent.kind, 'reduce_capacity')
   assert.deepEqual(intent.days, [])
-  assert.deepEqual(intent.windows, [{ day: '2026-10-08', minutes: 360 }])
+  assert.deepEqual(intent.windows, [{ day: '2026-10-08', minutes: 360, blocked: { start: 12 * 60, end: 18 * 60 } }])
   // 整天表述则保留 unavailable,不矫正
   const wholeDay = normalizeAdjustIntent(
     { kind: 'unavailable', days: ['2026-10-08'], note: '明天(2026-10-08)整天没空' },

@@ -44,6 +44,11 @@ export interface AdjustmentOption {
   impact: AdjustmentImpact
   /** lower_target 专用:确认后要写回档案的 brief JSON */
   profileAfter?: string
+  /**
+   * 用户明确没空的时段(按天,分钟);确认落库时交给时段重排,
+   * 保证任务(含保护项)不会又被排回没空的时间。
+   */
+  blockedRanges?: Record<string, Array<{ start: number; end: number }>>
 }
 
 export interface BuildOptionsInput {

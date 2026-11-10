@@ -31,6 +31,8 @@ export interface AdjustCommitment {
 export interface AdjustCapacityWindow {
   day: string
   minutes: number
+  /** 用户明确没空的时段(分钟,从 0 点起);确认后按时段重排,任务不再落进这里 */
+  blocked?: { start: number; end: number }
 }
 
 /** move/drop/lock 指向的任务:subject+title+当前日期用于消歧 */
@@ -380,7 +382,10 @@ export function normalizeAdjustIntent(raw: any, input: AdjustIntentInput): Adjus
         finalKind = 'unavailable'
       } else {
         finalKind = 'reduce_capacity'
-        windows.push({ day: fallback.day, minutes: fallback.minutes })
+        windows.push({
+          day: fallback.day, minutes: fallback.minutes,
+          blocked: { start: fallback.range[0], end: fallback.range[1] },
+        })
         windows.sort((a, b) => a.day.localeCompare(b.day))
       }
     }
@@ -391,17 +396,28 @@ export function normalizeAdjustIntent(raw: any, input: AdjustIntentInput): Adjus
   if (finalKind === 'unavailable' && days.length > 0 && !needClarify) {
     const source = `${input.message}\n${note}`
     if (!/一?整天|全天/.test(source)) {
-      const range = parseBlockedRange(source) ?? dayPartRange(source)
+      const range = blockedRangeFromSource(source)
       if (range) {
         const computed = days.map(day => ({ day, minutes: computeRemainingMinutes(input, day, range) }))
         if (computed.every(c => c.minutes !== null)) {
-          windows.push(...computed.map(c => ({ day: c.day, minutes: Math.round(c.minutes! / 5) * 5 })))
+          windows.push(...computed.map(c => ({
+            day: c.day,
+            minutes: Math.round(c.minutes! / 5) * 5,
+            blocked: { start: range[0], end: range[1] },
+          })))
           windows.sort((a, b) => a.day.localeCompare(b.day))
           days.length = 0
           finalKind = 'reduce_capacity'
         }
       }
     }
+  }
+
+  // 模型给了窗口但没带时段:从原话/note 里补上(只补单日窗口,多日不同时段不猜)
+  if (finalKind === 'reduce_capacity' && windows.length === 1 && !windows[0].blocked) {
+    const source = `${input.message}\n${note}`
+    const range = blockedRangeFromSource(source)
+    if (range) windows[0].blocked = { start: range[0], end: range[1] }
   }
 
   const importance: AdjustImportanceHint[] = []
@@ -532,6 +548,26 @@ function dayPartRange(source: string): [number, number] | null {
   return null
 }
 
+/**
+ * 从原话里找「没空的时段」:显式钟点优先;时段词要求跟「没空/有事/不能」等搭配,
+ * 避免「下午没空,只有上午和晚上能学」把可用的上午误判成没空。
+ */
+function blockedRangeFromSource(source: string): [number, number] | null {
+  const explicit = parseBlockedRange(source)
+  if (explicit) return explicit
+  const dayParts: Array<[string, number, number]> = [
+    ['上午|早上|早晨', 6 * 60, 12 * 60],
+    ['中午|午休', 11 * 60, 14 * 60],
+    ['下午', 12 * 60, 18 * 60],
+    ['晚上|夜里|晚间', 18 * 60, 23 * 60],
+  ]
+  for (const [word, start, end] of dayParts) {
+    const nearby = new RegExp(`(?:${word})[^。;\\n]{0,8}(?:没空|没时间|有事|不能|不在|占用|忙)`)
+    if (nearby.test(source)) return [start, end]
+  }
+  return dayPartRange(source)
+}
+
 /** 某日按课表算「没空时段后还能学」的分钟数;无课表/无重叠返回 null(调用方保守降级) */
 function computeRemainingMinutes(
   input: AdjustIntentInput, day: string, range: [number, number],
@@ -556,7 +592,9 @@ function computeRemainingMinutes(
  * 日期口径:ISO 日期 > 明天 > 后天 > 今天(默认);超出调整窗口、当天无课表或重叠为 0 则放弃。
  * 返回 minutes=null 表示整天没空(unavailable);否则是当天剩余可学分钟。
  */
-function blockedRangeFallback(input: AdjustIntentInput, note: string): { day: string; minutes: number | null } | null {
+function blockedRangeFallback(
+  input: AdjustIntentInput, note: string,
+): { day: string; minutes: number | null; range: [number, number] } | null {
   const source = `${input.message}\n${note}`
   const iso = source.match(/\d{4}-\d{2}-\d{2}/)?.[0]
   const day = iso
@@ -566,12 +604,13 @@ function blockedRangeFallback(input: AdjustIntentInput, note: string): { day: st
   if (day < input.today || day > input.windowTo) return null
 
   // 「一整天/全天」:不用算重叠,直接整天没空
-  if (/一?整天|全天/.test(source)) return { day, minutes: null }
+  if (/一?整天|全天/.test(source)) return { day, minutes: null, range: [0, 1440] }
 
   // 时段:显式钟点优先,其次时段词
-  const range = parseBlockedRange(source) ?? dayPartRange(source)
+  const range = blockedRangeFromSource(source)
   if (!range) return null
+
   const remaining = computeRemainingMinutes(input, day, range)
   if (remaining === null) return null
-  return { day, minutes: Math.round(remaining / 5) * 5 }
+  return { day, minutes: Math.round(remaining / 5) * 5, range }
 }
