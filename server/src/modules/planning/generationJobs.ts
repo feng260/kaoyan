@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { PlanProgress } from './aiGenerator'
+import type { UsageSummary } from '../../shared/llm/usage'
 
 /**
  * 计划生成任务(进程内)。
@@ -24,6 +25,8 @@ export type PlanGenerationJob = {
   planId?: number
   /** 失败时的业务错误码与面向用户的错误信息 */
   error?: { code: string; message: string }
+  /** 本次生成消耗的 token 汇总;成功、失败都会回填 */
+  usage?: UsageSummary
   /** 从今天到考前的天数;客户端据此估算剩余时间(0 = 旧任务/未知) */
   horizonDays: number
   createdAt: number

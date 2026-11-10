@@ -149,6 +149,7 @@ function normalizeVerdict(raw: any): CriticVerdict | null {
 export async function critiquePlan(input: CriticInput): Promise<CriticVerdict | null> {
   try {
     const content = await chatComplete({
+      feature: 'plan_critic',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: buildPrompt(input) },

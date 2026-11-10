@@ -35,8 +35,9 @@ model User {
   avatarPreset String? @db.VarChar(32) // 预设头像 key,与 avatarData 互斥
   avatarData   String? @db.Text // 自定义头像裸 base64(JPEG/PNG/WebP)
 
-  profile UserProfile?
-  plans   Plan[]
+  profile  UserProfile?
+  plans    Plan[]
+  llmUsage LlmUsage[]
 
   @@map("users")
 }
@@ -353,4 +354,25 @@ model AppRelease {
   createdAt   BigInt
 
   @@map("app_releases")
+}
+
+// ---------- AI 计量 ----------
+
+/// AI token 计量明细:只存计数、功能与模型名,不存任何对话内容
+model LlmUsage {
+  id               Int      @id @default(autoincrement())
+  userGuid         String   @db.VarChar(36)
+  feature          String   @db.VarChar(32)
+  model            String   @db.VarChar(64)
+  promptTokens     Int
+  completionTokens Int
+  totalTokens      Int
+  estimated        Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  user User @relation(fields: [userGuid], references: [guid], onDelete: Cascade)
+
+  @@index([userGuid, createdAt])
+  @@index([createdAt])
+  @@map("llm_usage")
 }

@@ -247,6 +247,7 @@ export async function runPlanInterview(input: InterviewInput): Promise<Interview
   let content: string
   try {
     content = await chatComplete({
+      feature: 'interview',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: userPrompt },

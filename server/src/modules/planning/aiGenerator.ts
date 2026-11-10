@@ -465,6 +465,7 @@ export async function generateAiPlan(input: AiPlanningInput): Promise<{
   let content: string
   try {
     content = await chatComplete({
+      feature: 'plan_generate',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: buildUserPrompt(input) },

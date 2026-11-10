@@ -283,7 +283,42 @@ data class PlanDto(
 )
 
 @Serializable
-data class PlanResp(val plan: PlanDto? = null, val serverTime: Long = 0)
+data class PlanResp(
+    val plan: PlanDto? = null,
+    val usage: UsageSummaryDto? = null,
+    val serverTime: Long = 0
+)
+
+/**
+ * 一次 AI 请求/一次生成消耗的 token 汇总。旧服务端不返回 usage:
+ * 字段全部有默认值,解析失败/缺省时界面整体隐藏用量行。
+ */
+@Serializable
+data class UsageSummaryDto(
+    val promptTokens: Long = 0,
+    val completionTokens: Long = 0,
+    val totalTokens: Long = 0,
+    val calls: Int = 0,
+    val estimatedCalls: Int = 0
+)
+
+@Serializable
+data class AiUsageFeatureDto(
+    val feature: String = "",
+    val promptTokens: Long = 0,
+    val completionTokens: Long = 0,
+    val totalTokens: Long = 0,
+    val calls: Int = 0,
+    val estimatedCalls: Int = 0
+)
+
+@Serializable
+data class AiUsageResp(
+    val today: UsageSummaryDto = UsageSummaryDto(),
+    val month: UsageSummaryDto = UsageSummaryDto(),
+    val byFeature: List<AiUsageFeatureDto> = emptyList(),
+    val serverTime: Long = 0
+)
 
 /** 异步生成任务的进度(与服务端 PlanProgress 对齐) */
 @Serializable
@@ -304,7 +339,9 @@ data class PlanGenerationJobDto(
     val status: String = "running",
     val progress: PlanJobProgressDto = PlanJobProgressDto(),
     val planId: Long? = null,
-    val error: PlanJobErrorDto? = null
+    val error: PlanJobErrorDto? = null,
+    /** 本次生成消耗的 token 汇总;成功、失败都会回填 */
+    val usage: UsageSummaryDto? = null
 )
 
 @Serializable
@@ -330,7 +367,11 @@ data class SlimToggleResp(
 
 /** 长文档轻量响应:文档页只需要这份 8 章文档,不拉全量 items */
 @Serializable
-data class PlanDocumentResp(val document: PlanDocumentDto? = null, val serverTime: Long = 0)
+data class PlanDocumentResp(
+    val document: PlanDocumentDto? = null,
+    val usage: UsageSummaryDto? = null,
+    val serverTime: Long = 0
+)
 
 /**
  * 历史计划列表里的一条摘要。服务端刻意不带 stages/items 明细——
@@ -706,6 +747,7 @@ data class InterviewResp(
     val brief: PlanBriefDto? = null,
     /** 服务端判定档案未就绪:客户端据此切回「填写备考档案」阶段，给用户可点击的出口 */
     val needProfile: Boolean = false,
+    val usage: UsageSummaryDto? = null,
     val serverTime: Long = 0
 )
 
@@ -726,6 +768,7 @@ data class TimetableResp(
     val summary: String = "",
     val warnings: List<String> = emptyList(),
     val fixedCommitments: List<BriefCommitmentDto> = emptyList(),
+    val usage: UsageSummaryDto? = null,
     val serverTime: Long = 0
 )
 
@@ -789,6 +832,7 @@ data class AdjustResp(
     val clarifyOptions: List<ClarifyOptionDto>? = null,
     /** lock_task 这类直接生效的意图为 true,无调整单也会改计划 */
     val changedPlan: Boolean = false,
+    val usage: UsageSummaryDto? = null,
     val serverTime: Long = 0
 )
 
@@ -1023,6 +1067,10 @@ interface YanzhongApi {
     /** 最近一张待确认/已生效的调整单(冷启动恢复卡片用) */
     @GET("api/v1/plans/adjustments/latest")
     suspend fun getLatestAdjustment(): LatestAdjustmentResp
+
+    /** 本人 AI token 用量:今日/本月(按设备时区)与本月按功能分项 */
+    @GET("api/v1/usage/ai")
+    suspend fun getAiUsage(@Query("utcOffsetMinutes") utcOffsetMinutes: Int): AiUsageResp
 
     /** 多方案调整:选中其中一条,服务端把 adjustment.changes 换成该方案的变动 */
     @POST("api/v1/plans/adjustments/{id}/select")

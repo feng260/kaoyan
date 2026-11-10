@@ -14,6 +14,7 @@ import accountRoutes from './modules/account/routes'
 import docsRoutes from './modules/docs/routes'
 import appRoutes from './modules/app/routes'
 import adminRoutes from './modules/admin/routes'
+import usageRoutes from './modules/usage/routes'
 
 /**
  * Koa 装配:中间件顺序 = 安全头/CORS → 错误捕获 → JSON 解析 → 路由。
@@ -32,6 +33,7 @@ export function createApp(): Koa {
   app.use(userRoutes.routes()).use(userRoutes.allowedMethods())
   app.use(syncRoutes.routes()).use(syncRoutes.allowedMethods())
   app.use(planningRoutes.routes()).use(planningRoutes.allowedMethods())
+  app.use(usageRoutes.routes()).use(usageRoutes.allowedMethods())
   app.use(accountRoutes.routes()).use(accountRoutes.allowedMethods())
   app.use(appRoutes.routes()).use(appRoutes.allowedMethods())
   app.use(adminRoutes.routes()).use(adminRoutes.allowedMethods())

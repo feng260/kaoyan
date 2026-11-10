@@ -76,6 +76,7 @@ export async function parseTimetableImage(input: TimetableImage): Promise<Timeta
   let content: string
   try {
     content = await chatComplete({
+      feature: 'timetable_ocr',
       vision: true,
       json: true,
       temperature: 0.2,

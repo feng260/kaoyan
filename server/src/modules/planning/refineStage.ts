@@ -159,6 +159,7 @@ export function normalizeWeekVariants(raw: unknown, confirmedSubjects: string[])
 
 export async function refineStageToWeeks(input: StageRefineInput): Promise<AiWeekVariant[]> {
   const content = await chatComplete({
+    feature: 'plan_refine',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: buildUserPrompt(input) },

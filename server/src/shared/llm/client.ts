@@ -1,4 +1,8 @@
 import { env } from '../../config/env'
+import {
+  estimatePromptTokens, estimateTokens, normalizeUsage, recordLlmUsage,
+  type LlmUsageEvent,
+} from './usage'
 
 /**
  * 极简的 OpenAI 兼容 Chat Completions 客户端。
@@ -26,6 +30,8 @@ export class LlmError extends Error {
 }
 
 export type ChatOptions = {
+  /** 功能标签(interview / plan_generate / adjust_plan ...),计量与管理端分项统计用 */
+  feature: string
   messages: ChatMessage[]
   /** 要求模型返回严格 JSON(多数厂商支持 response_format=json_object) */
   json?: boolean
@@ -37,6 +43,29 @@ export type ChatOptions = {
    * LLM_VISION_MODEL 时才会切到另一个模型,所以调用方只管照开。
    */
   vision?: boolean
+}
+
+/** 200 响应 → 一条计量事件;厂商没给 usage 时按字符估算并打标 */
+function toUsageEvent(
+  options: ChatOptions,
+  model: string,
+  rawUsage: unknown,
+  content: string | null,
+): LlmUsageEvent {
+  const normalized = normalizeUsage(rawUsage)
+  if (normalized) {
+    return { feature: options.feature, model, ...normalized, estimated: false }
+  }
+  const promptTokens = estimatePromptTokens(options.messages)
+  const completionTokens = estimateTokens(content ?? '')
+  return {
+    feature: options.feature,
+    model,
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
+    estimated: true,
+  }
 }
 
 /** 调一次对话补全,返回首条候选的文本内容。失败一律抛 LlmError,由调用方决定降级策略。 */
@@ -109,6 +138,8 @@ export async function chatComplete(options: ChatOptions): Promise<string> {
       const message = payload?.choices?.[0]?.message
       const text = message?.content
       content = typeof text === 'string' && text.trim() ? text : null
+      // 每次拿到 200 都记一条:空内容触发的重试同样被厂商计费,不能漏
+      recordLlmUsage(toUsageEvent(options, config.model, payload?.usage, content))
       if (content !== null) break
 
       // 200 空响应:先怀疑 json_object 空壳(去掉约束),再怀疑思考型模型吃满预算(翻倍)。

@@ -5,6 +5,7 @@ import android.webkit.WebView
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -259,6 +260,17 @@ fun PlanInterviewScreen(
                                     )
                                 }
                             }
+                            AiUsageFormat.statusLine(state.turnUsage, state.todayUsage)?.let { line ->
+                                Text(
+                                    line,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable(onClick = vm::openUsageSheet)
+                                        .padding(vertical = 4.dp)
+                                )
+                            }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 OutlinedTextField(value = input, onValueChange = { input = it },
                                     enabled = !state.busy, modifier = Modifier.weight(1f), maxLines = 4,
@@ -285,6 +297,7 @@ fun PlanInterviewScreen(
                     DraftContent(draft, diff, html, fullscreen, state.activeCompared,
                         overview = state.draftOverview,
                         estimatedSubjects = state.brief?.examSubjects?.filter { it.estimated }?.map { it.name }.orEmpty(),
+                        usage = state.jobUsage,
                         onFullscreen = { fullscreen = !fullscreen },
                         onConfirm = vm::confirm, onChat = { fullscreen = false; vm.backToChat() },
                         onProfile = { fullscreen = false; navController.navigate(Routes.planSetup(profileOnly = true)) },
@@ -318,6 +331,14 @@ fun PlanInterviewScreen(
                     onDismiss = vm::dismissCapacityDialog
                 )
             }
+        }
+        if (state.showUsageSheet) {
+            AiUsageSheet(
+                today = state.todayUsage,
+                month = state.monthUsage,
+                byFeature = state.usageByFeature,
+                onDismiss = vm::dismissUsageSheet
+            )
         }
         state.lockedConflict?.let { message ->
             LockedConflictDialog(
@@ -641,6 +662,7 @@ private fun ColumnScope.DraftContent(
     draft: PlanDto, diff: TodayItemDiff, html: String, fullscreen: Boolean, activeCompared: Boolean,
     overview: com.yanzhong.app.data.remote.PlanOverviewDto?,
     estimatedSubjects: List<String>,
+    usage: com.yanzhong.app.data.remote.UsageSummaryDto?,
     onFullscreen: () -> Unit, onConfirm: () -> Unit, onChat: () -> Unit,
     onProfile: () -> Unit, onRetry: () -> Unit, onDismiss: () -> Unit,
     canConfirm: Boolean, error: String?, bottom: androidx.compose.ui.unit.Dp
@@ -650,6 +672,10 @@ private fun ColumnScope.DraftContent(
             Text("DRAFT · 尚未生效", color = MaterialTheme.colorScheme.tertiary,
                 style = MaterialTheme.typography.labelMedium)
             Text(draft.title, style = MaterialTheme.typography.titleMedium)
+            AiUsageFormat.draftLine(usage)?.let {
+                Text(it, style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             if (estimatedSubjects.isNotEmpty()) Text(
                 "其中 ${estimatedSubjects.joinToString("、")} 的细节是 AI 按经验估的，「回聊天更正」可逐项改",
                 color = MaterialTheme.colorScheme.tertiary,

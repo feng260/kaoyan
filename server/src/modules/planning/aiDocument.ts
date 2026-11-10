@@ -221,6 +221,7 @@ function sectionKey(no: unknown): string {
 
 async function runSection(section: Section, context: string): Promise<any[]> {
   const content = await chatComplete({
+    feature: 'plan_document',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: `${context}\n\n${section.prompt}` },

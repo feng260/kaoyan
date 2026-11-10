@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.remote.AdjustmentDto
 import com.yanzhong.app.data.remote.AdjustReq
+import com.yanzhong.app.data.remote.AiUsageFeatureDto
 import com.yanzhong.app.data.remote.ApiClient
 import com.yanzhong.app.data.remote.BriefSubjectPatch
 import com.yanzhong.app.data.remote.ClarifyOptionDto
@@ -24,6 +25,7 @@ import com.yanzhong.app.data.remote.PlanOverviewDto
 import com.yanzhong.app.data.remote.SelectOptionReq
 import com.yanzhong.app.data.remote.SyncNotice
 import com.yanzhong.app.data.remote.TokenStore
+import com.yanzhong.app.data.remote.UsageSummaryDto
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.Job
@@ -88,7 +90,18 @@ data class InterviewUiState(
     /** 正在切换多方案 */
     val selectingOption: Boolean = false,
     /** 草稿预算 overview:读取失败不阻塞草稿预览 */
-    val draftOverview: PlanOverviewDto? = null
+    val draftOverview: PlanOverviewDto? = null,
+    /** 最近一轮 AI 对话的 token 消耗;null 表示旧服务端或还没有结果 */
+    val turnUsage: UsageSummaryDto? = null,
+    /** 今日累计 AI 用量(进入会话与每轮后刷新) */
+    val todayUsage: UsageSummaryDto? = null,
+    /** 本月累计与按功能分项:用量弹层用 */
+    val monthUsage: UsageSummaryDto? = null,
+    val usageByFeature: List<AiUsageFeatureDto> = emptyList(),
+    /** 用量详情弹层是否可见 */
+    val showUsageSheet: Boolean = false,
+    /** 最近一次生成(异步或同步回退)的 token 消耗:草稿预览展示 */
+    val jobUsage: UsageSummaryDto? = null
 ) {
     val busy: Boolean get() = sending || generating || confirming || briefLoading || selectingOption
     val canGenerate: Boolean get() = phase == InterviewPhase.CHATTING && done && !busy
@@ -161,6 +174,15 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
     private var elapsedJob: Job? = null
     private var prefillSent = false
 
+    /** 恢复会话会整份替换 UI 状态;用量是跨阶段的辅助信息,替换时保留已刷到的数据 */
+    private fun setSessionUi(fresh: InterviewUiState) {
+        _ui.value = fresh.copy(
+            todayUsage = _ui.value.todayUsage,
+            monthUsage = _ui.value.monthUsage,
+            usageByFeature = _ui.value.usageByFeature
+        )
+    }
+
     fun beginSession(
         profileJustSaved: Boolean = false,
         forcedMode: InterviewMode? = null,
@@ -177,6 +199,7 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
         _ui.value = InterviewUiState()
         viewModelScope.launch {
             accountGuid = runCatching { TokenStore.currentAccountGuid() }.getOrNull()
+            refreshUsage()
             // 只有「问卷刚改过」才算从头来:入口要求重新生成不再清档,否则聊到一半退出重进会白白丢掉已聊的内容
             val regenerate = profileJustSaved
             if (regenerate) session.clear()
@@ -211,10 +234,10 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
                 null
             }
             if (recoveredDraft != null) {
-                _ui.value = InterviewUiState(phase = InterviewPhase.DRAFT, mode = mode,
+                setSessionUi(InterviewUiState(phase = InterviewPhase.DRAFT, mode = mode,
                     messages = saved?.messages ?: emptyList(),
                     options = saved?.options ?: emptyList(),
-                    done = saved?.done ?: true, brief = saved?.brief, plan = recoveredDraft)
+                    done = saved?.done ?: true, brief = saved?.brief, plan = recoveredDraft))
                 runCatching { ApiClient.api().getActivePlan().plan }.onSuccess { active ->
                     _ui.update { it.copy(activePlan = active, activeCompared = true) }
                 }
@@ -223,15 +246,15 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (mode == InterviewMode.ADJUST) {
                 if (saved != null) {
-                    _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
-                        messages = saved.messages, activePlan = activePlan)
+                    setSessionUi(InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
+                        messages = saved.messages, activePlan = activePlan))
                     // 存档停在「刚发完、AI 还没回」:补发一次
                     if (saved.messages.last().role == "user") adjust(saved.messages.last().content)
                 } else {
-                    _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
+                    setSessionUi(InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
                         activePlan = activePlan,
                         messages = listOf(InterviewMessageDto("assistant",
-                            "计划正在跑。临时有事、生病、换课表,直接跟我说一句,我帮你把近期计划调好——确认前不会改动现在的安排。")))
+                            "计划正在跑。临时有事、生病、换课表,直接跟我说一句,我帮你把近期计划调好——确认前不会改动现在的安排。"))))
                 }
                 // 恢复还没确认的调整单:冷启动、切页回来不断片
                 runCatching { ApiClient.api().getLatestAdjustment() }.getOrNull()?.adjustment
@@ -244,9 +267,9 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
                 val draft = saved.plan?.takeIf { it.status == "draft" }
                 if (draft != null) {
                     // 上次已经生成过草稿:直接恢复到草稿预览，不用再点一次「生成」
-                    _ui.value = InterviewUiState(phase = InterviewPhase.DRAFT, mode = mode,
+                    setSessionUi(InterviewUiState(phase = InterviewPhase.DRAFT, mode = mode,
                         messages = saved.messages, options = saved.options, done = saved.done,
-                        brief = saved.brief, plan = draft)
+                        brief = saved.brief, plan = draft))
                     // 与 generate() 对齐:草稿预览顶部要显示与生效计划的今日对比
                     runCatching { ApiClient.api().getActivePlan().plan }.onSuccess { active ->
                         _ui.update { it.copy(activePlan = active, activeCompared = true) }
@@ -263,20 +286,20 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
                         runCatching { ApiClient.api().getPlanBrief() }.getOrNull()
                             ?.let { horizonDaysFrom(it.profile.examDate)?.let(::etaRange) }
                     }
-                    _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
+                    setSessionUi(InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
                         messages = saved.messages, options = saved.options, done = saved.done,
                         brief = saved.brief, generating = true, progress = 0,
                         progressMessage = "正在恢复生成进度…",
                         etaMinutes = restoredEta,
-                        generationStartedAt = saved.generationStartedAt ?: System.currentTimeMillis())
+                        generationStartedAt = saved.generationStartedAt ?: System.currentTimeMillis()))
                     startElapsedTicker()
                     activeJobId = pendingJob
                     watchGeneration(pendingJob)
                     pollGeneration(pendingJob)
                     return@launch
                 }
-                _ui.value = InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
-                    messages = saved.messages, options = saved.options, done = saved.done, brief = saved.brief)
+                setSessionUi(InterviewUiState(phase = InterviewPhase.CHATTING, mode = mode,
+                    messages = saved.messages, options = saved.options, done = saved.done, brief = saved.brief))
                 // 存档停在"考生刚发完、AI 还没回"：补问一次，否则续上也没得可点
                 if (saved.messages.last().role == "user") advance()
                 return@launch
@@ -440,7 +463,7 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun startGeneration(briefHash: String?, allowShortfall: Boolean) {
         _ui.update {
             it.copy(generating = true, error = null, activePlan = null, activeCompared = false,
-                draftOverview = null, progress = 0, progressMessage = "正在创建生成任务…",
+                draftOverview = null, jobUsage = null, progress = 0, progressMessage = "正在创建生成任务…",
                 showCapacityDialog = false, capacityIssue = null, elapsedSeconds = 0)
         }
         val body = GeneratePlanReq(
@@ -497,19 +520,23 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
             briefHash = briefHash,
             allowShortfall = allowShortfall.takeIf { it }
         )
-        runCatching { ApiClient.aiApi().generatePlan(body).plan?.takeIf { p -> p.status == "draft" }
-            ?: error("服务端没有返回草稿") }.fold({ draft ->
-            stopElapsedTicker()
-            _ui.update { it.copy(phase = InterviewPhase.DRAFT, plan = draft, generating = false,
-                progress = null, progressMessage = null, etaMinutes = null,
-                generationStartedAt = null, elapsedSeconds = 0, error = null) }
-            // 草稿仍留在服务端；本地只记「面谈已完成」，退出后再进来还能一键重新拉草稿
-            persist()
-            loadActiveComparison()
-            loadDraftOverview(draft.id)
-        }, { e ->
+        val resp = runCatching { ApiClient.aiApi().generatePlan(body) }.getOrElse { e ->
             failGeneration("草稿生成失败：${e.userMessage()}。可继续纠正后重试")
-        })
+            return
+        }
+        val draft = resp.plan?.takeIf { p -> p.status == "draft" }
+        if (draft == null) {
+            failGeneration("草稿生成失败：服务端没有返回草稿。可继续纠正后重试")
+            return
+        }
+        stopElapsedTicker()
+        _ui.update { it.copy(phase = InterviewPhase.DRAFT, plan = draft, generating = false,
+            progress = null, progressMessage = null, etaMinutes = null,
+            generationStartedAt = null, elapsedSeconds = 0, error = null, jobUsage = resp.usage) }
+        // 草稿仍留在服务端；本地只记「面谈已完成」，退出后再进来还能一键重新拉草稿
+        persist()
+        loadActiveComparison()
+        loadDraftOverview(draft.id)
     }
 
     /** 重新拉口径并打开确认面板(409 PLAN_BRIEF_CHANGED 后) */
@@ -526,7 +553,8 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
         if (activeJobId != jobId) return
         _ui.update {
             it.copy(progress = job.progress.percent,
-                progressMessage = job.progress.message.takeIf { msg -> msg.isNotBlank() })
+                progressMessage = job.progress.message.takeIf { msg -> msg.isNotBlank() },
+                jobUsage = job.usage ?: it.jobUsage)
         }
         when (job.status) {
             "done" -> if (claimGeneration(jobId)) loadDraft(job.planId)
@@ -684,9 +712,11 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
             _ui.update {
                 it.copy(messages = it.messages + InterviewMessageDto("assistant", resp.reply.orEmpty()),
                     adjustment = resp.adjustment ?: it.adjustment, sending = false,
-                    clarifyOptions = resp.clarifyOptions.orEmpty(), lockedConflict = null)
+                    clarifyOptions = resp.clarifyOptions.orEmpty(), lockedConflict = null,
+                    turnUsage = resp.usage)
             }
             persist()
+            refreshUsage()
         }, { e ->
             val serverError = e.planServerError()
             if (serverError?.code == "LOCKED_ITEMS_CONFLICT") {
@@ -769,6 +799,21 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissError() { _ui.update { it.copy(error = null) } }
 
+    fun openUsageSheet() {
+        _ui.update { it.copy(showUsageSheet = true) }
+        viewModelScope.launch { refreshUsage() }
+    }
+
+    fun dismissUsageSheet() { _ui.update { it.copy(showUsageSheet = false) } }
+
+    /** 今日/本月用量是辅助信息:失败静默,不影响对话 */
+    private suspend fun refreshUsage() {
+        val usage = runCatching { ApiClient.api().getAiUsage(deviceUtcOffsetMinutes()) }.getOrNull() ?: return
+        _ui.update {
+            it.copy(todayUsage = usage.today, monthUsage = usage.month, usageByFeature = usage.byFeature)
+        }
+    }
+
     private suspend fun advance() {
         _ui.update { it.copy(sending = true, error = null) }
         val snapshot = _ui.value.messages
@@ -783,9 +828,11 @@ class PlanInterviewViewModel(app: Application) : AndroidViewModel(app) {
                 it.copy(messages = snapshot + InterviewMessageDto("assistant", resp.reply),
                     options = if (resp.done) emptyList() else resp.options,
                     // 中途也保留 brief：顶部副标题要显示「已确认了什么」
-                    done = resp.done, brief = resp.brief ?: it.brief, sending = false)
+                    done = resp.done, brief = resp.brief ?: it.brief, sending = false,
+                    turnUsage = resp.usage)
             }
             persist()
+            refreshUsage()
         }, { e ->
             _ui.update { it.copy(sending = false, error = "AI 这次没回上话(${e.userMessage()})，点重试继续") }
             // 失败也要落盘：下次进来是接着这轮重试，而不是从头再答一遍

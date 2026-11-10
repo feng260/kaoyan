@@ -56,6 +56,7 @@
   <nav>
     <a data-tab="overview" class="on">概览</a>
     <a data-tab="users">用户</a>
+    <a data-tab="usage">AI 用量</a>
     <a data-tab="releases">版本发布</a>
   </nav>
   <main>
@@ -65,6 +66,24 @@
       <div class="row"><button class="ghost" onclick="loadUsers()">刷新</button></div>
       <table><thead><tr><th>用户名</th><th>邮箱</th><th>设备</th><th>任务</th><th>专注记录</th><th>注册时间</th><th></th></tr></thead>
       <tbody id="userRows"></tbody></table>
+    </section>
+
+    <section id="tab-usage" style="display:none">
+      <div class="row">
+        <button id="usage7" class="ghost" onclick="loadUsage(7)">近 7 天</button>
+        <button id="usage30" class="ghost" onclick="loadUsage(30)">近 30 天</button>
+      </div>
+      <div class="cards" id="usageCards"></div>
+      <h3 style="font-size:14px;margin:0 0 10px">按用户</h3>
+      <table style="margin-bottom:24px">
+        <thead><tr><th>用户名</th><th>总 tokens</th><th>prompt / completion</th><th>调用次数</th><th>最后调用</th></tr></thead>
+        <tbody id="usageUserRows"></tbody>
+      </table>
+      <h3 style="font-size:14px;margin:0 0 10px">按功能</h3>
+      <table>
+        <thead><tr><th>功能</th><th>总 tokens</th><th>prompt / completion</th><th>调用次数</th></tr></thead>
+        <tbody id="usageFeatureRows"></tbody>
+      </table>
     </section>
 
     <section id="tab-releases" style="display:none">
@@ -102,6 +121,13 @@ const $ = s => document.querySelector(s)
 const toast = m => { const t = $('#toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2200) }
 const fmtT = t => new Date(t).toLocaleString('zh-CN', {hour12:false})
 const fmtMB = b => (b/1048576).toFixed(2) + ' MB'
+const fmtNum = n => Number(n || 0).toLocaleString('zh-CN')
+let usageDays = 30
+const featureLabel = f => ({
+  interview:'备考面谈', adjust_intent:'行程理解', adjust_plan:'行程重排',
+  plan_generate:'计划骨架', plan_refine:'阶段细化', plan_critic:'计划评审',
+  plan_document:'长文档生成', timetable_ocr:'课表识别'
+}[f] || f)
 
 async function api(path, opt = {}) {
   const r = await fetch(API + path, {
@@ -125,11 +151,11 @@ async function enter() {
   $('#loginBox').style.display = 'none'; $('#app').style.display = ''
   $('#srvInfo').textContent = location.host
   document.querySelectorAll('nav a').forEach(a => a.onclick = () => switchTab(a.dataset.tab))
-  await Promise.all([loadStats(), loadUsers(), loadReleases()])
+  await Promise.all([loadStats(), loadUsers(), loadReleases(), loadUsage()])
 }
 function switchTab(name) {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('on', a.dataset.tab === name))
-  ;['overview','users','releases'].forEach(t => $('#tab-' + t).style.display = t === name ? '' : 'none')
+  ;['overview','users','releases','usage'].forEach(t => $('#tab-' + t).style.display = t === name ? '' : 'none')
 }
 
 // ---- 概览 ----
@@ -156,6 +182,36 @@ async function delUser(guid, name) {
   if (!confirm(`删除用户「${name}」?\n其全部数据(设备/任务/专注记录)将一并清除,不可恢复`)) return
   await api('/admin/users/' + guid, {method:'DELETE'})
   toast('已删除'); loadStats(); loadUsers()
+}
+
+// ---- AI 用量 ----
+async function loadUsage(days = usageDays) {
+  usageDays = days
+  $('#usage7').className = days === 7 ? '' : 'ghost'
+  $('#usage30').className = days === 30 ? '' : 'ghost'
+  const u = await api('/admin/usage?days=' + days)
+  const cards = [
+    ['总 tokens', fmtNum(u.totals.totalTokens)],
+    ['调用次数', fmtNum(u.totals.calls)],
+    ['活跃用户', fmtNum(u.totals.activeUsers)],
+    ['估算调用占比', u.totals.calls ? Math.round(u.totals.estimatedCalls * 100 / u.totals.calls) + '%' : '0%'],
+  ]
+  if (u.estimatedCostCny != null) cards.push(['预估成本', '¥' + u.estimatedCostCny.toFixed(2)])
+  $('#usageCards').innerHTML = cards.map(([l, v]) =>
+    `<div class="card"><div class="v">${v}</div><div class="l">${l}</div></div>`).join('')
+  $('#usageUserRows').innerHTML = u.topUsers.map(r => `<tr>
+    <td><b>${esc(r.username)}</b>${r.nickname ? ' <span class="muted">' + esc(r.nickname) + '</span>' : ''}</td>
+    <td>${fmtNum(r.totalTokens)}</td>
+    <td class="muted">${fmtNum(r.promptTokens)} / ${fmtNum(r.completionTokens)}</td>
+    <td>${fmtNum(r.calls)}</td>
+    <td class="muted">${r.lastCallAt ? fmtT(r.lastCallAt) : '—'}</td>
+  </tr>`).join('') || '<tr><td colspan="5" class="muted">暂无用量</td></tr>'
+  $('#usageFeatureRows').innerHTML = u.byFeature.map(r => `<tr>
+    <td><b>${esc(featureLabel(r.feature))}</b> <span class="muted">${esc(r.feature)}</span></td>
+    <td>${fmtNum(r.totalTokens)}</td>
+    <td class="muted">${fmtNum(r.promptTokens)} / ${fmtNum(r.completionTokens)}</td>
+    <td>${fmtNum(r.calls)}</td>
+  </tr>`).join('') || '<tr><td colspan="4" class="muted">暂无用量</td></tr>'
 }
 
 // ---- 版本 ----

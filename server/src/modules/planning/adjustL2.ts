@@ -78,6 +78,7 @@ function l2SystemPrompt(mode: L2Mode): string {
 export async function runAdjustL2(input: L2Input): Promise<L2Task[]> {
   try {
     const raw = await chatComplete({
+      feature: 'adjust_plan',
       messages: [
         { role: 'system', content: l2SystemPrompt(input.mode ?? 'conserve') },
         { role: 'user', content: buildL2UserPrompt(input) },

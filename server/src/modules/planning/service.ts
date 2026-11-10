@@ -1,4 +1,5 @@
 import { prisma } from '../../shared/prisma'
+import { runWithAiUsage } from '../../shared/llm/usage'
 import { ApiError } from '../../middlewares/error'
 import { llmConfigured, visionConfigured } from '../../config/env'
 import { addDays, dayStart, diffDays, profileInputSchema, MIN_DAILY_MINUTES, MAX_DAILY_MINUTES, type ProfileInput } from './schemas'
@@ -1556,17 +1557,31 @@ export function createPlanningService(
         const updated = generationJobs.update(job.id, patch)
         if (updated) onUpdate?.(updated)
       }
-      void (async () => {
+      let finalPatch: Partial<PlanGenerationJob> | null = null
+      void runWithAiUsage(userGuid, async () => {
         try {
           const plan = await buildPlan(userGuid, progress => push({ progress }), options)
-          push({ status: 'done', planId: plan.id, progress: { percent: 100, phase: 'done', message: '计划草稿已生成' } })
+          finalPatch = {
+            status: 'done',
+            planId: plan.id,
+            progress: { percent: 100, phase: 'done', message: '计划草稿已生成' },
+          }
         } catch (error) {
           const code = error instanceof ApiError ? error.code : 'PLAN_GENERATION_FAILED'
           const message = error instanceof Error ? error.message : '计划生成失败'
           console.warn(`[planning] 异步生成失败(${code}):${message}`)
-          push({ status: 'failed', error: { code, message }, progress: { percent: 100, phase: 'done', message: '生成失败' } })
+          finalPatch = {
+            status: 'failed',
+            error: { code, message },
+            progress: { percent: 100, phase: 'done', message: '生成失败' },
+          }
         }
-      })()
+      }, {
+        // 最终状态与 usage 同一次推送:客户端收到 done/failed 时已经能展示消耗
+        onFinish: summary => {
+          if (finalPatch) push({ ...finalPatch, usage: summary })
+        },
+      })
       return { jobId: job.id, job }
     },
 

@@ -113,6 +113,7 @@ export async function runAdjustIntent(input: AdjustIntentInput): Promise<AdjustI
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const raw = await chatComplete({
+        feature: 'adjust_intent',
         messages: [
           { role: 'system', content: buildSystemPrompt() },
           { role: 'user', content: buildUserPrompt(input) },

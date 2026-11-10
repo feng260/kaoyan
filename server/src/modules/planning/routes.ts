@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { ApiError } from '../../middlewares/error'
 import { requireAuth } from '../../middlewares/auth'
 import { apiLimit } from '../../middlewares/ratelimit'
+import { aiUsageMeter } from '../../middlewares/aiUsage'
+import { currentUsageSummary } from '../../shared/llm/usage'
 import { hub } from '../../shared/ws/Hub'
 import { briefPatchSchema, profileInputSchema, type ProfileInput } from './schemas'
 import { PLAN_ITEM_STATUSES, planningService, slimToggleResponse } from './service'
@@ -148,12 +150,12 @@ router.patch('/plans/brief', requireAuth, apiLimit(), async ctx => {
 })
 
 /** 生成计划:同一档案重复调用是幂等的(内容一致),但会产出新版本并归档旧版本 */
-router.post('/plans/generate', requireAuth, apiLimit(), async ctx => {
+router.post('/plans/generate', requireAuth, apiLimit(), aiUsageMeter(), async ctx => {
   const parsed = generateSchema.safeParse(ctx.request.body ?? {})
   if (!parsed.success) throw new ApiError(400, 'INVALID_PARAMS', '生成参数不合法')
   const plan = await planningService.generatePlanDraft(ctx.state.auth!.userGuid, dropNulls(parsed.data ?? {}))
   ctx.status = 201
-  ctx.body = { plan, serverTime: Date.now() }
+  ctx.body = { plan, usage: currentUsageSummary(), serverTime: Date.now() }
 })
 
 /**
@@ -195,7 +197,7 @@ router.post('/plans/:id/confirm', requireAuth, apiLimit(), async ctx => {
  * 返回 { reply, options, done, brief }:done 为 true 时客户端显示「生成完整计划」。
  * 必须注册在 `/plans/:id` 之前。
  */
-router.post('/plans/interview', requireAuth, apiLimit(), async ctx => {
+router.post('/plans/interview', requireAuth, apiLimit(), aiUsageMeter(), async ctx => {
   const parsed = interviewSchema.safeParse(ctx.request.body ?? {})
   if (!parsed.success) {
     throw new ApiError(400, 'INVALID_PARAMS', '面谈参数不合法')
@@ -204,20 +206,20 @@ router.post('/plans/interview', requireAuth, apiLimit(), async ctx => {
     messages: parsed.data.messages ?? [],
     force: parsed.data.force === true,
   })
-  ctx.body = { ...result, serverTime: Date.now() }
+  ctx.body = { ...result, usage: currentUsageSummary(), serverTime: Date.now() }
 })
 
 /**
  * 课表图片识别:返回识别到的固定占用与存疑提示,由用户校正后再随问卷一起提交。
  * 必须注册在 `/plans/:id` 之前。
  */
-router.post('/plans/timetable', requireAuth, apiLimit(), async ctx => {
+router.post('/plans/timetable', requireAuth, apiLimit(), aiUsageMeter(), async ctx => {
   const parsed = timetableSchema.safeParse(ctx.request.body ?? {})
   if (!parsed.success) {
     throw new ApiError(400, 'INVALID_PARAMS', '课表图片不合法(需要 base64 或链接,且不超过 8mb)')
   }
   const result = await planningService.parseTimetable(ctx.state.auth!.userGuid, parsed.data)
-  ctx.body = { ...result, serverTime: Date.now() }
+  ctx.body = { ...result, usage: currentUsageSummary(), serverTime: Date.now() }
 })
 
 /** 行程调整:一句话描述突发情况;长度口径与面谈消息一致 */
@@ -236,7 +238,7 @@ const adjustSchema = z.object({
  * 返回 { adjustment, reply, plan }:adjustment 为 null 时 reply 是追问/闲聊回复。
  * 必须注册在 `/plans/:id` 之前(与 interview/timetable 同理)。
  */
-router.post('/plans/adjust', requireAuth, apiLimit(), async ctx => {
+router.post('/plans/adjust', requireAuth, apiLimit(), aiUsageMeter(), async ctx => {
   const parsed = adjustSchema.safeParse(ctx.request.body)
   if (!parsed.success) throw parsed.error
   const result = await planningService.adjust(ctx.state.auth!.userGuid, {
@@ -245,7 +247,7 @@ router.post('/plans/adjust', requireAuth, apiLimit(), async ctx => {
   })
   // lock_task 是确认前唯一会直接改计划的意图;调整单本身不广播,等确认
   if (result.changedPlan) notifyPlanChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)
-  ctx.body = { ...result, serverTime: Date.now() }
+  ctx.body = { ...result, usage: currentUsageSummary(), serverTime: Date.now() }
 })
 
 /** 最近一张待确认/已生效调整单:App 冷启动、切页恢复卡片 */
@@ -321,9 +323,9 @@ router.get('/plans/active/document', requireAuth, async ctx => {
  * 每日清单不动,只重写 documentJson。服务端要跑 5 段并发的文档生成,耗时约 1-2 分钟。
  * 必须注册在 `/plans/:id` 之前。
  */
-router.post('/plans/active/document', requireAuth, apiLimit(), async ctx => {
+router.post('/plans/active/document', requireAuth, apiLimit(), aiUsageMeter(), async ctx => {
   const document = await planningService.regenerateActiveDocument(ctx.state.auth!.userGuid)
-  ctx.body = { document, serverTime: Date.now() }
+  ctx.body = { document, usage: currentUsageSummary(), serverTime: Date.now() }
 })
 
 

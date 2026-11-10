@@ -14,6 +14,12 @@ function pick(...values: Array<string | undefined>): string {
   return values.find(v => v !== undefined && v !== '') ?? ''
 }
 
+/** 成本单价只接受正的有限数;没配或配错一律按 0(管理端不展示成本) */
+function price(value: string | undefined): number {
+  const n = Number(value ?? 0)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
 export const env = {
   port: Number(process.env.PORT ?? 3000),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -47,6 +53,9 @@ export const env = {
     model: process.env.LLM_MODEL ?? 'deepseek-flash',
     timeoutMs: Number(process.env.LLM_TIMEOUT_MS ?? 120_000),
     maxTokens: Number(process.env.LLM_MAX_TOKENS ?? 8192),
+    /** 可选:按单价估算人民币成本(元/百万 token);0 表示管理端不展示成本 */
+    priceInPer1M: price(process.env.LLM_PRICE_IN_PER_1M),
+    priceOutPer1M: price(process.env.LLM_PRICE_OUT_PER_1M),
     /**
      * 视觉模型:识别课表图片用。默认整套沿用上面的对话模型 —— 现在主模型多半本身
      * 就是多模态(能收图片),再加一套配置纯属给部署添麻烦。只有当你想让识图单独
