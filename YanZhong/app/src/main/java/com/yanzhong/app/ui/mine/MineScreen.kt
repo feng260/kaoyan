@@ -58,6 +58,7 @@ import com.yanzhong.app.data.remote.UpdateCheckResult
 import com.yanzhong.app.data.stats.LearningProfile
 import com.yanzhong.app.ui.legal.PolicyLinksRow
 import com.yanzhong.app.ui.nav.Routes
+import com.yanzhong.app.ui.profile.UserAvatar
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.BrandGradient
@@ -146,7 +147,8 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                 HeaderCard(
                     state,
                     onOpenAccount = {
-                        navController.navigate(Routes.ACCOUNT) { launchSingleTop = true }
+                        val target = if (state.account is AccountState.LoggedIn) Routes.EDIT_PROFILE else Routes.ACCOUNT
+                        navController.navigate(target) { launchSingleTop = true }
                     }
                 )
             }
@@ -513,28 +515,24 @@ private fun HeaderCard(state: MineUiState, onOpenAccount: () -> Unit) {
         AccountState.LoggedOut -> "数据保存在本机"
         AccountState.Loading -> " "
     }
+    val displayName = state.identity.nickname?.takeIf { it.isNotBlank() } ?: username
 
     GradientCard(onClick = onOpenAccount) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
                 Modifier
-                    .size(52.dp)
+                    .size(56.dp)
                     .clip(CircleShape)
                     .background(Color.White.copy(alpha = 0.18f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    AppIcons.GraduationCap,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(26.dp)
-                )
+                UserAvatar(state.identity.avatarPreset, state.identity.avatar, 52.dp)
             }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                if (username.isNotBlank()) {
+                if (displayName.isNotBlank()) {
                     Text(
-                        username,
+                        displayName,
                         style = MaterialTheme.typography.titleLarge,
                         color = Color.White,
                         maxLines = 1

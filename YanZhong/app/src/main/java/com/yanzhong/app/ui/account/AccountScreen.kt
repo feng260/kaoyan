@@ -3,7 +3,6 @@ package com.yanzhong.app.ui.account
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,16 +13,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -38,7 +34,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -52,8 +47,9 @@ import com.yanzhong.app.ui.cloud.CloudSyncViewModel
 import com.yanzhong.app.ui.legal.ConsentRow
 import com.yanzhong.app.ui.legal.PolicyLinksRow
 import com.yanzhong.app.ui.mine.MineViewModel
+import com.yanzhong.app.ui.nav.Routes
+import com.yanzhong.app.ui.profile.UserAvatar
 import com.yanzhong.app.ui.theme.AppCard
-import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
 import com.yanzhong.app.ui.theme.ListRow
 import com.yanzhong.app.ui.theme.PillTone
@@ -80,6 +76,7 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
     val vm: CloudSyncViewModel = viewModel()
     val mineVm: MineViewModel = viewModel()
     val state by vm.ui.collectAsStateWithLifecycle()
+    val mineState by mineVm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
     val dataVm: CloudDataViewModel = viewModel()
@@ -211,24 +208,11 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
                 } else {
                     AppCard {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                Modifier
-                                    .size(48.dp)
-                                    .clip(CircleShape)
-                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    AppIcons.GraduationCap,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                            }
+                            UserAvatar(mineState.identity.avatarPreset, mineState.identity.avatar, 48.dp)
                             Spacer(Modifier.width(12.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    state.username.ifBlank { "已登录" },
+                                    mineState.identity.nickname?.takeIf { it.isNotBlank() } ?: state.username.ifBlank { "已登录" },
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 Text(
@@ -244,6 +228,10 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
                             "同账号的设备共用同一份计划与每日进度。",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TextAction(
+                            text = "编辑资料",
+                            onClick = { navController.navigate(Routes.EDIT_PROFILE) { launchSingleTop = true } }
                         )
                     }
                     Spacer(Modifier.height(16.dp))

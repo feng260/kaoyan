@@ -12,6 +12,7 @@ import com.yanzhong.app.data.prefs.PomodoroPlan
 import com.yanzhong.app.data.remote.ApiClient
 import com.yanzhong.app.data.remote.DeleteAccountReq
 import com.yanzhong.app.data.remote.TokenStore
+import com.yanzhong.app.data.remote.refreshIdentity
 import com.yanzhong.app.util.TimeUtils
 import java.time.Instant
 import java.time.ZoneId
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -41,7 +43,8 @@ data class MineUiState(
     val focusDays: Int = 0,
     val streak: Int = 0,
     val learningProfile: LearningProfile = LearningProfile(),
-    val account: AccountState = AccountState.Loading
+    val account: AccountState = AccountState.Loading,
+    val identity: TokenStore.IdentityCache = TokenStore.IdentityCache()
 )
 
 class MineViewModel(app: Application) : AndroidViewModel(app) {
@@ -60,8 +63,9 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
         settingsRepo.settings,
         repo.observeSubjects(),
         repo.observeSessions(),
-        accountFlow
-    ) { settings, subjects, sessions, account ->
+        accountFlow,
+        TokenStore.observeIdentity()
+    ) { settings, subjects, sessions, account, identity ->
         val profile = buildLearningProfile(
             sessions = sessions,
             subjects = subjects,
@@ -74,9 +78,19 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
             focusDays = profile.activeDays,
             streak = profile.streakDays,
             learningProfile = profile,
-            account = account
+            account = account,
+            identity = identity
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), MineUiState())
+
+    init {
+        // 登录后拉一次服务端身份(头像/昵称),写进缓存供头部卡与账号卡展示;失败静默回落本地缓存
+        viewModelScope.launch {
+            TokenStore.observeLoggedIn().distinctUntilChanged().collect { loggedIn ->
+                if (loggedIn) refreshIdentity()
+            }
+        }
+    }
 
     fun setTheme(mode: Int) {
         viewModelScope.launch { settingsRepo.setThemeMode(mode) }

@@ -18,6 +18,29 @@ const deleteSchema = z.object({
   password: z.string().min(1).max(64),
 })
 
+// 身份字段这里只校类型,语义校验(长度/枚举/生日/头像互斥)交给服务层 normalizeIdentityPatch
+const identitySchema = z.object({
+  nickname: z.string().nullish(),
+  signature: z.string().nullish(),
+  gender: z.string().nullish(),
+  birthday: z.string().nullish(),
+  avatarPreset: z.string().nullish(),
+  avatar: z.string().nullish(),
+})
+
+/** 读取本人完整身份(含头像 base64) */
+router.get('/me', requireAuth, apiLimit(), async ctx => {
+  const identity = await accountService.getIdentity(ctx.state.auth!.userGuid)
+  ctx.body = { identity, serverTime: Date.now() }
+})
+
+/** 局部更新身份:不传=不动,传 null=清空;预设与自定义头像互斥 */
+router.patch('/me', requireAuth, apiLimit(), async ctx => {
+  const body = identitySchema.parse(ctx.request.body)
+  const identity = await accountService.updateIdentity(ctx.state.auth!.userGuid, body)
+  ctx.body = { identity, serverTime: Date.now() }
+})
+
 /** 导出全部数据:一次性返回 JSON,并带上下载文件名(浏览器直接访问也能存下来) */
 router.get('/export', requireAuth, apiLimit(), async ctx => {
   const dump = await accountService.exportAccount(ctx.state.auth!.userGuid)

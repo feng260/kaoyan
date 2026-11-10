@@ -20,6 +20,7 @@ const TABLES = [
 
 const USER = 'user-guid-0000-0000-0000-000000000001'
 const OTHER = 'user-guid-0000-0000-0000-000000000002'
+const JPEG_BASE64 = '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AVN//2Q=='
 
 function matches(row: Row, where: Row = {}): boolean {
   return Object.entries(where).every(([key, value]) => {
@@ -235,4 +236,50 @@ test('deleteAccount rolls back entirely when a delete fails midway', async () =>
   assert.equal(fake.state.plan.filter(r => r.id === 70).length, 1)
   assert.equal(fake.state.userProfile.filter(r => r.userGuid === USER).length, 1)
   assert.equal(fake.state.user.filter(r => r.guid === USER).length, 1)
+})
+
+test('getIdentity returns identity fields and avatar base64', async () => {
+  const fake = createFakeAccountDb()
+  seed(fake.state)
+  Object.assign(fake.state.user[0], { nickname: '小明', signature: '一战成硕', gender: 'male', birthday: '2003-05-01', avatarPreset: 'fox', avatarData: null })
+  const { service } = serviceWith(fake)
+  const id = await service.getIdentity(USER)
+  assert.equal(id.username, 'chensi')
+  assert.equal(id.nickname, '小明')
+  assert.equal(id.avatarPreset, 'fox')
+  assert.equal(id.avatar, null)
+  assert.equal('passwordHash' in id, false)
+})
+
+test('updateIdentity changes only provided fields and clears avatar exclusivity', async () => {
+  const fake = createFakeAccountDb()
+  seed(fake.state)
+  Object.assign(fake.state.user[0], { nickname: '旧', avatarPreset: 'fox', avatarData: null })
+  const { service } = serviceWith(fake)
+  const id = await service.updateIdentity(USER, { nickname: '新昵称', avatar: JPEG_BASE64 })
+  assert.equal(id.nickname, '新昵称')
+  assert.equal(id.avatarPreset, null)
+  assert.equal(id.avatar, JPEG_BASE64)
+  assert.equal(fake.state.user[0].nickname, '新昵称')
+})
+
+test('updateIdentity rejects unknown preset and avatar conflict', async () => {
+  const fake = createFakeAccountDb()
+  seed(fake.state)
+  const { service } = serviceWith(fake)
+  await assert.rejects(() => service.updateIdentity(USER, { avatarPreset: 'dragon' }),
+    (e: unknown) => e instanceof ApiError && e.status === 400)
+  await assert.rejects(() => service.updateIdentity(USER, { avatarPreset: 'fox', avatar: JPEG_BASE64 }),
+    (e: unknown) => e instanceof ApiError && e.code === 'AVATAR_CONFLICT')
+})
+
+test('exportAccount includes identity fields', async () => {
+  const fake = createFakeAccountDb()
+  seed(fake.state)
+  Object.assign(fake.state.user[0], { nickname: '小明', signature: '签名', gender: 'other', birthday: '2003-05-01', avatarPreset: 'book', avatarData: null })
+  const { service } = serviceWith(fake)
+  const dump = await service.exportAccount(USER)
+  assert.equal(dump.account.nickname, '小明')
+  assert.equal(dump.account.signature, '签名')
+  assert.equal(dump.account.avatarPreset, 'book')
 })

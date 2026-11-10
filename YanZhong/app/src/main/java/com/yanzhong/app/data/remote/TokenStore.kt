@@ -26,6 +26,12 @@ object TokenStore {
     private val KEY_SERVER_VER = intPreferencesKey("server_url_ver")
     private val KEY_LAST_SYNC = longPreferencesKey("last_sync")
     private val KEY_USERNAME = stringPreferencesKey("username")
+    private val KEY_NICKNAME = stringPreferencesKey("nickname")
+    private val KEY_SIGNATURE = stringPreferencesKey("signature")
+    private val KEY_GENDER = stringPreferencesKey("gender")
+    private val KEY_BIRTHDAY = stringPreferencesKey("birthday")
+    private val KEY_AVATAR_PRESET = stringPreferencesKey("avatar_preset")
+    private val KEY_AVATAR_DATA = stringPreferencesKey("avatar_data")
 
     /**
      * 服务器地址配置版本:内置默认地址(DEFAULT_SERVER_URL)发生迁移时 +1。
@@ -82,6 +88,34 @@ object TokenStore {
     suspend fun saveUsername(name: String?) {
         context().cloudStore.edit { prefs ->
             if (name.isNullOrBlank()) prefs.remove(KEY_USERNAME) else prefs[KEY_USERNAME] = name
+        }
+    }
+
+    /** 身份资料本地缓存(头像/昵称/签名/性别/生日);供头部卡与编辑页离线回落 */
+    data class IdentityCache(
+        val nickname: String? = null, val signature: String? = null, val gender: String? = null,
+        val birthday: String? = null, val avatarPreset: String? = null, val avatar: String? = null
+    )
+
+    fun observeIdentity(): Flow<IdentityCache> = context().cloudStore.data.map {
+        IdentityCache(it[KEY_NICKNAME], it[KEY_SIGNATURE], it[KEY_GENDER], it[KEY_BIRTHDAY], it[KEY_AVATAR_PRESET], it[KEY_AVATAR_DATA])
+    }
+
+    suspend fun currentIdentity(): IdentityCache = context().cloudStore.data.first().let {
+        IdentityCache(it[KEY_NICKNAME], it[KEY_SIGNATURE], it[KEY_GENDER], it[KEY_BIRTHDAY], it[KEY_AVATAR_PRESET], it[KEY_AVATAR_DATA])
+    }
+
+    suspend fun saveIdentity(cache: IdentityCache) {
+        context().cloudStore.edit { prefs ->
+            fun put(key: androidx.datastore.preferences.core.Preferences.Key<String>, v: String?) {
+                if (v.isNullOrBlank()) prefs.remove(key) else prefs[key] = v
+            }
+            put(KEY_NICKNAME, cache.nickname)
+            put(KEY_SIGNATURE, cache.signature)
+            put(KEY_GENDER, cache.gender)
+            put(KEY_BIRTHDAY, cache.birthday)
+            put(KEY_AVATAR_PRESET, cache.avatarPreset)
+            put(KEY_AVATAR_DATA, cache.avatar)
         }
     }
 
@@ -142,6 +176,12 @@ object TokenStore {
             it.remove(KEY_REFRESH)
             it.remove(KEY_ACCOUNT_GUID)
             it.remove(KEY_USERNAME)
+            it.remove(KEY_NICKNAME)
+            it.remove(KEY_SIGNATURE)
+            it.remove(KEY_GENDER)
+            it.remove(KEY_BIRTHDAY)
+            it.remove(KEY_AVATAR_PRESET)
+            it.remove(KEY_AVATAR_DATA)
         }
     }
 }

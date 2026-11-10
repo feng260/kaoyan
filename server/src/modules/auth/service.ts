@@ -24,13 +24,17 @@ export interface PublicUser {
   username: string
   email: string | null
   createdAt: number
+  nickname: string | null
+  avatarPreset: string | null
 }
 
-const publicUser = (u: { guid: string; username: string; email: string | null; createdAt: BigInt }): PublicUser => ({
+const publicUser = (u: { guid: string; username: string; email: string | null; createdAt: BigInt; nickname?: string | null; avatarPreset?: string | null }): PublicUser => ({
   guid: u.guid,
   username: u.username,
   email: u.email,
   createdAt: num(u.createdAt),
+  nickname: u.nickname ?? null,
+  avatarPreset: u.avatarPreset ?? null,
 })
 
 /** 为设备签发 access + refresh(refresh 落库存哈希) */

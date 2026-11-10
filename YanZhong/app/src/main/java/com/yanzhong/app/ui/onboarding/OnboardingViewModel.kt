@@ -1,20 +1,17 @@
 package com.yanzhong.app.ui.onboarding
 
 import android.app.Application
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
-import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.remote.*
+import com.yanzhong.app.data.util.compressImageToBase64
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.ByteArrayOutputStream
 import java.time.LocalDate
 import java.time.format.DateTimeParseException
 
@@ -975,30 +972,8 @@ class OnboardingViewModel(app: Application) : AndroidViewModel(app) {
      * 为什么要自己压:课表截图动辄好几 MB,服务端 JSON 上限 8mb,原图直传十有八九被拒;
      * 缩到最长边 1600、按 JPEG 82 编码后通常只剩几百 KB,课表上的字照样认得出。
      */
-    private fun compressToBase64(uri: Uri): String? {
-        val resolver = getApplication<Application>().contentResolver
-        val raw = resolver.openInputStream(uri)?.use { it.readBytes() } ?: return null
-        val decoded = BitmapFactory.decodeByteArray(raw, 0, raw.size) ?: return null
-        val scaled = scaleDown(decoded, TIMETABLE_MAX_SIDE)
-        val out = ByteArrayOutputStream()
-        val ok = scaled.compress(Bitmap.CompressFormat.JPEG, 82, out)
-        if (scaled !== decoded) scaled.recycle()
-        decoded.recycle()
-        if (!ok) return null
-        return Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-    }
-
-    private fun scaleDown(src: Bitmap, maxSide: Int): Bitmap {
-        val longest = maxOf(src.width, src.height)
-        if (longest <= maxSide) return src
-        val ratio = maxSide.toFloat() / longest
-        return Bitmap.createScaledBitmap(
-            src,
-            (src.width * ratio).toInt().coerceAtLeast(1),
-            (src.height * ratio).toInt().coerceAtLeast(1),
-            true
-        )
-    }
+    private fun compressToBase64(uri: Uri): String? =
+        compressImageToBase64(getApplication(), uri, TIMETABLE_MAX_SIDE, 82)
 }
 
 /** 把落库的钟点窗口翻回编辑器列表;逐条原样还原(课表支持任意 HH:mm,不再丢弃预设之外的窗口) */

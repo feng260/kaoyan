@@ -71,6 +71,8 @@ object Routes {
     const val APP_PICKER = "apppicker/{subjectId}"
     /** 账号子页:登录/注册、多设备管理、退出与注销 */
     const val ACCOUNT = "account"
+    /** 编辑个人资料子页:头像、昵称、签名、性别、生日 */
+    const val EDIT_PROFILE = "edit_profile"
     /**
      * 制定/调整备考档案页。
      *
@@ -124,6 +126,7 @@ fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     val deepPage = currentRoute == Routes.SUPERMODE || currentRoute == Routes.ACCOUNT ||
+        currentRoute == Routes.EDIT_PROFILE ||
         currentRoute == Routes.PLAN_SETUP || currentRoute == Routes.PLAN_HISTORY ||
         currentRoute == Routes.PLAN_INTERVIEW || currentRoute == Routes.PLAN_DOCUMENT ||
         currentRoute?.startsWith("apppicker") == true
@@ -190,6 +193,9 @@ fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
                     }
                     composable(Routes.ACCOUNT) {
                         com.yanzhong.app.ui.account.AccountScreen(padding, navController)
+                    }
+                    composable(Routes.EDIT_PROFILE) {
+                        com.yanzhong.app.ui.profile.EditProfileScreen(padding, navController)
                     }
                     composable(
                         Routes.PLAN_SETUP,

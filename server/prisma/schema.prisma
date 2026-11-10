@@ -27,6 +27,13 @@ model User {
   termsAcceptedAt   DateTime?
   privacyAcceptedAt DateTime?
   createdAt         BigInt
+  // 个人资料自定义:身份展示字段,均可空;昵称空回落 username,头像空回落图标
+  nickname     String? @db.VarChar(32)
+  signature    String? @db.VarChar(100)
+  gender       String? @db.VarChar(12) // male / female / other / secret
+  birthday     String? @db.VarChar(10) // YYYY-MM-DD
+  avatarPreset String? @db.VarChar(32) // 预设头像 key,与 avatarData 互斥
+  avatarData   String? @db.Text // 自定义头像裸 base64(JPEG/PNG/WebP)
 
   profile UserProfile?
   plans   Plan[]

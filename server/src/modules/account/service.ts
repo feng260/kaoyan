@@ -5,6 +5,7 @@ import { hub } from '../../shared/ws/Hub'
 import { exportBackup } from '../sync/service'
 import { planningService, type PublicPlan, type PublicProfile } from '../planning/service'
 import { POLICY_EFFECTIVE_DATE, POLICY_VERSION } from '../auth/consent'
+import { normalizeIdentityPatch, type IdentityInput } from './identity'
 
 /**
  * 账号级操作:全量导出与彻底注销。
@@ -22,7 +23,7 @@ const iso = (value: unknown): string | null => (value instanceof Date ? value.to
 type AnyArgs = Record<string, any>
 
 export interface AccountDb {
-  user: { findUnique(args: AnyArgs): Promise<any>; deleteMany(args: AnyArgs): Promise<any> }
+  user: { findUnique(args: AnyArgs): Promise<any>; updateMany(args: AnyArgs): Promise<any>; deleteMany(args: AnyArgs): Promise<any> }
   device: { deleteMany(args: AnyArgs): Promise<any> }
   refreshToken: { deleteMany(args: AnyArgs): Promise<any> }
   subject: { deleteMany(args: AnyArgs): Promise<any> }
@@ -59,11 +60,41 @@ export interface AccountExport {
     createdAt: number
     termsAcceptedAt: string | null
     privacyAcceptedAt: string | null
+    nickname: string | null
+    signature: string | null
+    gender: string | null
+    birthday: string | null
+    avatarPreset: string | null
+    avatar: string | null
   }
   profile: PublicProfile | null
   plan: PublicPlan | null
   data: any
 }
+
+export interface Identity {
+  guid: string
+  username: string
+  email: string | null
+  nickname: string | null
+  signature: string | null
+  gender: string | null
+  birthday: string | null
+  avatarPreset: string | null
+  avatar: string | null
+}
+
+const toIdentity = (u: any): Identity => ({
+  guid: u.guid,
+  username: u.username,
+  email: u.email ?? null,
+  nickname: u.nickname ?? null,
+  signature: u.signature ?? null,
+  gender: u.gender ?? null,
+  birthday: u.birthday ?? null,
+  avatarPreset: u.avatarPreset ?? null,
+  avatar: u.avatarData ?? null,
+})
 
 export interface DeleteAccountInput {
   userGuid: string
@@ -87,6 +118,22 @@ export function createAccountService(db: AccountDb, deps: AccountDeps = DEFAULT_
     return user
   }
 
+  /** 读取本人完整身份(含头像 base64);绝不外泄 passwordHash/resetTokenHash */
+  async function getIdentity(userGuid: string): Promise<Identity> {
+    return toIdentity(await requireUser(userGuid))
+  }
+
+  /** 局部更新身份:只改传入字段,预设/自定义头像互斥;落库后回读返回完整身份 */
+  async function updateIdentity(userGuid: string, input: IdentityInput): Promise<Identity> {
+    await requireUser(userGuid)
+    const today = new Date().toISOString().slice(0, 10)
+    const patch = normalizeIdentityPatch(input, today)
+    if (Object.keys(patch).length > 0) {
+      await db.user.updateMany({ where: { guid: userGuid }, data: patch })
+    }
+    return toIdentity(await requireUser(userGuid))
+  }
+
   /** 全量导出:账号信息 + 备考档案 + 当前计划 + 同步数据,一次性给全 */
   async function exportAccount(userGuid: string): Promise<AccountExport> {
     const user = await requireUser(userGuid)
@@ -107,6 +154,12 @@ export function createAccountService(db: AccountDb, deps: AccountDeps = DEFAULT_
         createdAt: num(user.createdAt),
         termsAcceptedAt: iso(user.termsAcceptedAt),
         privacyAcceptedAt: iso(user.privacyAcceptedAt),
+        nickname: user.nickname ?? null,
+        signature: user.signature ?? null,
+        gender: user.gender ?? null,
+        birthday: user.birthday ?? null,
+        avatarPreset: user.avatarPreset ?? null,
+        avatar: user.avatarData ?? null,
       },
       profile,
       plan,
@@ -154,7 +207,7 @@ export function createAccountService(db: AccountDb, deps: AccountDeps = DEFAULT_
     return { deleted }
   }
 
-  return { exportAccount, deleteAccount }
+  return { exportAccount, deleteAccount, getIdentity, updateIdentity }
 }
 
 export type AccountService = ReturnType<typeof createAccountService>

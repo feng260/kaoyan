@@ -18,6 +18,7 @@ import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.PATCH
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
@@ -27,7 +28,10 @@ import java.util.concurrent.TimeUnit
 // ---------- DTO ----------
 
 @Serializable
-data class UserDto(val guid: String, val username: String, val email: String? = null, val createdAt: Long = 0)
+data class UserDto(
+    val guid: String, val username: String, val email: String? = null, val createdAt: Long = 0,
+    val nickname: String? = null, val avatarPreset: String? = null
+)
 
 @Serializable
 data class DeviceDto(val id: Long, val guid: String? = null, val name: String)
@@ -194,6 +198,24 @@ data class ProfileReq(
 
 @Serializable
 data class ProfileResp(val profile: ProfileDto? = null, val serverTime: Long = 0)
+
+/** 个人身份资料(头像/昵称/签名/性别/生日);avatar 为自定义头像裸 base64,与 avatarPreset 互斥 */
+@Serializable
+data class IdentityDto(
+    val guid: String = "", val username: String = "", val email: String? = null,
+    val nickname: String? = null, val signature: String? = null, val gender: String? = null,
+    val birthday: String? = null, val avatarPreset: String? = null, val avatar: String? = null
+)
+
+@Serializable
+data class AccountMeResp(val identity: IdentityDto = IdentityDto(), val serverTime: Long = 0)
+
+/** PATCH /account/me 请求体;编辑页保存整份表单,值或 null(清空) */
+@Serializable
+data class UpdateIdentityReq(
+    val nickname: String? = null, val signature: String? = null, val gender: String? = null,
+    val birthday: String? = null, val avatarPreset: String? = null, val avatar: String? = null
+)
 
 /** 计划里的一个阶段（基础 / 强化 / 冲刺） */
 @Serializable
@@ -1026,6 +1048,14 @@ interface YanzhongApi {
      * 全量导出账号数据。直接返回服务端 JSON（含账号、档案、计划、同步数据），
      * 客户端原样落盘即可，不需要理解内部结构——所以这里用 JsonElement 而不是建一堆 DTO。
      */
+    /** 读取本人完整身份资料(含头像 base64) */
+    @GET("api/v1/account/me")
+    suspend fun getAccountMe(): AccountMeResp
+
+    /** 局部更新身份资料;返回更新后的完整身份 */
+    @PATCH("api/v1/account/me")
+    suspend fun updateAccountMe(@Body body: UpdateIdentityReq): AccountMeResp
+
     @GET("api/v1/account/export")
     suspend fun exportAccount(): kotlinx.serialization.json.JsonElement
 
