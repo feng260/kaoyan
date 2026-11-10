@@ -24,7 +24,7 @@ import com.yanzhong.app.ui.theme.TextAction
 /** 单条变动的一行描述,如「挪动 · 数学 · 09-30 → 10-01」 */
 internal fun adjustmentChangeLine(change: AdjustmentChangeDto): String {
     val subject = change.subject.ifBlank { "任务" }
-    return when (change.kind) {
+    val base = when (change.kind) {
         "moved" -> {
             val from = change.from?.planDate.orEmpty().takeLast(5)
             val to = change.to?.planDate.orEmpty().takeLast(5)
@@ -34,6 +34,8 @@ internal fun adjustmentChangeLine(change: AdjustmentChangeDto): String {
         "removed" -> "删除 · $subject · ${change.from?.title.orEmpty()}"
         else -> "调整 · $subject · ${change.from?.title.orEmpty()}"
     }
+    val note = change.note?.takeIf { it.isNotBlank() } ?: return base
+    return "$base · $note"
 }
 
 /**

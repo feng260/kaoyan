@@ -1,7 +1,7 @@
 import { prisma } from '../../shared/prisma'
 import { runWithAiUsage } from '../../shared/llm/usage'
 import { ApiError } from '../../middlewares/error'
-import { llmConfigured, visionConfigured } from '../../config/env'
+import { env, llmConfigured, visionConfigured } from '../../config/env'
 import { addDays, dayStart, diffDays, profileInputSchema, MIN_DAILY_MINUTES, MAX_DAILY_MINUTES, type ProfileInput } from './schemas'
 import type { GeneratedPlan, GeneratedStage } from './generator'
 import { AiUnavailable, generateAiPlan, type AiPlanningInput, type PlanProgress } from './aiGenerator'
@@ -14,10 +14,17 @@ import { briefIsEmpty, normalizeBrief, assessPlanningFacts, netAvailableMinutes,
 import { KAOYAN_KNOWN_SUBJECT_NAMES } from './planExemplar'
 import {
   adjustWindow, affectedDays, dailyCapacity, datesBetween, diffSnapshots, planL1Shuffle, shiftDate,
-  windowFingerprint, L1_MAX_AFFECTED_DAYS,
+  windowFingerprint, L1_MAX_AFFECTED_DAYS, DEFAULT_ADJUST_DAYS, MAX_ADJUST_DAYS,
   type AdjustmentTier, type AdjustableItem, type WindowSnapshotItem,
 } from './adjust'
-import { buildLedger, expandL2, normalizeL2Tasks, runAdjustL2, validateL2, type L2Input, type L2Mode, type L2Task } from './adjustL2'
+import {
+  buildElasticDemands, planElasticAdjustment, rankImportance, shrinkDayByTier, type ElasticResult,
+} from './elasticAdjust'
+import {
+  buildLedger, expandL2, normalizeL2Tasks, runAdjustL2, validateL2,
+  runIncrementalAdjust, validateIncrementalProposal, type IncrementalInput, type IncrementalProposal,
+  type L2Input, type L2Mode, type L2Task,
+} from './adjustL2'
 import { runAdjustIntent, type AdjustIntent, type AdjustIntentInput } from './adjustIntent'
 import {
   briefContextHash, briefHash, budgetView, buildPlanBudget, buildPlanOverview, capacityByWeekday,
@@ -697,9 +704,9 @@ function computeImpact(
 function manualOption(
   id: AdjustmentOption['id'], label: string, summary: string, tier: AdjustmentTier,
   before: WindowSnapshotItem[], after: WindowSnapshotItem[], capacity?: Map<string, number>,
-  profileAfter?: string,
+  profileAfter?: string, notes?: Map<number, string>,
 ): AdjustmentOption | null {
-  const changes = diffSnapshots(before, after)
+  const changes = diffSnapshots(before, after, notes)
   if (changes.length === 0 && !profileAfter) return null
   return {
     id, label, summary, tier,
@@ -856,6 +863,13 @@ function trimToTarget(
   return before.filter(item => !removed.has(item.id))
 }
 
+/** 弹性调整的一句话摘要:让用户一眼看到只动了几天、缩了多少 */
+function elasticSummary(result: ElasticResult): string {
+  if (result.touchedDays.length === 0) return '当前安排不用改'
+  const shrink = result.shrinkMinutes > 0 ? `,共缩短 ${result.shrinkMinutes} 分钟` : ''
+  return `只影响 ${result.touchedDays.length} 天${shrink};重要任务未缩短`
+}
+
 /** 多方案时把延迟档案口径挂到每条方案上;lower_target 自带的档案变更优先 */
 function attachProfile(options: AdjustmentOption[], profileAfter?: string): AdjustmentOption[] {
   if (!profileAfter) return options
@@ -920,7 +934,10 @@ function serializeAdjustment(row: any): PublicAdjustment {
     summary: row.summary ?? null,
     windowFrom: dateOnly(row.windowFrom),
     windowTo: dateOnly(row.windowTo),
-    changes: diffSnapshots(before, after),
+    // 优先回放选中方案的 changes:里面带着「缩短/顺延」说明,旧调整单没有 options 时退回重算
+    changes: storedOptions.find(option => option.id === row.selectedOption)?.changes
+      ?? storedOptions[0]?.changes
+      ?? diffSnapshots(before, after),
     // 只有多方案才下发 options;单方案/旧调整单保持 null,旧客户端不受影响
     options: storedOptions.length >= 2
       ? storedOptions.map(option => ({
@@ -1184,6 +1201,7 @@ export interface PlanningAi {
   parseTimetable?: (input: TimetableImage) => Promise<TimetableResult>
   adjustIntent?: (input: AdjustIntentInput) => Promise<AdjustIntent>
   adjustL2?: (input: L2Input) => Promise<L2Task[]>
+  adjustIncremental?: (input: IncrementalInput) => Promise<IncrementalProposal>
 }
 
 export function createPlanningService(
@@ -1195,6 +1213,7 @@ export function createPlanningService(
     parseTimetable: parseTimetableImage,
     adjustIntent: runAdjustIntent,
     adjustL2: runAdjustL2,
+    adjustIncremental: runIncrementalAdjust,
   },
 ) {
   const generationJobs = new GenerationJobStore()
@@ -1901,14 +1920,15 @@ export function createPlanningService(
       const today = dayStart(new Date()).toISOString().slice(0, 10)
       const allItems = await db.planItem.findMany({ where: { planId: planRow.id } })
       const unfinishedDates = [...new Set(allItems.filter(row => row.status !== 'done').map(row => dateOnly(row.planDate)))]
-      const window = adjustWindow({ planStart, examDate, today, unfinishedDates })
-      if (!window) throw new ApiError(404, 'PLAN_NOT_FOUND', '计划的调整窗口已结束')
-      const { from, to } = window
-      const inWindow = allItems.filter(row => {
+      const legacyEngine = env.planAdjustEngine === 'legacy'
+      // 意图解析沿用 30 天上下文:科目目标/里程碑可以看得更远;日程类日期在下面单独卡 14 天
+      const contextWindow = adjustWindow(
+        { planStart, examDate, today, unfinishedDates }, { horizonDays: 30, maxDays: 30 })
+      if (!contextWindow) throw new ApiError(404, 'PLAN_NOT_FOUND', '计划的调整窗口已结束')
+      const contextItems = allItems.filter(row => {
         const day = dateOnly(row.planDate)
-        return day >= from && day <= to
+        return day >= contextWindow.from && day <= contextWindow.to
       })
-      const before = toSnapshot(inWindow)
 
       // 意图解析上下文:窗口内任务摘要 + 预算余量,模型据此消歧「数学那项」这类说法
       const subjects = [...new Set([...briefBefore.examSubjects.map(subject => subject.name),
@@ -1917,8 +1937,8 @@ export function createPlanningService(
       let intent: AdjustIntent
       try {
         intent = await ai.adjustIntent({
-          message, history, today, windowTo: to, subjects, brief: briefBefore,
-          windowItems: inWindow.slice(0, 60).map(row => ({
+          message, history, today, windowTo: contextWindow.to, subjects, brief: briefBefore,
+          windowItems: contextItems.slice(0, 60).map(row => ({
             planDate: dateOnly(row.planDate), subject: String(row.subject ?? ''),
             title: String(row.title ?? ''), minutes: Number(row.minutes ?? 0), locked: row.locked === true,
           })),
@@ -1943,6 +1963,40 @@ export function createPlanningService(
         return clarify(intent.needClarify ? (intent.clarifyQuestion || intent.summary) : intent.summary)
       }
 
+      // 实际调整窗口:改目标(adjust_scope)保留 30 天;排日程默认 5 天,用户明确说范围时按他说。
+      const window = legacyEngine
+        ? contextWindow
+        : intent.kind === 'adjust_scope'
+          ? adjustWindow({ planStart, examDate, today, unfinishedDates }, { horizonDays: 30, maxDays: 30 })
+          : adjustWindow({ planStart, examDate, today, unfinishedDates }, { horizonDays: intent.horizonDays ?? DEFAULT_ADJUST_DAYS })
+      if (!window) throw new ApiError(404, 'PLAN_NOT_FOUND', '计划的调整窗口已结束')
+      // 日程类调整最多看 14 天;更远的日期让用户去计划页手动改,别静默忽略
+      if (intent.kind !== 'adjust_scope') {
+        const schedulingHard = shiftDate(today, MAX_ADJUST_DAYS - 1) < shiftDate(examDate, -1)
+          ? shiftDate(today, MAX_ADJUST_DAYS - 1) : shiftDate(examDate, -1)
+        const farDates = [
+          ...intent.days,
+          ...intent.windows.map(window => window.day),
+          ...intent.tasks.map(task => task.targetDate).filter((day): day is string => !!day),
+          ...intent.newTasks.map(task => task.date),
+        ]
+        if (farDates.some(day => day > schedulingHard)) {
+          return clarify(`日程调整最多看到 ${schedulingHard},更远的日期请在计划里手动改。`)
+        }
+      }
+      const { from, to } = window
+      // 弹性引擎允许自动后延最多 3 天,快照要覆盖到 hardTo,否则延窗后的日子会把已有任务当空气
+      const examLast = shiftDate(examDate, -1)
+      const snapshotLast = shiftDate(today, MAX_ADJUST_DAYS - 1)
+      const snapshotTo = legacyEngine || intent.kind === 'adjust_scope'
+        ? to
+        : (snapshotLast < examLast ? snapshotLast : examLast)
+      const inWindow = allItems.filter(row => {
+        const day = dateOnly(row.planDate)
+        return day >= from && day <= snapshotTo
+      })
+      const before = toSnapshot(inWindow)
+
       // 延迟写档案:change_commitment 合并固定占用,adjust_scope 调整剩余量/里程碑;
       // 确认前只改副本,容量计算用 briefAfter,保证结果与确认后的口径一致
       let briefAfter = briefBefore
@@ -1960,7 +2014,7 @@ export function createPlanningService(
 
       // 每日容量:优先按调整后的口径(新增固定占用会直接压缩净空闲)
       const capacity = new Map<string, number>()
-      for (const day of datesBetween(from, to)) capacity.set(day, dailyCapacity(briefAfter, day))
+      for (const day of datesBetween(from, snapshotTo)) capacity.set(day, dailyCapacity(briefAfter, day))
       if (intent.kind === 'unavailable') {
         for (const day of intent.days) if (capacity.has(day)) capacity.set(day, 0)
       } else if (intent.kind === 'reduce_capacity') {
@@ -1998,30 +2052,91 @@ export function createPlanningService(
           .reduce((sum, row) => sum + Number(row.minutes ?? 0), 0)
         return Math.max(0, base - used)
       }
+      // 方案引擎只处理有效窗口;延窗预读的远期项不能混进它的重排清单
+      const optionsBefore = before.filter(item => item.planDate >= from && item.planDate <= to)
       const optionsInput = {
-        before, windowFrom: from, windowTo: to, examDate, capacity, dailyCapacity: dailyCapFor,
+        before: optionsBefore, windowFrom: from, windowTo: to, examDate, capacity, dailyCapacity: dailyCapFor,
         brief: briefAfter, intentKind: intent.kind, weakSubjects,
       }
       const profileBeforeFor = (options: AdjustmentOption[]) =>
         options.some(option => option.profileAfter) ? JSON.stringify(briefBefore) : undefined
+      /**
+       * 调整单只覆盖「真正被改动的日期」:窗口外的项不进快照,确认时也不会被误删改。
+       * 多方案取所有方案影响日期的并集,保证一份 beforeJson 对得上每条方案。
+       */
+      const tightenOptions = (options: AdjustmentOption[]) => {
+        const days = new Set<string>()
+        for (const option of options) {
+          const afterById = new Map(option.after.map(item => [item.id, item]))
+          const beforeIds = new Set(before.map(item => item.id))
+          for (const item of before) {
+            const next = afterById.get(item.id)
+            if (!next) { days.add(item.planDate); continue }
+            if (next.planDate !== item.planDate || next.minutes !== item.minutes
+              || next.title !== item.title || next.subject !== item.subject) {
+              days.add(item.planDate)
+              days.add(next.planDate)
+            }
+          }
+          for (const item of option.after) {
+            if (!beforeIds.has(item.id)) days.add(item.planDate)
+          }
+        }
+        const sorted = [...days].sort()
+        const windowFrom = sorted[0] ?? today
+        const windowTo = sorted[sorted.length - 1] ?? today
+        const windowBefore = before.filter(item => item.planDate >= windowFrom && item.planDate <= windowTo)
+        const tightened = options.map(option => {
+          const after = option.after.filter(item => item.planDate >= windowFrom && item.planDate <= windowTo)
+          const notes = new Map(option.changes
+            .filter(change => change.note)
+            .map(change => [change.id, change.note!] as const))
+          const changes = diffSnapshots(windowBefore, after, notes)
+          return {
+            ...option,
+            after,
+            changes,
+            impact: computeImpact(windowBefore, after, changes, capacity),
+          }
+        })
+        return { windowFrom, windowTo, before: windowBefore, options: tightened }
+      }
       const finishSingle = async (option: AdjustmentOption, reply: string) => {
+        const tight = tightenOptions([option])
         const row = await saveAdjustmentDraft(db, {
-          userGuid, planRow, reason: intent.note || message, summary: intent.summary || option.summary,
-          windowFrom: from, windowTo: to, before, options: [option], briefBefore,
-          profileBefore: profileBeforeFor([option]),
+          userGuid, planRow, reason: intent.note || message, summary: intent.summary || tight.options[0].summary,
+          windowFrom: tight.windowFrom, windowTo: tight.windowTo, before: tight.before,
+          options: tight.options, briefBefore,
+          profileBefore: profileBeforeFor(tight.options),
           profileAfter: option.profileAfter,
         })
         return { adjustment: serializeAdjustment(row), reply, plan: null }
       }
       const finishMulti = async (options: AdjustmentOption[], reply: string) => {
+        const tight = tightenOptions(options)
         const row = await saveAdjustmentDraft(db, {
           userGuid, planRow, reason: intent.note || message,
           summary: intent.summary || `${options.length} 种处理方式`,
-          windowFrom: from, windowTo: to, before, options, briefBefore,
-          profileBefore: profileBeforeFor(options),
+          windowFrom: tight.windowFrom, windowTo: tight.windowTo, before: tight.before,
+          options: tight.options, briefBefore,
+          profileBefore: profileBeforeFor(tight.options),
           profileAfter: options[0]?.profileAfter,
         })
         return { adjustment: serializeAdjustment(row), reply, plan: null }
+      }
+      /** 目标日超容量:弹性引擎按重要性缩当天任务;旧引擎保留按比例缩 */
+      const shrinkOverloadedDays = (items: WindowSnapshotItem[], days: string[], excludeIds: Set<number> = new Set()): WindowSnapshotItem[] | null => {
+        if (legacyEngine) return compressDaysToCapacity(items, capacity, days)
+        const milestoneMap = new Map(milestones.map(item => [item.subject, item.date]))
+        const tiers = rankImportance(items, {
+          hints: intent.importance ?? [], weakSubjects, milestones: milestoneMap, windowTo: to,
+        })
+        let current: WindowSnapshotItem[] | null = items
+        for (const day of new Set(days)) {
+          current = shrinkDayByTier(current, day, capacity.get(day) ?? 0, tiers, excludeIds)
+          if (!current) return null
+        }
+        return current
       }
       const noOptions = (overload: Array<{ date: string; load: number; capacity: number }>) => {
         if (overload.length > 0) {
@@ -2085,7 +2200,7 @@ export function createPlanningService(
           return finishSingle(option, '已按你说的挪好,确认后生效。')
         }
         // 目标日放不下:只压缩目标日上的可动任务,不替用户把任务挪去别的日期
-        const compressed = compressDaysToCapacity(after, capacity, overload.map(day => day.date))
+        const compressed = shrinkOverloadedDays(after, overload.map(day => day.date))
         if (compressed) {
           const option = manualOption('compress', '压缩目标日任务',
             '目标日超出可用时间,把当天任务压缩到能排下的程度', 'L2',
@@ -2125,14 +2240,16 @@ export function createPlanningService(
         }
         // 目标日放不下:先压缩当天既有任务,再把新增任务顺延到最近放得下的日期
         const options: AdjustmentOption[] = []
-        const compressed = compressDaysToCapacity(after, capacity, overload.map(day => day.date))
+        const compressed = shrinkOverloadedDays(after, overload.map(day => day.date),
+          new Set(additions.map(addition => addition.id)))
         if (compressed) {
           const option = manualOption('compress', '压缩当天任务',
             `把 ${overload.map(day => day.date).join('、')} 的任务压缩后容纳新增`, 'L2',
             before, compressed, capacity, deferredProfileAfter)
           if (option) options.push(option)
         }
-        const shifted = shiftAdditionsToFit(before, additions, capacity, [...capacity.keys()])
+        // 新增任务只在本轮有效窗口内顺延,不能因为预读快照里有 14 天就悄悄挪到第 9 天
+        const shifted = shiftAdditionsToFit(before, additions, capacity, datesBetween(today, to))
         if (shifted) {
           const option = manualOption('spill', '顺延新增任务',
             '把新增任务放到最近放得下的日期', 'L1', before, shifted, capacity, deferredProfileAfter)
@@ -2188,9 +2305,83 @@ export function createPlanningService(
         return finishSingle(option, '已按新的目标重新算过,确认后生效。')
       }
 
-      // 落后重排:用户明确要把落后/未完成任务整体重新排进后面的空档。
+      // 弹性调整:只动被事件波及的任务;重要性由本次话术 + 弱科/里程碑推断。
+      // 未受影响的任务原地不动,所以不会再出现「整月重排」。
+      if (!legacyEngine && ['unavailable', 'reduce_capacity', 'change_commitment', 'reschedule'].includes(intent.kind)) {
+        const milestoneMap = new Map(milestones.map(item => [item.subject, item.date]))
+        const tiers = rankImportance(before, {
+          hints: intent.importance ?? [], weakSubjects, milestones: milestoneMap, windowTo: to,
+        })
+        const demands = buildElasticDemands({ intent, items: before, capacity, tiers, today, windowTo: to })
+        const hardTo = shiftDate(today, MAX_ADJUST_DAYS - 1) < shiftDate(examDate, -1)
+          ? shiftDate(today, MAX_ADJUST_DAYS - 1) : shiftDate(examDate, -1)
+        const result = planElasticAdjustment({
+          before, tiers, demands,
+          capacity: day => capacity.get(day) ?? dailyCapacity(briefAfter, day),
+          today, windowTo: to, hardTo,
+          autoExtend: !intent.horizonDays,
+          milestones: milestoneMap,
+        })
+        console.info('[planning] 行程调整', JSON.stringify({
+          kind: intent.kind, windowDays: datesBetween(from, to).length,
+          touchedDays: result.touchedDays.length, shrinkMinutes: result.shrinkMinutes,
+          overflow: result.overflow.length, engine: 'elastic',
+        }))
+        const residualOverload = overloadedDays(result.after, capacity, from, result.extendedTo)
+        if (result.overflow.length === 0 && residualOverload.length === 0) {
+          // 过去日期的「清理」不算影响面;L1 只看今天及以后真正被改动的天数
+          const futureTouched = result.touchedDays.filter(day => day >= today)
+          const option = manualOption('manual', '按重要性调整', elasticSummary(result),
+            result.shrinkMinutes > 0 || futureTouched.length > 2 ? 'L2' : 'L1',
+            before, result.after, capacity, deferredProfileAfter, result.notes)
+          if (option) {
+            return finishSingle(option, result.shrinkMinutes > 0
+              ? '已按重要性腾好时间,确认后生效。'
+              : '已按你说的调整,确认后生效。')
+          }
+          if (!deferredProfileAfter) return clarify('这几天的安排本来就排得下,计划不用改。')
+        }
+        // 确定性引擎溢出:让模型在同一个窗口里出「增量」,服务端硬校验后才采纳
+        if (ai.adjustIncremental) {
+          const days = datesBetween(today, result.extendedTo)
+          const incrementalCapacity = new Map(days.map(day => [day, capacity.get(day) ?? dailyCapacity(briefAfter, day)]))
+          const incrementalInput = {
+            before, tiers, days, capacity: incrementalCapacity, milestones: milestoneMap, message,
+          }
+          try {
+            const proposal = await ai.adjustIncremental(incrementalInput)
+            const checked = validateIncrementalProposal(proposal, incrementalInput)
+            if (checked.ok && checked.after) {
+              const modelOption = manualOption('manual', '局部重排',
+                '窗口内放不下,已生成一份局部调整', 'L2', before, checked.after, capacity, deferredProfileAfter)
+              if (modelOption) {
+                console.info('[planning] 行程调整', JSON.stringify({
+                  kind: intent.kind, touchedDays: result.touchedDays.length, engine: 'incremental',
+                }))
+                return finishSingle(modelOption, '已生成一份局部调整,确认后生效。')
+              }
+            } else {
+              console.warn(`[planning] 模型增量被拒:${checked.reason}`)
+            }
+          } catch (error) {
+            const reason = error instanceof Error ? error.message : String(error)
+            console.warn(`[planning] 模型增量失败,回退方案卡:${reason}`)
+          }
+        }
+        // 模型也不可用:交给方案引擎(压缩/顺延/删减),不悄悄扩大重排范围
+        const fallback = attachProfile(buildAdjustmentOptions(optionsInput), deferredProfileAfter)
+        if (fallback.length === 0) {
+          noOptions(overloadedDays(before, capacity, from, to))
+          return clarify('没有找到可行的调整方式')
+        }
+        return finishMulti(fallback, fallback.length >= 2
+          ? `有 ${fallback.length} 种处理方式,影响不同,选一个再确认。`
+          : '窗口内放不下,按方案调整,确认后生效。')
+      }
+
+      // 落后重排(旧引擎):用户明确要把落后/未完成任务整体重新排进后面的空档。
       // 与日期类不同——放置下限钳到今天(落后项必须前移),且不设 L1 影响天数上限(用户就是要整体重排)。
-      if (intent.kind === 'reschedule') {
+      if (legacyEngine && intent.kind === 'reschedule') {
         const l1 = planL1Shuffle({ pending: open, capacity: free, windowFrom: today, windowTo: to, milestones })
         if (l1.overflow.length === 0) {
           const after = applyMoves(before, l1.moves)

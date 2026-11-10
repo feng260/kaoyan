@@ -790,7 +790,9 @@ data class AdjustmentChangeDto(
     val subject: String = "",
     val title: String = "",
     val from: AdjustmentFieldDto? = null,
-    val to: AdjustmentFieldDto? = null
+    val to: AdjustmentFieldDto? = null,
+    /** 服务端给出的变动说明(如「缩短 60→45 分钟（可让）」);旧服务端为空 */
+    val note: String? = null
 )
 
 /** 待确认/已生效的调整单;changes 由服务端从前后快照重算 */

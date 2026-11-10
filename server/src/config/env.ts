@@ -44,6 +44,8 @@ export const env = {
     .map(s => s.trim())
     .filter(Boolean),
   adminToken: process.env.ADMIN_TOKEN ?? '',
+  // 行程调整引擎:elastic=近期弹性调整(默认);legacy=旧版整窗重排(仅回滚用)
+  planAdjustEngine: process.env.PLAN_ADJUST_ENGINE === 'legacy' ? 'legacy' as const : 'elastic' as const,
   // AI 计划生成用的大模型接口(OpenAI 兼容协议)。
   // 兼容 DeepSeek / 豆包(火山方舟) / 智谱 / 硅基流动 / 通义 等;
   // 未配置 apiKey 时计划生成接口返回 AI_NOT_CONFIGURED。

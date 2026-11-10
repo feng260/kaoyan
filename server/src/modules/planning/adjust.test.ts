@@ -96,6 +96,14 @@ test('diffSnapshots:moved/added/removed/updated 各归各位且排序稳定', ()
   assert.equal(removed.id, 3)
 })
 
+test('diffSnapshots:传入 notes 时每条变动带说明,未传时保持原样', () => {
+  const before = [snap({ id: 1, planDate: '2026-11-10', minutes: 60 })]
+  const after = [{ ...before[0], planDate: '2026-11-11', minutes: 45 }]
+  const changes = diffSnapshots(before, after, new Map([[1, '缩短 60→45 分钟（可让）']]))
+  assert.equal(changes[0].note, '缩短 60→45 分钟（可让）')
+  assert.equal(diffSnapshots(before, after)[0].note, undefined)
+})
+
 test('windowFingerprint:状态切换不改变指纹,内容变了指纹必变,顺序无关', () => {
   const base = [snap({ id: 1, planDate: '2026-09-29', minutes: 60 })]
   // 正常打卡只改 status,不会让调整单失效
@@ -123,31 +131,38 @@ test('windowFingerprint:subject/title/locked/startTime/slot 与口径哈希都�
   assert.notEqual(windowFingerprint(base, 'brief-a'), windowFingerprint(base, 'brief-b'))
 })
 
-test('adjustWindow:未来 30 天封顶,并把近 30 天落后任务纳入起点', () => {
-  const future = adjustWindow({ planStart: '2026-09-01', examDate: '2027-06-01', today: '2026-11-03', unfinishedDates: [] })
-  assert.deepEqual(future, { from: '2026-11-03', to: '2026-12-02' })
+test('adjustWindow:默认 5 天;显式 horizonDays 放宽;scope 可放宽到 30 天', () => {
+  const base = { planStart: '2026-09-01', examDate: '2027-06-01', today: '2026-11-03', unfinishedDates: [] }
+  assert.deepEqual(adjustWindow(base), { from: '2026-11-03', to: '2026-11-07' })
+  assert.deepEqual(adjustWindow(base, { horizonDays: 10 }), { from: '2026-11-03', to: '2026-11-12' })
+  // 不指定 maxDays 时,再大的 horizon 也夹到 14 天
+  assert.deepEqual(adjustWindow(base, { horizonDays: 30 }), { from: '2026-11-03', to: '2026-11-16' })
+  assert.deepEqual(adjustWindow(base, { horizonDays: 1 }), { from: '2026-11-03', to: '2026-11-07' })
+  // adjust_scope 保留旧的 30 天窗口
+  assert.deepEqual(adjustWindow(base, { horizonDays: 30, maxDays: 30 }), { from: '2026-11-03', to: '2026-12-02' })
 
   const examBound = adjustWindow({ planStart: '2026-09-01', examDate: '2026-11-20', today: '2026-11-03', unfinishedDates: [] })
-  assert.deepEqual(examBound, { from: '2026-11-03', to: '2026-11-19' })
+  assert.deepEqual(examBound, { from: '2026-11-03', to: '2026-11-07' })
 
+  // 落后任务仍把起点拉回去;未来仍只看近几天
   const overdue = adjustWindow({
     planStart: '2026-09-01', examDate: '2027-06-01', today: '2026-11-03',
     unfinishedDates: ['2026-10-04', '2026-10-20'],
   })
-  assert.deepEqual(overdue, { from: '2026-10-04', to: '2026-12-02' })
+  assert.deepEqual(overdue, { from: '2026-10-04', to: '2026-11-07' })
 
   const planStartsLater = adjustWindow({
     planStart: '2026-10-31', examDate: '2027-06-01', today: '2026-11-03',
     unfinishedDates: ['2026-10-30'],
   })
-  assert.deepEqual(planStartsLater, { from: '2026-10-31', to: '2026-12-02' })
+  assert.deepEqual(planStartsLater, { from: '2026-10-31', to: '2026-11-07' })
 
   // 落后超过 30 天的不再纳入,避免把整份历史计划拖进调整窗口
   const tooOld = adjustWindow({
     planStart: '2026-09-01', examDate: '2027-06-01', today: '2026-11-03',
     unfinishedDates: ['2026-09-20'],
   })
-  assert.deepEqual(tooOld, { from: '2026-11-03', to: '2026-12-02' })
+  assert.deepEqual(tooOld, { from: '2026-11-03', to: '2026-11-07' })
 
   assert.equal(adjustWindow({ planStart: '2026-09-01', examDate: '2026-11-03', today: '2026-11-03', unfinishedDates: [] }), null)
 })

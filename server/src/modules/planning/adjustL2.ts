@@ -1,6 +1,7 @@
 import { chatComplete, extractJson, LlmError } from '../../shared/llm/client'
 import { AiUnavailable } from './aiGenerator'
 import { shiftDate, type AdjustableItem, type WindowSnapshotItem } from './adjust'
+import type { Tier } from './elasticAdjust'
 
 /**
  * L2 重排:模型只给「第 N 天、哪科、什么任务、多少分钟」的相对序列(不输出绝对日期),
@@ -252,4 +253,194 @@ export function validateL2(
     }
   }
   return { ok: true }
+}
+
+// ---------- 模型增量兜底:确定性引擎溢出时才用,只允许改「被事件波及」的近期任务 ----------
+
+export interface IncrementalInput {
+  before: WindowSnapshotItem[]
+  tiers: Map<number, Tier>
+  /** 窗口内每天(今天起),按顺序;模型只输出 dayOffset */
+  days: string[]
+  capacity: Map<string, number>
+  milestones: Map<string, string>
+  message: string
+}
+
+export interface IncrementalProposal {
+  changes: Array<{ id: number; dayOffset?: number; minutes?: number }>
+  drops: number[]
+  notes?: string
+}
+
+const round5 = (n: number) => Math.round(n / 5) * 5
+const shrinkFloor = (tier: Tier, base: number) =>
+  tier === 'elastic' ? Math.max(15, round5(base * 0.5))
+    : tier === 'normal' ? Math.max(15, round5(base * 0.75))
+      : base
+
+/**
+ * 硬校验模型增量:固定/保护项不准改内容、drop 只能是可让项、不越窗、不超容量、不破里程碑、
+ * 不越过分级缩短下限。任何一条不满足都丢弃,回退到确定性方案卡。
+ */
+export function validateIncrementalProposal(
+  proposal: IncrementalProposal,
+  input: IncrementalInput,
+): { ok: boolean; reason?: string; after?: WindowSnapshotItem[] } {
+  const pending = input.before.filter(item => item.status !== 'done')
+  const byId = new Map(pending.map(item => [item.id, item]))
+  const changed = new Map<number, { day?: string; minutes?: number }>()
+  const changes = Array.isArray(proposal?.changes) ? proposal.changes : []
+  for (const change of changes) {
+    const id = Math.round(Number(change?.id))
+    const item = byId.get(id)
+    if (!item) return { ok: false, reason: `任务 ${id} 不在窗口内` }
+    const tier = input.tiers.get(id) ?? 'normal'
+    if (tier === 'fixed') return { ok: false, reason: `固定任务 ${id} 不得改动` }
+    const hasDay = change.dayOffset !== undefined
+    const hasMinutes = change.minutes !== undefined
+    if (!hasDay && !hasMinutes) return { ok: false, reason: `任务 ${id} 没有任何改动` }
+    let day: string | undefined
+    if (hasDay) {
+      const offset = Math.round(Number(change.dayOffset))
+      if (!Number.isInteger(offset) || offset < 0 || offset >= input.days.length) {
+        return { ok: false, reason: `任务 ${id} 的目标日期越出窗口` }
+      }
+      day = input.days[offset]
+    }
+    let minutes: number | undefined
+    if (hasMinutes) {
+      minutes = Math.round(Number(change.minutes))
+      if (!Number.isFinite(minutes) || minutes < 15 || minutes > item.minutes) {
+        return { ok: false, reason: `任务 ${id} 的分钟数不合法` }
+      }
+      if (tier === 'protect' && minutes !== item.minutes) {
+        return { ok: false, reason: `保护任务 ${id} 不得缩短` }
+      }
+      if (minutes < shrinkFloor(tier, item.minutes)) {
+        return { ok: false, reason: `任务 ${id} 缩短超过该级别的下限` }
+      }
+    }
+    changed.set(id, { day, minutes })
+  }
+  const drops = Array.isArray(proposal?.drops) ? proposal.drops.map(Number) : []
+  for (const id of drops) {
+    const item = byId.get(id)
+    if (!item) return { ok: false, reason: `任务 ${id} 不在窗口内` }
+    if ((input.tiers.get(id) ?? 'normal') !== 'elastic') {
+      return { ok: false, reason: `只有可让任务能删除:${id}` }
+    }
+    if (changed.has(id)) return { ok: false, reason: `任务 ${id} 同时被改和删` }
+  }
+
+  const dropSet = new Set(drops)
+  const after: WindowSnapshotItem[] = []
+  for (const item of input.before) {
+    if (dropSet.has(item.id)) continue
+    const change = changed.get(item.id)
+    if (!change) {
+      after.push(item)
+      continue
+    }
+    after.push({
+      ...item,
+      planDate: change.day ?? item.planDate,
+      minutes: change.minutes ?? item.minutes,
+    })
+  }
+  const loads = new Map<string, number>()
+  for (const item of after) loads.set(item.planDate, (loads.get(item.planDate) ?? 0) + item.minutes)
+  for (const day of input.days) {
+    if ((loads.get(day) ?? 0) > (input.capacity.get(day) ?? 0)) {
+      return { ok: false, reason: `${day} 超出当天可用容量` }
+    }
+  }
+  for (const item of input.before) {
+    const milestone = input.milestones.get(item.subject)
+    if (!milestone || item.planDate > milestone) continue
+    const next = after.find(candidate => candidate.id === item.id)
+    if (next && next.planDate > milestone) {
+      return { ok: false, reason: `任务 ${item.id} 被推到里程碑之后` }
+    }
+  }
+  for (const item of input.before) {
+    if ((input.tiers.get(item.id) ?? 'normal') !== 'protect') continue
+    const next = after.find(candidate => candidate.id === item.id)
+    if (next && next.minutes !== item.minutes) {
+      return { ok: false, reason: `保护任务 ${item.id} 被缩短` }
+    }
+  }
+  after.sort((a, b) => a.planDate.localeCompare(b.planDate) || a.id - b.id)
+  return { ok: true, after }
+}
+
+const tierLabel: Record<Tier, string> = { fixed: '固定', protect: '保护', normal: '普通', elastic: '可让' }
+
+export async function runIncrementalAdjust(input: IncrementalInput): Promise<IncrementalProposal> {
+  try {
+    const raw = await chatComplete({
+      feature: 'adjust_plan',
+      messages: [
+        {
+          role: 'system',
+          content: [
+            '你是备考计划的局部调整引擎。只能在给定的近期窗口内做最小改动,不要重排整个计划。',
+            '只输出 JSON:{"changes":[{"id":数字,"dayOffset"?:数字,"minutes"?:数字}],"drops":[数字],"notes":"一句话"}。',
+            '规则:',
+            '- id 必须来自给定任务清单;dayOffset 从 0 开始(0=窗口第一天);不要输出绝对日期。',
+            '- 固定任务与保护任务不得改内容;保护任务允许改日期,但 minutes 必须保持原值。',
+            '- 只有「可让」任务可以放进 drops;普通/保护/固定任务不得删除。',
+            '- 可让任务最多缩到原时长 50%,普通任务最多缩到 75%,单条不低于 15 分钟。',
+            '- 每天总分钟不得超过当天可用分钟;里程碑之前的任务不得推到里程碑之后。',
+            '- 未出现在 changes/drops 里的任务保持原日期与原分钟,不要输出它们。',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: [
+            `用户诉求:${input.message}`,
+            '窗口与容量:',
+            ...input.days.map((day, index) => `- dayOffset ${index} = ${day},可用 ${input.capacity.get(day) ?? 0} 分钟`),
+            '窗口内任务:',
+            ...input.before
+              .filter(item => item.status !== 'done')
+              // 只列模型能落到的日期;更远的任务它改不了,别放进 prompt 诱导它输出非法 dayOffset
+              .filter(item => {
+                const last = input.days[input.days.length - 1]
+                return !last || item.planDate <= last
+              })
+              .map(item => `- id=${item.id} | ${item.planDate} | ${item.subject} | ${item.title} | ${item.minutes} 分钟 | ${tierLabel[input.tiers.get(item.id) ?? 'normal']}`),
+            ...(input.milestones.size > 0
+              ? ['里程碑:', ...[...input.milestones].map(([subject, date]) => `- ${subject} @ ${date}`)]
+              : []),
+          ].join('\n'),
+        },
+      ],
+      json: true,
+      temperature: 0.3,
+      maxTokens: 2400,
+      timeoutMs: 45_000,
+    })
+    const parsed = extractJson<{ changes?: unknown; drops?: unknown; notes?: unknown }>(raw)
+    const changes = Array.isArray(parsed?.changes)
+      ? parsed.changes
+          .map((entry: any) => ({
+            id: Math.round(Number(entry?.id)),
+            ...(entry?.dayOffset !== undefined ? { dayOffset: Math.round(Number(entry.dayOffset)) } : {}),
+            ...(entry?.minutes !== undefined ? { minutes: Math.round(Number(entry.minutes)) } : {}),
+          }))
+          .filter(entry => Number.isFinite(entry.id))
+      : []
+    const drops = Array.isArray(parsed?.drops)
+      ? parsed.drops.map((id: unknown) => Math.round(Number(id))).filter((id): id is number => Number.isFinite(id))
+      : []
+    return {
+      changes,
+      drops,
+      ...(typeof parsed?.notes === 'string' ? { notes: parsed.notes.slice(0, 200) } : {}),
+    }
+  } catch (error) {
+    if (error instanceof LlmError) throw new AiUnavailable(error.message)
+    throw error
+  }
 }

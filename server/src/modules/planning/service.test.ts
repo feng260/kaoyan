@@ -1381,21 +1381,26 @@ test('adjust A:明天没空 → 当天任务顺延次日;确认前零副作用,�
   assert.equal(plan.items.find(row => row.id === 1001)!.planDate, dayIso(2))
 })
 
-test('adjust B:窗口内塞不下时给出可执行的删减方案,草稿不落库', async () => {
+test('adjust B:240 分钟普通任务放不进任何一天 → 缩到下限后顺延,不再整条删掉', async () => {
   const fake = createFakeDb()
   await seedActivePlan(fake, USER, [{ day: 1, minutes: 240 }], { stageTo: 1 })
   const service = serviceWithAdjust(fake, { kind: 'unavailable', days: [dayIso(0), dayIso(1)], summary: '今明都没空' })
 
-  // 240 分钟单条任务在 180 分钟的日容量里压缩/顺延都放不下,删减是唯一可行方案
   const result = await service.adjust(USER, { message: '今明两天都没空' })
   assert.ok(result.adjustment)
   assert.equal(result.adjustment.tier, 'L2')
   assert.equal(result.adjustment.options, null)
-  assert.deepEqual(result.adjustment.changes.map(change => change.kind), ['removed'])
+  // 普通任务最多缩 25%:240 → 180,顺延到第一个有空的日子
+  assert.deepEqual(result.adjustment.changes.map(change => change.kind), ['moved'])
+  assert.equal(result.adjustment.changes[0].to!.minutes, 180)
   assert.equal(fake.state.adjustments.length, 1)
   // 草稿阶段计划项原封不动
   assert.equal(fake.state.items.length, 1)
   assert.equal(dayOnlyRow(fake.state.items[0].planDate), dayIso(1))
+
+  const plan = await service.confirmAdjustment(USER, result.adjustment.id)
+  assert.equal(plan.items[0].minutes, 180)
+  assert.equal(plan.items[0].planDate, dayIso(2))
 })
 
 test('adjust reschedule:落后任务从今天起重新排进空档;确认前零副作用,确认后挪到今天', async () => {
@@ -1504,9 +1509,136 @@ test('adjust G:调整生效后打了新卡 → 拒绝撤销', async () => {
   )
 })
 
+test('adjust 弹性:只影响被波及的日期,保护项不缩,远处任务不动', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [
+    { day: 1, minutes: 60, subject: '数学', title: '真题' },
+    { day: 1, minutes: 60, subject: '英语', title: '整理' },
+    { day: 4, minutes: 60, subject: '数学', title: '远期' },
+  ], { brief: qualityBrief() })
+  const service = serviceWithAdjust(fake, {
+    kind: 'unavailable', days: [dayIso(1)], summary: '明天没空',
+    importance: [
+      { subject: '数学', level: 'protect' },
+      { subject: '英语', level: 'elastic' },
+    ],
+  })
+
+  const result = await service.adjust(USER, { message: '明天有事,数学很重要,英语可以少点' })
+  assert.ok(result.adjustment)
+  const touched = new Set(result.adjustment.changes.flatMap(change =>
+    [change.from?.planDate, change.to?.planDate].filter((day): day is string => !!day)))
+  assert.ok(touched.size <= 3)
+  assert.ok(!touched.has(dayIso(4)))
+  const math = result.adjustment.changes.find(change => change.subject === '数学')
+  assert.ok(math)
+  assert.equal(math.from!.minutes, math.to!.minutes)
+  assert.match(math.note ?? '', /顺延/)
+  assert.equal(fake.state.items.find(row => row.id === 1002)!.minutes, 60)
+  // 调整单窗口收紧到实际改动的两天,远期任务不进出快照
+  assert.equal(result.adjustment.windowFrom, dayIso(1))
+  assert.equal(result.adjustment.windowTo, dayIso(2))
+
+  const plan = await service.confirmAdjustment(USER, result.adjustment.id)
+  assert.equal(fake.state.plans[0].version, 1)
+  assert.equal(plan.items.find(item => item.id === 1002)!.planDate, dayIso(4))
+})
+
+test('adjust 弹性:用户明确说未来 8 天 → 窗口覆盖到第 8 天', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [{ day: 6, minutes: 60, title: '第8天任务' }])
+  const service = serviceWithAdjust(fake, {
+    kind: 'unavailable', days: [dayIso(6)], horizonDays: 8, summary: '第 8 天没空',
+  })
+
+  const result = await service.adjust(USER, { message: '未来一周里第 8 天没空' })
+  assert.ok(result.adjustment)
+  const change = result.adjustment.changes.find(item => item.id === 1000)!
+  assert.equal(change.to!.planDate, dayIso(7))
+})
+
+test('adjust 弹性:自动延窗时能看到延窗后已有的任务,不会重复占容量', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [
+    { day: 1, minutes: 60, title: '待顺延' },
+    { day: 5, minutes: 180, title: '延窗日的既有任务' },
+  ])
+  const service = serviceWithAdjust(fake, {
+    kind: 'unavailable', days: [dayIso(0), dayIso(1), dayIso(2), dayIso(3), dayIso(4)],
+    summary: '前五天都没空',
+  })
+
+  const result = await service.adjust(USER, { message: '前五天都没空' })
+  assert.ok(result.adjustment)
+  // 第 6 天(索引 5)已被 180 分钟占满 → 只能落到第 7 天,不能把既有任务当空气
+  const change = result.adjustment.changes.find(item => item.id === 1000)!
+  assert.equal(change.to!.planDate, dayIso(6))
+  assert.equal(dayOnlyRow(fake.state.items.find(row => row.id === 1001)!.planDate), dayIso(5))
+
+  const plan = await service.confirmAdjustment(USER, result.adjustment.id)
+  assert.equal(plan.items.find(item => item.id === 1000)!.planDate, dayIso(6))
+  assert.equal(plan.items.find(item => item.id === 1001)!.planDate, dayIso(5))
+  assert.equal(plan.items.find(item => item.id === 1001)!.minutes, 180)
+})
+
+test('adjust 弹性:重排只拉落后任务,未来本来排得下的任务不动', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [
+    { day: -1, minutes: 60, title: '落后' },
+    { day: 3, minutes: 60, title: '未来可行' },
+  ], { stageFrom: -5 })
+  const service = serviceWithAdjust(fake, { kind: 'reschedule', summary: '把落后的排一下' })
+
+  const result = await service.adjust(USER, { message: '有任务落后了' })
+  assert.ok(result.adjustment)
+  assert.deepEqual(result.adjustment.changes.map(change => change.title), ['落后'])
+})
+
+test('adjust 弹性:确定性引擎溢出 → 模型增量兜底,硬校验通过后单方案待确认', async () => {
+  const fake = createFakeDb()
+  await seedActivePlan(fake, USER, [
+    { day: 0, minutes: 120, subject: '数学', title: '任务A' },
+    { day: 1, minutes: 60, subject: '英语', title: '任务B' },
+    { day: 2, minutes: 120, subject: '政治', title: '任务C' },
+    { day: 3, minutes: 120, subject: '政治', title: '任务D' },
+    { day: 4, minutes: 120, subject: '政治', title: '任务E' },
+  ])
+  const service = createPlanningService(fake.db, {
+    configured: () => true,
+    generate: async input => ({ title: `${input.targetType}备考计划`, plan: generateRulePlan(input) }),
+    adjustIntent: async () => ({
+      kind: 'reduce_capacity',
+      days: [], windows: [{ day: dayIso(0), minutes: 0 }, { day: dayIso(1), minutes: 120 }],
+      commitments: [], tasks: [], newTasks: [], scope: [], clarifyOptions: [],
+      importance: [
+        { subject: '英语', level: 'protect' },
+        { subject: '政治', level: 'protect' },
+      ],
+      horizonDays: 5,
+      note: '今天没空,明天只剩两小时', summary: '今天没空', needClarify: false, clarifyQuestion: '',
+    }),
+    adjustIncremental: async () => ({
+      changes: [{ id: 1000, dayOffset: 1 }, { id: 1001, dayOffset: 2 }],
+      drops: [],
+    }),
+  })
+
+  const result = await service.adjust(USER, { message: '今天没空,明天只剩两小时' })
+  assert.ok(result.adjustment)
+  assert.equal(result.adjustment.options, null)
+  const moved = new Map(result.adjustment.changes.map(change => [change.id, change]))
+  assert.equal(moved.get(1000)!.to!.planDate, dayIso(1))
+  assert.equal(moved.get(1001)!.to!.planDate, dayIso(2))
+
+  const plan = await service.confirmAdjustment(USER, result.adjustment.id)
+  assert.equal(plan.items.find(item => item.id === 1000)!.planDate, dayIso(1))
+  assert.equal(plan.items.find(item => item.id === 1001)!.planDate, dayIso(2))
+  assert.equal(plan.items.find(item => item.id === 1001)!.minutes, 60)
+})
+
 // ---------- 行程调整(D3):档位判定与确定性方案 ----------
 
-test('adjust L2-1:影响天数超阈值 → 升级 L2 并给多方案,不调用 L2 模型', async () => {
+test('adjust L2-1:多任务从没空日顺延到窗口末尾;单方案不再强塞多方案,不调用 L2 模型', async () => {
   const fake = createFakeDb()
   await seedActivePlan(fake, USER, [
     { day: 0, minutes: 60 }, { day: 1, minutes: 60 }, { day: 2, minutes: 60 }, { day: 3, minutes: 60 },
@@ -1526,9 +1658,11 @@ test('adjust L2-1:影响天数超阈值 → 升级 L2 并给多方案,不调用 
   const result = await service.adjust(USER, { message: '前三天都有事' })
   assert.ok(result.adjustment)
   assert.equal(result.adjustment.tier, 'L2')
-  const options = result.adjustment.options ?? []
-  assert.ok(options.length >= 2)
-  assert.equal(result.adjustment.selectedOption, 'compress')
+  // 弹性引擎已找到唯一可行排法,不再为了「多方案」硬造 compress/spill/drop
+  assert.equal(result.adjustment.options, null)
+  // 第 4 天的任务本来就不受事件影响,不进变动清单
+  assert.equal(result.adjustment.changes.length, 3)
+  assert.ok(result.adjustment.changes.every(change => change.kind === 'moved'))
   assert.equal(l2Calls, 0)
 
   const plan = await service.confirmAdjustment(USER, result.adjustment.id)
@@ -1737,7 +1871,7 @@ test('add_task:放得下 → 单方案新增,确认后落库并排时段', async
   assert.ok(added.startTime)
 })
 
-test('add_task:目标日放不下 → 压缩/顺延两条方案,切换顺延后确认落到最近有空日', async () => {
+test('add_task:目标日放不下 → 新增项顺延到最近有空日,不硬缩当天既有任务', async () => {
   const fake = createFakeDb()
   await seedActivePlan(fake, USER, [{ day: 1, minutes: 120, title: '阅读真题' }])
   const service = serviceWithAdjust(fake, {
@@ -1747,17 +1881,15 @@ test('add_task:目标日放不下 → 压缩/顺延两条方案,切换顺延后�
 
   const result = await service.adjust(USER, { message: '明天加 120 分钟错题' })
   assert.ok(result.adjustment)
-  const options = result.adjustment.options ?? []
-  assert.deepEqual(options.map(option => option.id), ['compress', 'spill'])
-
-  const selected = await service.selectAdjustmentOption(USER, result.adjustment.id, 'spill')
-  assert.equal(selected.selectedOption, 'spill')
+  // 当天只剩 60 分钟:普通任务最多缩 25% 也腾不出 120,顺延新增项是唯一合理方案
+  assert.equal(result.adjustment.options, null)
 
   const plan = await service.confirmAdjustment(USER, result.adjustment.id)
   const added = plan.items.find(item => item.title === '补做错题')!
   assert.equal(added.planDate, dayIso(2))
   assert.equal(added.minutes, 120)
   assert.equal(plan.items.find(item => item.id === 1000)!.planDate, dayIso(1))
+  assert.equal(plan.items.find(item => item.id === 1000)!.minutes, 120)
 })
 
 test('drop_task:直接删减单方案,不调用 L2', async () => {

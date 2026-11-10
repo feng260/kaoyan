@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildLedger, compressPendingToFit, expandL2, normalizeL2Tasks, validateL2, type L2Task } from './adjustL2'
+import { buildLedger, compressPendingToFit, expandL2, normalizeL2Tasks, validateIncrementalProposal, validateL2, type L2Task } from './adjustL2'
 import type { AdjustableItem, WindowSnapshotItem } from './adjust'
 
 const DAYS = ['2026-09-29', '2026-09-30', '2026-10-01']
@@ -156,4 +156,49 @@ test('validateL2:里程碑不推迟;当日或之前允许', () => {
   assert.equal(validateL2(late, ledger).ok, false)
   const onTime = [snapOf(1, '2026-09-29', 120), snapOf(2, '2026-09-29', 60, '英语')]
   assert.equal(validateL2(onTime, ledger).ok, true)
+})
+
+const snap = (id: number, day: string, minutes: number, patch: Partial<WindowSnapshotItem> = {}): WindowSnapshotItem => ({
+  id, subject: '数学', title: `任务${id}`, planDate: day, minutes, status: 'pending', ...patch,
+})
+const incrementalInput = () => ({
+  before: [snap(1, DAYS[0], 60), snap(2, DAYS[0], 60), snap(3, DAYS[0], 60, { locked: true })],
+  tiers: new Map<number, 'fixed' | 'protect' | 'normal' | 'elastic'>([[1, 'protect'], [2, 'elastic'], [3, 'fixed']]),
+  days: DAYS,
+  capacity: new Map([[DAYS[0], 120], [DAYS[1], 120], [DAYS[2], 120]]),
+  milestones: new Map<string, string>(),
+  message: '明天没空',
+})
+
+test('增量校验:固定/保护项不能改,drop 只能动可让项', () => {
+  const input = incrementalInput()
+  assert.equal(validateIncrementalProposal({ changes: [{ id: 1, minutes: 30 }], drops: [] }, input).ok, false)
+  assert.equal(validateIncrementalProposal({ changes: [{ id: 3, dayOffset: 1 }], drops: [] }, input).ok, false)
+  assert.equal(validateIncrementalProposal({ changes: [], drops: [1] }, input).ok, false)
+  assert.equal(validateIncrementalProposal({ changes: [], drops: [2] }, input).ok, true)
+})
+
+test('增量校验:越窗、超容量、超缩短上限都拒绝', () => {
+  const input = incrementalInput()
+  assert.equal(validateIncrementalProposal({ changes: [{ id: 2, dayOffset: 9 }], drops: [] }, input).ok, false)
+  // 可让 60 最多缩到 30
+  assert.equal(validateIncrementalProposal({ changes: [{ id: 2, minutes: 20 }], drops: [] }, input).ok, false)
+  // 保护项可改日期但不能缩
+  assert.equal(validateIncrementalProposal({ changes: [{ id: 1, dayOffset: 1 }], drops: [] }, input).ok, true)
+  // 第三天只剩 30 分钟,再塞 60 就超容量
+  const tight = { ...input, capacity: new Map([[DAYS[0], 120], [DAYS[1], 120], [DAYS[2], 30]]) }
+  assert.equal(validateIncrementalProposal({ changes: [{ id: 2, dayOffset: 2 }], drops: [] }, tight).ok, false)
+})
+
+test('增量校验:合法增量返回应用后的快照,未提及项保持原样', () => {
+  const input = incrementalInput()
+  const checked = validateIncrementalProposal({
+    changes: [{ id: 2, dayOffset: 1, minutes: 45 }], drops: [],
+  }, input)
+  assert.equal(checked.ok, true)
+  const after = checked.after!
+  assert.equal(after.find(item => item.id === 2)!.planDate, DAYS[1])
+  assert.equal(after.find(item => item.id === 2)!.minutes, 45)
+  assert.deepEqual(after.find(item => item.id === 1), input.before[0])
+  assert.deepEqual(after.find(item => item.id === 3), input.before[2])
 })

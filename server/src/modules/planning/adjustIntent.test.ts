@@ -313,6 +313,39 @@ test('commitments:单双周标注被保留,非法值只丢属性,同键不同 pa
   ])
 })
 
+test('importance:科目白名单、窗口内日期、级别清洗,最多 8 条', () => {
+  const intent = normalizeAdjustIntent({
+    kind: 'unavailable',
+    days: ['2026-09-30'],
+    importance: [
+      { subject: '数学', level: 'protect' },
+      { subject: '数学', title: '真题', date: '2026-09-30', level: 'elastic' },
+      { subject: '物理', level: 'protect' },        // 不在白名单
+      { subject: '英语', level: 'bad' },            // 非法级别
+      { subject: '英语', date: '2026-10-20', level: 'elastic' }, // 窗口外
+      ...Array.from({ length: 10 }, () => ({ subject: '数学', level: 'protect' })),
+    ],
+  }, input)
+  assert.equal(intent.importance?.length, 8)
+  assert.deepEqual(intent.importance?.slice(0, 2), [
+    { subject: '数学', level: 'protect' },
+    { subject: '数学', title: '真题', date: '2026-09-30', level: 'elastic' },
+  ])
+})
+
+test('horizonDays:只有给出合法值才保留,并夹到 5..14;点名远期日期时自动放宽', () => {
+  assert.equal(normalizeAdjustIntent({ kind: 'reschedule' }, input).horizonDays, undefined)
+  assert.equal(normalizeAdjustIntent({ kind: 'reschedule', horizonDays: 8 }, input).horizonDays, 8)
+  assert.equal(normalizeAdjustIntent({ kind: 'reschedule', horizonDays: 1 }, input).horizonDays, 5)
+  assert.equal(normalizeAdjustIntent({ kind: 'reschedule', horizonDays: 99 }, input).horizonDays, 14)
+  // input.windowTo=2026-10-06:用户点名最后一天,窗口必须覆盖到那天(8 天)
+  const moved = normalizeAdjustIntent({
+    kind: 'move_task',
+    tasks: [{ subject: '数学', targetDate: '2026-10-06' }],
+  }, input)
+  assert.equal(moved.horizonDays, 8)
+})
+
 test('reschedule:整体重排意图原样保留,无需任务/日期,缺省摘要兜底', () => {
   const intent = normalizeAdjustIntent({ kind: 'reschedule' }, input)
   assert.equal(intent.kind, 'reschedule')

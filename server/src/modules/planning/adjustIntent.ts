@@ -1,5 +1,6 @@
 import { chatComplete, extractJson, LlmError } from '../../shared/llm/client'
 import { AiUnavailable } from './aiGenerator'
+import { DEFAULT_ADJUST_DAYS, MAX_ADJUST_DAYS } from './adjust'
 import type { PlanBrief } from './document'
 
 /**
@@ -58,6 +59,14 @@ export interface AdjustScopeItem {
   estimated?: boolean
 }
 
+/** 用户本次话术里的重要性提示:protect=重要别动;elastic=可以少点/先缓一缓 */
+export interface AdjustImportanceHint {
+  subject: string
+  title?: string
+  date?: string
+  level: 'protect' | 'elastic'
+}
+
 export interface AdjustIntent {
   kind: AdjustIntentKind
   /** unavailable:完全没空的日期(YYYY-MM-DD,已裁剪到调整窗口内) */
@@ -74,6 +83,10 @@ export interface AdjustIntent {
   needClarify: boolean
   clarifyQuestion: string
   clarifyOptions: Array<{ label: string; value: string }>
+  /** 用户本次明确说「哪科/哪项重要」或「可以少点」时才有的提示 */
+  importance?: AdjustImportanceHint[]
+  /** 用户明确说「这周/未来 N 天」时的总天数(含今天),已夹到 5..14 */
+  horizonDays?: number
 }
 
 export interface AdjustIntentInput {
@@ -152,6 +165,11 @@ function buildSystemPrompt(): string {
     '  date 是任务当前所在日期(用于消歧),move_task 必须给 targetDate',
     '- newTasks: add_task 要新增的任务数组,每项 {subject, title, date, minutes}',
     '- scope: adjust_scope 的目标数组,每项 {subject, remainingMinutes?, milestone?, milestoneDate?, milestoneMinutes?, estimated?};至少要给一个数值或日期目标',
+    '- importance: 仅当用户明确说「哪科/哪项重要、别动」或「可以少点、先放一放」时输出,',
+    '  每项 {subject, title?, date?, level};level 只能是 "protect"(重要) 或 "elastic"(可让);没有明确说法时不要输出该字段',
+    '- horizonDays: 仅当用户明确说「这周/到周末/未来 N 天」时输出含今天在内的总天数(5..14);没说就省略',
+    '- 日程类调整(没空/时间变少/挪任务/新增任务)最多只看 14 天;更远的日期不要用于这些字段。',
+    '  科目目标/里程碑(adjust_scope)可以看 30 天。',
     '- note: 从用户原话提取的补充说明,一句话',
     '- summary: 用一句话向用户复述你的理解,不超过 30 字',
     '- needClarify: 布尔,信息不足需要追问时为 true',
@@ -166,7 +184,8 @@ function buildSystemPrompt(): string {
     '- add_task 缺日期或时长就追问;adjust_scope 缺目标值就追问。',
     '- 「别再动数学」「把今天那项锁住」按 lock_task。',
     '- 用户说「任务落后了/重新排一下/重排/把未来几天重新排/填满空档/重新分配」这类整体重排诉求时,按 reschedule:',
-    '  不需要逐条任务、也不需要具体日期,直接 needClarify=false,服务端会确定性地把未完成任务从今天起排进空档;',
+    '  默认只处理今天之前未完成和今天已超载的任务;只有用户明确要求「重新安排这周/未来 N 天」时才输出 horizonDays,',
+    '  由服务端只在该范围内重排非保护任务。不需要逐条任务、也不需要具体日期,直接 needClarify=false;',
     '  不要追问「哪几条落后」「挪到哪天」「顺延几天还是填满空档」——这些服务端自己处理。只有用户明确只挪某一条时才用 move_task。',
     '- 与备考计划无关的闲聊一律 kind=chat。',
     '- 可能附带最近几轮对话:用户这次说的可能是对上一轮追问的简短确认(如「对」「嗯」「是的」「下午」),',
@@ -385,6 +404,41 @@ export function normalizeAdjustIntent(raw: any, input: AdjustIntentInput): Adjus
     }
   }
 
+  const importance: AdjustImportanceHint[] = []
+  if (Array.isArray(raw?.importance)) {
+    const allowedSubjects = new Set(input.subjects)
+    for (const entry of raw.importance) {
+      if (importance.length >= 8) break
+      const subject = text(entry?.subject, 32)
+      const level = entry?.level === 'protect' || entry?.level === 'elastic' ? entry.level : null
+      const title = text(entry?.title, 64) || undefined
+      const date = text(entry?.date, 10)
+      if (!subject || !level) continue
+      if (allowedSubjects.size > 0 && !allowedSubjects.has(subject)) continue
+      if (date && (!DAY_PATTERN.test(date) || !inWindow(date))) continue
+      importance.push({ subject, level, ...(title ? { title } : {}), ...(date ? { date } : {}) })
+    }
+  }
+  const horizonRaw = Math.round(Number(raw?.horizonDays))
+  let horizonDays = Number.isFinite(horizonRaw) && horizonRaw > 0
+    ? Math.max(DEFAULT_ADJUST_DAYS, Math.min(MAX_ADJUST_DAYS, horizonRaw))
+    : undefined
+  // 用户点名了第 6 天以后的日期时,窗口必须覆盖到那天,否则「把阅读挪到下周三」会被误判越界
+  const explicitDays = [
+    ...days,
+    ...windows.map(window => window.day),
+    ...tasks.flatMap(task => [task.date, task.targetDate].filter((day): day is string => !!day)),
+    ...newTasks.map(task => task.date),
+  ].filter(day => DAY_PATTERN.test(day) && inWindow(day))
+  if (explicitDays.length > 0) {
+    const maxDay = [...explicitDays].sort()[explicitDays.length - 1]
+    const diffDays = Math.round(
+      (Date.parse(`${maxDay}T00:00:00.000Z`) - Date.parse(`${input.today}T00:00:00.000Z`)) / 86_400_000,
+    ) + 1
+    const needed = Math.max(DEFAULT_ADJUST_DAYS, Math.min(MAX_ADJUST_DAYS, diffDays))
+    if (!horizonDays || needed > horizonDays) horizonDays = needed
+  }
+
   const summary = text(raw?.summary, 300) || defaultSummary(finalKind, days, windows, commitments)
   const clarifyQuestion = text(raw?.clarifyQuestion, 200) || (needClarify ? missingFor(finalKind) : '')
   return {
@@ -400,6 +454,8 @@ export function normalizeAdjustIntent(raw: any, input: AdjustIntentInput): Adjus
     needClarify,
     clarifyQuestion,
     clarifyOptions,
+    ...(importance.length > 0 ? { importance } : {}),
+    ...(horizonDays ? { horizonDays } : {}),
   }
 }
 

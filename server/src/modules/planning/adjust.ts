@@ -68,10 +68,18 @@ export interface AdjustmentChange {
   title: string
   from?: { planDate: string; minutes: number; title: string }
   to?: { planDate: string; minutes: number; title: string }
+  /** 可选说明(如「缩短 60→45 分钟（可让）」);旧客户端忽略 */
+  note?: string
 }
 
 /** L1 的「影响天数」上限:被挪动任务涉及的 from∪to 日期数超过它就升级到 L2(默认 2 天,PLAN_L1_MAX_DAYS 可覆盖) */
 export const L1_MAX_AFFECTED_DAYS = Number(process.env.PLAN_L1_MAX_DAYS ?? 2) || 2
+
+/** 行程调整默认向前看 5 天(今天+4);用户明确说范围时最多 14 天 */
+export const DEFAULT_ADJUST_DAYS = 5
+export const MAX_ADJUST_DAYS = 14
+/** 默认窗口塞不下时允许自动后延的天数 */
+export const AUTO_EXTEND_DAYS = 3
 
 /** 'YYYY-MM-DD' 加减天数,返回 'YYYY-MM-DD' */
 export function shiftDate(day: string, days: number): string {
@@ -142,29 +150,40 @@ export function affectedDays(moves: L1Move[]): number {
 }
 
 /** 对比窗口前后快照,产出给人看的变动清单(按 日期 → 类型 → 科目 排序,输出稳定) */
-export function diffSnapshots(before: WindowSnapshotItem[], after: WindowSnapshotItem[]): AdjustmentChange[] {
+export function diffSnapshots(
+  before: WindowSnapshotItem[],
+  after: WindowSnapshotItem[],
+  notes?: Map<number, string>,
+): AdjustmentChange[] {
   const beforeById = new Map(before.filter(item => item.id > 0).map(item => [item.id, item]))
   const afterIds = new Set(after.filter(item => item.id > 0).map(item => item.id))
+  const noteOf = (id: number) => notes?.get(id)
   const changes: AdjustmentChange[] = []
   for (const item of after) {
     const old = item.id > 0 ? beforeById.get(item.id) : undefined
+    const note = noteOf(item.id)
     if (!old) {
       changes.push({ kind: 'added', id: item.id, subject: item.subject, title: item.title,
-        to: { planDate: item.planDate, minutes: item.minutes, title: item.title } })
+        to: { planDate: item.planDate, minutes: item.minutes, title: item.title },
+        ...(note ? { note } : {}) })
     } else if (old.planDate !== item.planDate) {
       changes.push({ kind: 'moved', id: item.id, subject: item.subject, title: item.title,
         from: { planDate: old.planDate, minutes: old.minutes, title: old.title },
-        to: { planDate: item.planDate, minutes: item.minutes, title: item.title } })
+        to: { planDate: item.planDate, minutes: item.minutes, title: item.title },
+        ...(note ? { note } : {}) })
     } else if (old.minutes !== item.minutes || old.title !== item.title || old.subject !== item.subject) {
       changes.push({ kind: 'updated', id: item.id, subject: item.subject, title: item.title,
         from: { planDate: old.planDate, minutes: old.minutes, title: old.title },
-        to: { planDate: item.planDate, minutes: item.minutes, title: item.title } })
+        to: { planDate: item.planDate, minutes: item.minutes, title: item.title },
+        ...(note ? { note } : {}) })
     }
   }
   for (const item of before) {
     if (item.id > 0 && !afterIds.has(item.id)) {
+      const note = noteOf(item.id)
       changes.push({ kind: 'removed', id: item.id, subject: item.subject, title: item.title,
-        from: { planDate: item.planDate, minutes: item.minutes, title: item.title } })
+        from: { planDate: item.planDate, minutes: item.minutes, title: item.title },
+        ...(note ? { note } : {}) })
     }
   }
   const order = { moved: 0, updated: 1, added: 2, removed: 3 } as const
@@ -176,17 +195,19 @@ export function diffSnapshots(before: WindowSnapshotItem[], after: WindowSnapsho
 }
 
 /**
- * 调整窗口:未来 30 天 + 过去 30 天内落后的任务。
- * 只覆盖当前阶段会让「落后到上一阶段」的任务永远修不了,这里放宽到滚动窗口。
+ * 调整窗口:默认未来 5 天,可用 horizonDays 放宽到 14 天;加上过去 30 天内落后的任务。
+ * adjust_scope 这类改目标的操作传 maxDays:30 保留旧的 30 天窗口。
  */
 export function adjustWindow(input: {
   planStart: string
   examDate: string
   today: string
   unfinishedDates: string[]
-}): { from: string; to: string } | null {
+}, options: { horizonDays?: number; maxDays?: number } = {}): { from: string; to: string } | null {
   const examLast = shiftDate(input.examDate, -1)
-  const futureLast = shiftDate(input.today, 29)
+  const maxDays = options.maxDays ?? MAX_ADJUST_DAYS
+  const days = Math.min(maxDays, Math.max(DEFAULT_ADJUST_DAYS, options.horizonDays ?? DEFAULT_ADJUST_DAYS))
+  const futureLast = shiftDate(input.today, days - 1)
   const to = examLast < futureLast ? examLast : futureLast
   if (to < input.today) return null
   const overdue = input.unfinishedDates
