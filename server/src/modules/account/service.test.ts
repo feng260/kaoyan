@@ -16,7 +16,7 @@ type Row = Record<string, any>
 const TABLES = [
   'device', 'refreshToken', 'subject', 'countdownNode', 'task', 'pomodoroSession',
   'dailyReview', 'weeklyReview', 'monthlyReview', 'userSetting',
-  'planItem', 'planStage', 'plan', 'userProfile', 'user',
+  'planItem', 'planStage', 'plan', 'userProfile', 'emailCode', 'user',
 ] as const
 
 const USER = 'user-guid-0000-0000-0000-000000000001'
@@ -152,6 +152,11 @@ test('exportAccount bundles account, profile, plan and synced data', async () =>
   assert.deepEqual(dump.plan, PLAN)
   assert.deepEqual(dump.data, BACKUP)
   assert.ok(dump.exportedAt > 0)
+  // 未验证邮箱/未落政策版本的老账号:字段存在,值为 null
+  assert.equal('emailVerifiedAt' in dump.account, true)
+  assert.equal(dump.account.emailVerifiedAt, null)
+  assert.equal('acceptedPolicyVersion' in dump.account, true)
+  assert.equal(dump.account.acceptedPolicyVersion, null)
 })
 
 test('exportAccount never hands out anything that could be used to impersonate the user', async () => {
@@ -247,6 +252,22 @@ test('deleteAccount wipes every table for that user only', async () => {
   assert.ok(result.deleted >= 1)
 })
 
+test('deleteAccount wipes email verification codes for that email only', async () => {
+  const fake = createFakeAccountDb()
+  seed(fake.state)
+  fake.state.user[0].email = 'chensi@example.com'
+  fake.state.emailCode.push(
+    { id: 100, email: 'chensi@example.com', purpose: 'reset', codeHash: 'H1', expiresAt: 9_999, attempts: 0, consumedAt: null, createdAt: 100 },
+    { id: 101, email: 'other@example.com', purpose: 'register', codeHash: 'H2', expiresAt: 9_999, attempts: 0, consumedAt: null, createdAt: 101 },
+  )
+  const { service } = serviceWith(fake)
+
+  await service.deleteAccount({ userGuid: USER, confirm: 'chensi', password: 'right' })
+
+  // 账号邮箱的验证码随账号一起删掉;别人的验证码不受影响
+  assert.deepEqual(fake.state.emailCode.map(r => r.email), ['other@example.com'])
+})
+
 test('deleteAccount revokes refresh tokens and kicks the devices', async () => {
   const fake = createFakeAccountDb()
   seed(fake.state)
@@ -306,10 +327,17 @@ test('updateIdentity rejects unknown preset and avatar conflict', async () => {
 test('exportAccount includes identity fields', async () => {
   const fake = createFakeAccountDb()
   seed(fake.state)
-  Object.assign(fake.state.user[0], { nickname: '小明', signature: '签名', gender: 'other', birthday: '2003-05-01', avatarPreset: 'book', avatarData: null })
+  const verifiedAt = new Date('2026-11-25T08:00:00.000Z')
+  Object.assign(fake.state.user[0], {
+    nickname: '小明', signature: '签名', gender: 'other', birthday: '2003-05-01', avatarPreset: 'book', avatarData: null,
+    emailVerifiedAt: verifiedAt, acceptedPolicyVersion: POLICY_VERSION,
+  })
   const { service } = serviceWith(fake)
   const dump = await service.exportAccount(USER)
   assert.equal(dump.account.nickname, '小明')
   assert.equal(dump.account.signature, '签名')
   assert.equal(dump.account.avatarPreset, 'book')
+  // 邮箱验证时间导出为 ISO 串;政策版本原样带出
+  assert.equal(dump.account.emailVerifiedAt, verifiedAt.toISOString())
+  assert.equal(dump.account.acceptedPolicyVersion, POLICY_VERSION)
 })

@@ -6,7 +6,7 @@ import { setupStatusWs } from './modules/status/ws'
 
 async function main() {
   if (env.nodeEnv === 'production' && env.inviteCodes.length === 0) {
-    console.warn('[yanzhong-server] 生产环境未配置 INVITE_CODES,注册将对所有人开放')
+    console.warn('[yanzhong-server] 生产环境未配置 INVITE_CODES,注册将被全部拒绝(INVITE_REQUIRED)')
   }
   await prisma.$queryRaw`SELECT 1` // 连接自检,失败即快速退出
   const app = createApp()

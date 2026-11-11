@@ -24,6 +24,7 @@ type AnyArgs = Record<string, any>
 
 export interface AccountDb {
   user: { findUnique(args: AnyArgs): Promise<any>; updateMany(args: AnyArgs): Promise<any>; deleteMany(args: AnyArgs): Promise<any> }
+  emailCode: { deleteMany(args: AnyArgs): Promise<any> }
   device: { deleteMany(args: AnyArgs): Promise<any> }
   refreshToken: { deleteMany(args: AnyArgs): Promise<any> }
   subject: { deleteMany(args: AnyArgs): Promise<any> }
@@ -58,6 +59,8 @@ export interface AccountExport {
     username: string
     email: string | null
     createdAt: number
+    emailVerifiedAt: string | null
+    acceptedPolicyVersion: string | null
     termsAcceptedAt: string | null
     privacyAcceptedAt: string | null
     nickname: string | null
@@ -152,6 +155,8 @@ export function createAccountService(db: AccountDb, deps: AccountDeps = DEFAULT_
         username: user.username,
         email: user.email ?? null,
         createdAt: num(user.createdAt),
+        emailVerifiedAt: iso(user.emailVerifiedAt),
+        acceptedPolicyVersion: user.acceptedPolicyVersion ?? null,
         termsAcceptedAt: iso(user.termsAcceptedAt),
         privacyAcceptedAt: iso(user.privacyAcceptedAt),
         nickname: user.nickname ?? null,
@@ -193,6 +198,8 @@ export function createAccountService(db: AccountDb, deps: AccountDeps = DEFAULT_
       const plans = await tx.plan.findMany({ where: { userGuid: input.userGuid }, select: { id: true } })
       const planIds = plans.map((p: { id: number }) => p.id)
       const counts = await Promise.all([
+        // 验证码表只按 email 建键、没有 userGuid,得用账号邮箱单独删一次
+        ...(user.email ? [tx.emailCode.deleteMany({ where: { email: user.email } })] : []),
         tx.planItem.deleteMany({ where: { planId: { in: planIds } } }),
         tx.planStage.deleteMany({ where: { planId: { in: planIds } } }),
         tx.plan.deleteMany({ where: { userGuid: input.userGuid } }),
