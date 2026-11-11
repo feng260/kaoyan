@@ -20,6 +20,9 @@
   "engines": {
     "node": ">=24"
   },
+  "overrides": {
+    "deepmerge-ts": "^8.0.2"
+  },
   "dependencies": {
     "@koa/router": "^13.1.0",
     "@prisma/client": "^6.2.1",
@@ -41,7 +44,7 @@
     "@types/koa": "^2.15.0",
     "@types/koa__router": "^12.0.4",
     "@types/koa-bodyparser": "^4.3.13",
-    "@types/node": "^22.10.5",
+    "@types/node": "^24.0.0",
     "@types/nodemailer": "^6.4.17",
     "@types/ws": "^8.5.13",
     "prisma": "^6.2.1",

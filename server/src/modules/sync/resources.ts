@@ -100,7 +100,7 @@ export const monthlyReviewSchema = z.object({
   updatedAt: z.number().int(),
 })
 
-export const schemas: Record<ResourceName, z.ZodTypeAny> = {
+export const schemas: Record<ResourceName, z.ZodType<any>> = {
   subjects: subjectSchema,
   countdownNodes: countdownNodeSchema,
   tasks: taskSchema,
