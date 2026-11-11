@@ -7,13 +7,19 @@
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | /api/v1/auth/register | 注册 `{username, password, email?}` |
+| POST | /api/v1/auth/email/code | 注册验证码 `{email, purpose:"register", inviteCode?}` → `{sent:true}`；限流 IP 10/时、邮箱 3/时、同邮箱 1/分；SMTP 未配置 503 |
+| POST | /api/v1/auth/register | 注册 `{username, password, email, code, termsAccepted, privacyAccepted, inviteCode?}` → 201 `{user}`；限流 IP 10/时、邮箱 5/时 |
 | POST | /api/v1/auth/login | 登录 `{username, password, deviceGuid, deviceName, platform?, rememberMe?}` → `{user, device, tokens:{access, refresh, expiresIn}}` |
 | POST | /api/v1/auth/refresh | 刷新 `{refresh}`（轮换，旧 token 作废）|
 | POST | /api/v1/auth/logout | 登出当前设备 🔒 |
-| POST | /api/v1/auth/password/forgot | `{account}` 发重置邮件（无 SMTP 时链接打服务端日志）|
-| POST | /api/v1/auth/password/reset | `{token, newPassword}` |
+| POST | /api/v1/auth/password/forgot | `{email}` 发 10 分钟有效的 6 位验证码，始终返回 `{sent:true}`（不暴露邮箱是否存在）；限流 IP 10/时、邮箱 5/时；SMTP 未配置 503 |
+| POST | /api/v1/auth/password/reset | `{email, code, newPassword}` → 204（吊销全部 refresh token，所有设备下线）|
 | POST | /api/v1/auth/password/change | `{oldPassword, newPassword}` 🔒（改密后全设备下线）|
+
+注册必须显式勾选协议（否则 400 `LEGAL_CONSENT_REQUIRED`）；验证码 6 位、10 分钟内有效、最多尝试 5 次，
+错误或过期返回 400 `INVALID_EMAIL_CODE`。用户名/邮箱冲突返回 409，未带邀请码返回 400 `INVITE_REQUIRED`
+（服务端配置 `INVITE_CODES` 后，发送验证码与注册都必须携带邀请码；邀请码不匹配返回 400 `INVITE_INVALID`；
+生产环境未配置邀请码时同样拒绝）。
 
 🔒 = 需要 `Authorization: Bearer <access>`。401 时用 refresh 刷新。
 
@@ -24,6 +30,12 @@
 | GET | /api/v1/devices | 全部登录设备（名称/最近活跃/IP/在线状态）🔒 |
 | DELETE | /api/v1/devices/{id} | 强制登出指定设备（踢 WS）🔒 |
 | DELETE | /api/v1/devices | 全部登出 🔒 |
+
+## 账号与合规
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | /api/v1/account/consent | 重新同意当前协议 `{version}` → 204；版本不符返回 409 `POLICY_VERSION_MISMATCH` 🔒 |
 
 ## 同步与备份
 

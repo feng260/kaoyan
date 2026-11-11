@@ -16,29 +16,53 @@ tags:
   - name: account
   - name: ws
 paths:
-  /api/v1/auth/register:
+  /api/v1/auth/email/code:
     post:
       tags: [auth]
-      summary: 注册(限流 5 次/15 分钟)
+      summary: 发送注册邮箱验证码(限流 IP 10/时、邮箱 3/时、同邮箱 1/分)
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [username, password, termsAccepted, privacyAccepted]
+              required: [email, purpose]
               properties:
-                username: { type: string, minLength: 3, maxLength: 32 }
+                email: { type: string, format: email }
+                purpose: { type: string, enum: [register] }
+                inviteCode: { type: string, nullable: true, description: 服务端配置 INVITE_CODES 后必填 }
+      responses:
+        "200": { description: "已发送,返回 {sent:true}" }
+        "400": { description: "邀请码缺失或无效(INVITE_REQUIRED / INVITE_INVALID)或参数校验失败" }
+        "409": { description: 该邮箱已被注册 }
+        "429": { description: 触发限流 }
+        "503": { description: 邮件服务未配置(EMAIL_NOT_CONFIGURED) }
+  /api/v1/auth/register:
+    post:
+      tags: [auth]
+      summary: 注册(限流 IP 10/时、邮箱 5/时)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password, email, code, termsAccepted, privacyAccepted]
+              properties:
+                username: { type: string, minLength: 3, maxLength: 32, pattern: "^[a-zA-Z0-9_\\u4e00-\\u9fa5]+$" }
                 password: { type: string, minLength: 8, maxLength: 64 }
-                email: { type: string, format: email, nullable: true }
-                # 必须为 true,否则 400 LEGAL_CONSENT_REQUIRED。
+                email: { type: string, format: email }
+                code: { type: string, pattern: "^\\d{6}$", description: 邮箱验证码(6 位,10 分钟内有效) }
+                inviteCode: { type: string, nullable: true, description: 服务端配置 INVITE_CODES 后必填 }
+                # 必须显式为 true,否则 400 LEGAL_CONSENT_REQUIRED。
                 # 允许 null 是为了兼容客户端 explicitNulls 下发的 {"termsAccepted": null}
                 termsAccepted: { type: boolean, nullable: true, description: 已阅读并同意《用户协议》 }
                 privacyAccepted: { type: boolean, nullable: true, description: 已阅读并同意《隐私政策》 }
       responses:
         "201": { description: 创建成功,返回 user }
-        "400": { description: 未勾选协议(LEGAL_CONSENT_REQUIRED)或参数校验失败 }
+        "400": { description: "INVALID_EMAIL_CODE / LEGAL_CONSENT_REQUIRED / INVITE_REQUIRED / INVITE_INVALID 或参数校验失败" }
         "409": { description: 用户名或邮箱已存在 }
+        "429": { description: 触发限流 }
   /api/v1/auth/login:
     post:
       tags: [auth]
@@ -94,22 +118,23 @@ paths:
   /api/v1/auth/password/forgot:
     post:
       tags: [auth]
-      summary: 找回密码(发重置邮件;SMTP 未配置时链接输出服务端日志)
+      summary: 找回密码(发送 6 位验证码,10 分钟内有效;限流 IP 10/时、邮箱 5/时)
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object, required: [account], properties: { account: { type: string, description: 用户名或邮箱 } } } } }
+        content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email } } } } }
       responses:
         "200": { description: 统一返回 sent=true(不泄漏账号是否存在) }
+        "503": { description: 邮件服务未配置(EMAIL_NOT_CONFIGURED) }
   /api/v1/auth/password/reset:
     post:
       tags: [auth]
-      summary: 用重置 token 设置新密码(所有设备强制下线)
+      summary: 用邮箱验证码设置新密码(吊销全部 refresh token,所有设备下线)
       requestBody:
         required: true
-        content: { application/json: { schema: { type: object, required: [token, newPassword], properties: { token: { type: string }, newPassword: { type: string, minLength: 8 } } } } }
+        content: { application/json: { schema: { type: object, required: [email, code, newPassword], properties: { email: { type: string, format: email }, code: { type: string, pattern: "^\\d{6}$" }, newPassword: { type: string, minLength: 8 } } } } }
       responses:
         "204": { description: 成功 }
-        "400": { description: token 无效或已过期 }
+        "400": { description: 验证码错误或已过期(INVALID_EMAIL_CODE)或参数校验失败 }
   /api/v1/auth/password/change:
     post:
       tags: [auth]
@@ -121,6 +146,17 @@ paths:
       responses:
         "204": { description: 成功 }
         "400": { description: 原密码错误 }
+  /api/v1/account/consent:
+    post:
+      tags: [account]
+      summary: 已登录状态下重新同意当前协议
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { type: object, required: [version], properties: { version: { type: string, maxLength: 16, description: 服务端当前 POLICY_VERSION } } } } }
+      responses:
+        "204": { description: 成功 }
+        "409": { description: 协议版本不匹配(POLICY_VERSION_MISMATCH) }
   /api/v1/devices:
     get:
       tags: [devices]
@@ -229,7 +265,7 @@ paths:
   /ws:
     get:
       tags: [ws]
-      summary: 专注状态 WebSocket(Authorization: Bearer <access>)
+      summary: "专注状态 WebSocket(Authorization: Bearer <access>)"
       description: |
         C→S:`{"type":"hello","deviceName":"..."}` / `{"type":"status","phase":"focus|break|idle","remainMs":0,"taskId":1,"taskTitle":"...","planName":"..."}` / `{"type":"stop"}`。
         S→C:`presence`(全量在线设备+最近状态) / `peerStatus`(他端状态变更) / `kicked`(强制登出,code 4001)。
