@@ -17,6 +17,7 @@
 - [ ] 部署仓库现有 compose（即候选构建，已内置 `127.0.0.1:3000:3000` 与 `TRUST_PROXY: "true"`，不要手动改端口或变量）；检查 `docker compose ps`、`docker compose logs --tail=100 api` 和 `curl -fsS http://127.0.0.1:3000/healthz`。
 - [ ] 在安全组/防火墙**只**开放 80/443；安装 Caddy，执行 `sudo install -d -o caddy -g caddy -m 0755 /var/log/caddy` 创建日志目录（用 root 直接 `mkdir` 会导致 Caddy 无法写日志）；替换 `deploy/Caddyfile.example` 中域名，校验配置并启动；验证证书和 `curl -fsS https://<域名>/healthz`。
 - [ ] 在外部确认公网 `:3000` 不可达（如 `curl --connect-timeout 5 http://81.71.14.219:3000/healthz` 应超时或拒绝），安全组/防火墙仅保留 80/443。
+- [ ] **升级已有部署时，首次上传 APK 前先交还 `releases-data` 卷属主**（新镜像以 `node` 用户运行，旧卷由 root 容器创建）：执行 `docker compose exec -u 0 api chown -R node:node /app/releases`，再用 `docker compose exec api sh -c 'touch /app/releases/.write-test && rm /app/releases/.write-test'` 验证可写（应无输出、退出码 0）。若上传已报 EACCES，补做同样两条命令即可恢复；全新部署可跳过。
 - [ ] 确认 Caddy 覆写 `X-Forwarded-For` / `X-Real-IP`（客户端无法伪造），验证登录限流、真实 IP 与 WebSocket 连接。
 - [ ] 经 HTTPS 检查 `/docs`、`/admin`、`/api/v1/app/latest` 和已发布版本的 `/api/v1/app/download/<versionCode>`（可用 `curl -I` 检查响应/Range）；检查 APK 下载与上传权限。
 - [ ] 同一窗口在真机安装新 APK，检查登录、云同步、计划、下载和 WebSocket；确认设备不再使用旧 IP/HTTP 地址。
