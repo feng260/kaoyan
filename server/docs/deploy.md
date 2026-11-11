@@ -3,14 +3,15 @@
 面向自建服务器（当前目标：`81.71.14.219`）。技术栈 Koa + TypeScript + Prisma + MySQL 8 + WebSocket，
 用 Docker Compose 一键起 MySQL 与 API。
 
-> 当前阶段为 **IP + HTTP 内测**：App 通过 `http://81.71.14.219:3000` 访问。
-> 明文 HTTP 仅供验证，正式对外前必须换成域名 + HTTPS（见第八节）。
+> **仓库基线为 Caddy + HTTPS**：`docker-compose.yml` 已把 API 绑定到 `127.0.0.1:3000`，并设置
+> `TRUST_PROXY: "true"`，对外只经 Caddy 的 80/443 提供服务（切换步骤见第九节）。
+> 下文第六节的 IP + HTTP 地址示例属于**旧内测形态，仅作回滚参考**，标准路径以第九节为准。
 
 ## 一、环境要求
 
 - 服务器：2 核 2G 起，Ubuntu 22.04 / Debian 12 最佳（其他发行版见 2.3）
 - Docker Engine 24+ 与 Docker Compose v2
-- 放行入站 TCP **3000**（云厂商安全组 + 系统防火墙两层都要放）
+- 放行入站 TCP **80/443**（云厂商安全组 + 系统防火墙两层都要放）；3000 不对公网开放
 - 本地：Node.js ≥ 18 仅用于本地开发，部署到服务器不需要
 
 ## 二、全新服务器初始化
@@ -23,21 +24,29 @@ sudo systemctl enable --now docker
 docker compose version    # 应输出 v2.x
 ```
 
-### 2.2 放行 3000 端口
+### 2.2 放行 80/443（标准路径）
+
+标准路径只放行 TCP **80/443**，TLS 由 Caddy 终结，3000 保持仅本机监听：
 
 ```bash
 # 系统防火墙（若启用了 ufw）
-sudo ufw allow 3000/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
 ```
 
 **云厂商安全组同样要放行**，否则外面依然连不上：登录云控制台 → 安全组 → 入站规则 →
-新增 `TCP:3000`，来源 `0.0.0.0/0`。这一步最容易被漏掉，表现为本机 `curl` 通、外部超时。
+新增 `TCP:80`、`TCP:443`，来源 `0.0.0.0/0`。这一步最容易被漏掉，表现为本机 `curl` 通、外部超时。
+
+> **旧路径（仅回滚用）**：退回 IP + HTTP 内测时，才需要 `sudo ufw allow 3000/tcp` 并在安全组
+> 新增 `TCP:3000`（来源 `0.0.0.0/0`），同时把 compose 的 `ports` 恢复为 `"3000:3000"`、
+> `TRUST_PROXY` 改回 `"false"` 再重建（见第九节末尾的回滚说明），并告知用户明文传输风险。
 
 ### 2.3 其他发行版
 
 CentOS / TencentOS / openEuler 用 `sudo yum install -y docker-ce docker-compose-plugin`，
 或直接 `sudo dnf install -y docker docker-compose-plugin`；防火墙换成
-`sudo firewall-cmd --permanent --add-port=3000/tcp && sudo firewall-cmd --reload`。
+`sudo firewall-cmd --permanent --add-port=80/tcp --add-port=443/tcp && sudo firewall-cmd --reload`
+（回滚到 IP + HTTP 时才改为放行 3000）。
 
 ## 三、拉取代码
 
@@ -81,7 +90,7 @@ ADMIN_TOKEN=换成一段随机串
 | `PORT` | 由 compose 固定为 3000，无需修改 |
 | `CORS_ORIGINS` | 留空即可。App 是原生客户端不受同源策略限制；将来做 Web 管理端再填 |
 | `SMTP_*` | 找回密码用。留空时重置链接会降级输出到服务端日志，功能仍可用 |
-| `TRUST_PROXY` | compose 已固定为 `false`，不要改（见第八节） |
+| `TRUST_PROXY` | compose 已固定为 `true`：Caddy 是唯一入口且 3000 只绑 `127.0.0.1`，代理头可信。**开着它时绝不能把 3000 暴露到公网**（见第八、九节） |
 
 ## 五、启动服务
 
@@ -165,9 +174,9 @@ App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接�
 
 ## 八、安全说明
 
-- `TRUST_PROXY` 必须保持 `false`。当前 API 直接暴露 3000 端口、前面没有反向代理，
-  开启后攻击者可伪造 `X-Forwarded-For` 绕过登录限流并伪造来源 IP。
-  将来接入 Nginx/Caddy 后，再改为 `true`。
+- `TRUST_PROXY` 只在「API 仅绑定 `127.0.0.1`、前面是唯一入口 Caddy」时保持 `true`：Caddy 模板会
+  覆写 `X-Forwarded-For` / `X-Real-IP`，客户端无法伪造来源 IP。一旦把 3000 重新暴露到公网，
+  必须同时改回 `false`，否则攻击者可伪造代理头绕过登录限流并伪造来源 IP。
 - 明文 HTTP 的流量（含登录密码与 JWT）在链路上可被嗅探，**仅限内测**。
 - `JWT_SECRET` 泄露等于任何人都能签发合法 token，务必用随机串且不要提交到仓库。
 - 密码存储为 bcrypt(12)，refresh token 仅存 SHA-256 并支持轮换吊销。
@@ -178,24 +187,32 @@ App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接�
 以下命令在服务器上执行，`<域名>` 必须替换为实际 DNS 名称；需要服务器与域名管理权限，
 仅准备模板不代表已完成线上切换。
 
-1. DNS A/AAAA 指向服务器；云安全组及主机防火墙开放 TCP 80/443（若启用 IPv6 也要检查），先保留现有 3000 供内测验证。
-2. 安装 Caddy，复制 `deploy/Caddyfile.example` 到 `/etc/caddy/Caddyfile` 并替换 `api.example.com`，执行
-   `sudo caddy validate --config /etc/caddy/Caddyfile`、`sudo systemctl reload caddy`；检查
-   `curl -fsS https://<域名>/healthz`、证书、登录及 WebSocket。Caddy 自动转发 WebSocket Upgrade，
-   模板会覆写客户端提供的 `X-Forwarded-For`。
-3. 将 `docker-compose.yml` 中 API `ports` 改为 `"127.0.0.1:3000:3000"` 并
-   `sudo docker compose up -d --build api`；确认本机 HTTPS 正常、外部不能直连 3000 后，
-   从安全组和主机防火墙移除 3000 公网入站规则。
-4. **只有在代理覆写来源 IP 且 3000 已限本机访问后**，才将 Compose 的 `TRUST_PROXY` 改为 `"true"`，
-   重建 API 并验证真实 IP、登录限流和 WebSocket；此前保持 `false`。仅改 `.env` 不生效，
-   因为 Compose 直接设置了该变量。
-5. 验证 `https://<域名>/docs`、`/admin`、`/api/v1/app/latest` 和已发布 APK 的
-   `/api/v1/app/download/<versionCode>`（带 `Range` 请求）。将 Android `data/remote/Api.kt` 的
-   `DEFAULT_SERVER_URL` 改为 `https://<域名>`，从 `res/xml/network_security_config.xml`
-   移除旧公网 IP 的明文许可，重新发布和真机冒烟。旧包仍指向 IP 时需安排迁移窗口。
+1. DNS A/AAAA 指向服务器；云安全组及主机防火墙只开放 TCP 80/443（若启用 IPv6 也要检查），
+   3000 保持不对公网开放。
+2. 部署仓库现有 compose（已内置 `127.0.0.1:3000:3000` 与 `TRUST_PROXY: "true"`，**无需手改端口或变量**）：
+   `sudo docker compose up -d --build`，再用 `curl -fsS http://127.0.0.1:3000/healthz` 确认本机健康。
+3. 安装 Caddy 后先创建日志目录并交给 caddy 用户——用 root 直接 `mkdir` 会让 Caddy 无法写日志：
+
+   ```bash
+   sudo install -d -o caddy -g caddy -m 0755 /var/log/caddy
+   ```
+
+   复制 `deploy/Caddyfile.example` 到 `/etc/caddy/Caddyfile`，把 `api.yanzhong.app` 替换为实际 `<域名>`。
+4. 校验并重载：`sudo caddy validate --config /etc/caddy/Caddyfile`、`sudo systemctl reload caddy`
+   （首次部署用 `systemctl restart caddy`）。
+5. 验证 `curl -fsS https://<域名>/healthz`、证书、登录及 WebSocket（Caddy 自动转发 WebSocket Upgrade）；
+   并在外部确认 `:3000` 已不可达（如 `curl --connect-timeout 5 http://81.71.14.219:3000/healthz` 应超时或拒绝）。
+6. **HTTPS APK 必须在切换前或与切换同一窗口装机就绪**：现有测试用户仍指向 IP/HTTP 旧包，
+   服务端一旦只提供 HTTPS 且 3000 不再公网可达，旧包会立即断线。将 Android
+   `data/remote/Api.kt` 的 `DEFAULT_SERVER_URL` 改为 `https://<域名>`，从
+   `res/xml/network_security_config.xml` 移除旧公网 IP 的明文许可，重新发布并真机冒烟。
+7. 验证 `https://<域名>/docs`、`/admin`、`/api/v1/app/latest` 和已发布 APK 的
+   `/api/v1/app/download/<versionCode>`（带 `Range` 请求）。
 
 切换失败时以清单中记录的旧镜像标签/ID 回滚 API，保留两个数据卷；数据库 schema 不兼容时
-先停止写入并评估恢复，不能将演练脚本指向生产库。
+先停止写入并评估恢复，不能将演练脚本指向生产库。确需退回 IP + HTTP 内测时，在知情的前提下把
+compose 的 `ports` 恢复为 `"3000:3000"`、`TRUST_PROXY` 改回 `"false"` 再重建，并恢复 3000 的
+安全组/防火墙放行、告知用户明文传输风险。
 
 ## 十、运维
 
@@ -262,7 +279,7 @@ sudo docker compose exec api npx prisma db push --accept-data-loss
 ## 十一、常见问题
 
 **外部访问超时，服务器本机 curl 正常**
-安全组没放行 3000。见 2.2。
+标准路径先检查安全组/防火墙是否放行 80/443；仅回滚到 IP + HTTP 时才是 3000 未放行。见 2.2。
 
 **`error while interpolating services.mysql.environment.MYSQL_ROOT_PASSWORD`**
 `.env` 里没填 `MYSQL_ROOT_PASSWORD`，或文件不在 `server/` 目录下（compose 只读同目录的 `.env`）。
@@ -277,7 +294,7 @@ sudo docker compose exec api npx prisma db push --accept-data-loss
 然后 `up -d --build` 重建。
 
 **App 提示无法连接 / 登录失败**
-1. 先按第六节确认 `curl http://81.71.14.219:3000/healthz` 通。
+1. 先确认健康检查通：标准路径 `curl -fsS https://<域名>/healthz`；回滚到 IP + HTTP 时见第六节。
 2. 若服务正常但 App 报 `CLEARTEXT communication not permitted`，
    说明 `res/xml/network_security_config.xml` 里没放行该地址。
 3. 真机连电脑局域网调试时，需把电脑局域网 IP 也加进该文件并重新打包。
