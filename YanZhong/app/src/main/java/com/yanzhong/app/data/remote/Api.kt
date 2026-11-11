@@ -612,6 +612,15 @@ data class DeleteAccountReq(val confirm: String, val password: String)
 @Serializable
 data class DeleteAccountResp(val deleted: Int = 0, val serverTime: Long = 0)
 
+/**
+ * 首启同意门的服务端补报。
+ *
+ * [version] 必须与服务端 POLICY_VERSION 完全一致(客户端常量在 ConsentStore.CONSENT_VERSION),
+ * 不一致服务端会回 409 —— 那是「协议换了新版」的信号,而不是可以静默忽略的错误。
+ */
+@Serializable
+data class ConsentReq(val version: String)
+
 // ---------- 计划长文档与 AI 面谈 ----------
 //
 // 与服务端 modules/planning/document.ts 的结构一一对应。
@@ -1110,6 +1119,10 @@ interface YanzhongApi {
     /** 注销账号：不可撤销，服务端要求「完整用户名 + 密码」双重确认 */
     @POST("api/v1/account/delete")
     suspend fun deleteAccount(@Body body: DeleteAccountReq): DeleteAccountResp
+
+    /** 已登录用户接受新政策后补报服务端 */
+    @POST("api/v1/account/consent")
+    suspend fun acceptConsent(@Body body: ConsentReq)
 }
 
 // ---------- 网络装配 ----------

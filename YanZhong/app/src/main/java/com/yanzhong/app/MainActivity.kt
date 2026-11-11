@@ -16,10 +16,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -31,13 +37,14 @@ import com.yanzhong.app.data.prefs.ThemeMode
 import com.yanzhong.app.service.FocusService
 import com.yanzhong.app.ui.auth.LoginScreen
 import com.yanzhong.app.ui.auth.PasswordResetBus
-import com.yanzhong.app.ui.auth.PasswordResetHost
+import com.yanzhong.app.ui.legal.ConsentGate
 import com.yanzhong.app.ui.nav.YanZhongAppRoot
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.BrandGradient
 import com.yanzhong.app.ui.theme.YanZhongTheme
 import com.yanzhong.app.ui.update.UpdateHost
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -47,7 +54,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        requestNotificationPermissionIfNeeded()
         // 只有全新启动才消费深链:旋转/进程重建会带着同一个 intent 回来,
         // 再分发一次等于把已经用过的 token 又递上来一遍。
         if (savedInstanceState == null) handleDeepLink(intent)
@@ -61,18 +67,24 @@ class MainActivity : ComponentActivity() {
             val themeMode by themeModeFlow
                 .collectAsStateWithLifecycle(initialValue = ThemeMode.SYSTEM)
             YanZhongTheme(themeMode = themeMode) {
-                // 重置密码弹窗要盖在两道门之上:未登录收到邮件深链也能直接改密码
+                val auth by app.authState.collectAsStateWithLifecycle()
+                // 三态(读取中/未同意/已同意)而不是 initialValue=false:
+                // 后者会让老用户每次冷启动都先闪一帧同意门,再跳到登录/主界面。
+                val consent by app.consentAccepted.collectAsStateWithLifecycle()
                 Box(Modifier.fillMaxSize()) {
-                    // 启动两道门:①登录 ②备考档案。两段都过完才进主界面
-                    val auth by app.authState.collectAsStateWithLifecycle()
-                    when (auth) {
-                        null -> AuthChecking()
-                        false -> LoginScreen()
+                    // 启动三道门:①隐私同意 ②登录 ③备考档案。三段都过完才进主界面。
+                    // 同意门排在最前:前两道之后的页面一挂载就会发请求(档案读取、同步、更新检查)。
+                    when {
+                        consent == false -> ConsentGate()
+                        consent == null || auth == null -> AuthChecking()
+                        auth == false -> LoginScreen()
                         else -> ProfileGate()
                     }
-                    // 更新检查必须盖在登录门之上:旧版本可能连登录都不可用,强更不能被卡在门外
-                    UpdateHost()
-                    PasswordResetHost()
+                    // 更新检查要盖在登录门之上(旧版本可能连登录都不可用,强更不能被卡在门外),
+                    // 但它是网络请求,同意之前一次都不能发。
+                    if (consent == true) UpdateHost()
+                    // 通知权限同理:同意前不申请,同意且登录后解释一次用途再申请
+                    if (consent == true && auth == true) NotificationPermissionPrompt()
                 }
             }
         }
@@ -170,13 +182,61 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 通知权限(Android 13+):仅影响提醒,拒绝不影响计时(PRD 3.13 边界) */
-    private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+    /**
+     * 通知权限(Android 13+):仅影响提醒,拒绝不影响计时(PRD 3.13 边界)。
+     *
+     * 以前是在 onCreate 里直接弹系统授权框——用户还没看到同意门、不知道 App 拿数据做什么,
+     * 就先被要一次通知权限,既不合规也容易被拒后永久关闭。现在改成同意并登录之后,
+     * 先用一句话说明「为什么需要」再申请,并且每个分支都记下 notificationAsked,只问这一次。
+     */
+    @androidx.compose.runtime.Composable
+    private fun NotificationPermissionPrompt() {
+        val app = application as YanZhongApp
+        // 默认 true:DataStore 尚未读出时按「已问过」处理,避免对话框闪现
+        val asked by app.consentStore.notificationAsked
+            .collectAsStateWithLifecycle(initialValue = true)
+        var show by remember { mutableStateOf(false) }
+        LaunchedEffect(asked) {
+            if (asked) return@LaunchedEffect
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                app.appScope.launch { app.consentStore.markNotificationAsked() }
+                return@LaunchedEffect
+            }
             val granted = ContextCompat.checkSelfPermission(
-                this, Manifest.permission.POST_NOTIFICATIONS
+                this@MainActivity, Manifest.permission.POST_NOTIFICATIONS
             ) == PackageManager.PERMISSION_GRANTED
-            if (!granted) notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            if (granted) {
+                app.appScope.launch { app.consentStore.markNotificationAsked() }
+            } else {
+                show = true
+            }
+        }
+        if (show) {
+            AlertDialog(
+                onDismissRequest = {
+                    show = false
+                    app.appScope.launch { app.consentStore.markNotificationAsked() }
+                },
+                title = { Text("允许专注提醒吗？") },
+                text = {
+                    Text(
+                        "允许通知后，番茄切换、休息结束和计划提醒才能及时送达；拒绝不影响计时与学习记录。"
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        show = false
+                        app.appScope.launch { app.consentStore.markNotificationAsked() }
+                        notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }) { Text("允许") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        show = false
+                        app.appScope.launch { app.consentStore.markNotificationAsked() }
+                    }) { Text("暂不") }
+                }
+            )
         }
     }
 }
