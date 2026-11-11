@@ -20,6 +20,12 @@ function price(value: string | undefined): number {
   return Number.isFinite(n) && n > 0 ? n : 0
 }
 
+/** 告警阈值只接受正的有限数;没配、置空或配错一律回退默认值(避免 0 导致天天告警) */
+function positiveNumber(value: string | undefined, fallback: number): number {
+  const n = Number(value ?? 0)
+  return Number.isFinite(n) && n > 0 ? n : fallback
+}
+
 export const env = {
   port: Number(process.env.PORT ?? 3000),
   nodeEnv: process.env.NODE_ENV ?? 'development',
@@ -45,9 +51,10 @@ export const env = {
     .filter(Boolean),
   adminToken: process.env.ADMIN_TOKEN ?? '',
   // AI 用量告警:只观测不拦截;邮件发往 ALERT_EMAIL(缺省沿用发信人)
-  aiAlertDailyTokens: Number(process.env.AI_ALERT_DAILY_TOKENS ?? 8_000_000),
-  aiAlertJobTokens: Number(process.env.AI_ALERT_JOB_TOKENS ?? 500_000),
-  alertEmail: process.env.ALERT_EMAIL ?? process.env.SMTP_FROM ?? '',
+  aiAlertDailyTokens: positiveNumber(process.env.AI_ALERT_DAILY_TOKENS, 8_000_000),
+  aiAlertJobTokens: positiveNumber(process.env.AI_ALERT_JOB_TOKENS, 500_000),
+  // 用 pick 而非 ?? :compose 里 ALERT_EMAIL= 注入的是空串,?? 不会回退
+  alertEmail: pick(process.env.ALERT_EMAIL, process.env.SMTP_FROM),
   // 邀测期静态邀请码,逗号分隔;生产未配置时注册会返回 INVITE_REQUIRED
   inviteCodes: (process.env.INVITE_CODES ?? '')
     .split(',')
