@@ -6,6 +6,7 @@ import { errorMiddleware, ApiError } from './middlewares/error'
 import { securityMiddleware } from './middlewares/security'
 import { env } from './config/env'
 import { healthPayload } from './shared/health'
+import { prisma } from './shared/prisma'
 import authRoutes from './modules/auth/routes'
 import userRoutes from './modules/user/routes'
 import syncRoutes from './modules/sync/routes'
@@ -83,10 +84,17 @@ export function createApp(): Koa {
     await next()
   })
 
-  // 健康检查
+  // 健康检查:执行一次最小查询,数据库不可用时给编排层 503
   app.use(async ctx => {
     if (ctx.path === '/healthz') {
-      ctx.body = healthPayload()
+      let dbOk = true
+      try {
+        await prisma.$queryRaw`SELECT 1`
+      } catch {
+        dbOk = false
+      }
+      ctx.status = dbOk ? 200 : 503
+      ctx.body = healthPayload(Date.now(), dbOk)
       return
     }
     throw new ApiError(404, 'NOT_FOUND', '接口不存在')
