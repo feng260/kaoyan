@@ -34,6 +34,8 @@ abstract class YanZhongDatabase : RoomDatabase() {
     abstract fun tombstoneDao(): TombstoneDao
 
     companion object {
+        private const val DB_NAME = "yanzhong.db"
+
         @Volatile
         private var instance: YanZhongDatabase? = null
 
@@ -41,10 +43,20 @@ abstract class YanZhongDatabase : RoomDatabase() {
             instance ?: build(context).also { instance = it }
         }
 
+        /** 注销账号:关闭单例并删除数据库文件;调用后必须重启进程,避免仓库继续持有已关闭实例 */
+        fun closeAndDelete(context: Context) {
+            synchronized(this) {
+                instance?.close()
+                instance = null
+            }
+            // deleteDatabase 连带清掉 -wal/-shm,必须在本连接关闭之后调用
+            context.applicationContext.deleteDatabase(DB_NAME)
+        }
+
         private fun build(context: Context) = Room.databaseBuilder(
             context.applicationContext,
             YanZhongDatabase::class.java,
-            "yanzhong.db"
+            DB_NAME
         )
             .addMigrations(
                 MIGRATION_1_2,

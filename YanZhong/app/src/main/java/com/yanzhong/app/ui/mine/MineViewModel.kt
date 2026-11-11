@@ -5,17 +5,19 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.db.SubjectEntity
-import com.yanzhong.app.data.stats.LearningProfile
-import com.yanzhong.app.data.stats.buildLearningProfile
+import com.yanzhong.app.data.local.LocalDataWiper
 import com.yanzhong.app.data.prefs.AppSettings
 import com.yanzhong.app.data.prefs.PomodoroPlan
 import com.yanzhong.app.data.remote.ApiClient
 import com.yanzhong.app.data.remote.DeleteAccountReq
 import com.yanzhong.app.data.remote.TokenStore
 import com.yanzhong.app.data.remote.refreshIdentity
+import com.yanzhong.app.data.stats.LearningProfile
+import com.yanzhong.app.data.stats.buildLearningProfile
 import com.yanzhong.app.util.TimeUtils
 import java.time.Instant
 import java.time.ZoneId
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +25,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 账号登录态。
@@ -156,6 +159,10 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
      * 只有服务端确认删除了才清本地凭证——顺序反了就糟了:网络一抖,
      * 用户以为账号没了,其实服务端还好好留着;或者反过来,服务端删干净了,
      * 本地还存着一份 token,下次启动拿着废 token 反复撞墙。
+     *
+     * 服务端删档成功后必须把本机数据一并抹掉(凭证/设置/更新包/恢复前快照/Room 数据库),
+     * 否则「注销」只注销了半份。数据库单例在清理时被关闭,当前进程不能再用,
+     * 所以清理成功就重启进程回登录页;清理失败则至少清掉凭证,并提示用户卸载重装。
      */
     fun deleteAccount(username: String, password: String, onDone: (Boolean, String) -> Unit) {
         viewModelScope.launch {
@@ -165,9 +172,19 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
                 )
             }
             result.fold(
-                onSuccess = { resp ->
-                    TokenStore.clearAll()
-                    onDone(true, "账号已注销,服务端清理了 ${resp.deleted} 条记录")
+                onSuccess = {
+                    val app = getApplication<YanZhongApp>()
+                    // 账号在服务端已不可恢复:清理不能因为页面退出/协程取消而只做一半
+                    val wiped = runCatching {
+                        withContext(NonCancellable) { LocalDataWiper.wipe(app) }
+                    }
+                    if (wiped.isSuccess) {
+                        // 数据库单例已关闭,必须重启进程;用户会直接回到登录页
+                        LocalDataWiper.restart(app)
+                    } else {
+                        TokenStore.clearAll()
+                        onDone(true, "账号已注销，但本机数据清理失败，请卸载重装研钟")
+                    }
                 },
                 onFailure = { e -> onDone(false, "注销失败:${e.readableMessage()}") }
             )

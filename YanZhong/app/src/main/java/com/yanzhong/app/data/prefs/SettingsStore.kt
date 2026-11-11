@@ -309,6 +309,12 @@ class SettingsRepository(private val context: Context) {
                 .joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
+    /** 注销账号:清除全部本机设置与未完成计时状态 */
+    suspend fun clearAllLocal() {
+        context.settingsStore.edit { it.clear() }
+        context.timerStore.edit { it.clear() }
+    }
+
     // ---- 引擎状态持久化 ----
 
     suspend fun saveTimer(state: PersistedTimer) {
