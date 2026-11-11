@@ -2,10 +2,25 @@ import Router from '@koa/router'
 import { z } from 'zod'
 import * as authService from './service'
 import { legalConsentSchema } from './consent'
-import { strictLimit } from '../../middlewares/ratelimit'
+import { clientAddress, accountKey, bodyField, rateLimit, strictLimit } from '../../middlewares/ratelimit'
 import { requireAuth } from '../../middlewares/auth'
+import { env } from '../../config/env'
 
 const router = new Router({ prefix: '/api/v1/auth' })
+
+const loginIpLimit = rateLimit({ name: 'login-ip', max: 30, windowMs: 15 * 60_000 })
+const loginUserLimit = rateLimit({
+  name: 'login-user',
+  max: 10,
+  windowMs: 15 * 60_000,
+  key: ctx => accountKey(bodyField(ctx, 'username')),
+})
+const loginUserIpLimit = rateLimit({
+  name: 'login-user-ip',
+  max: 5,
+  windowMs: 15 * 60_000,
+  key: ctx => `${clientAddress(ctx, env.trustProxy)}:${accountKey(bodyField(ctx, 'username'))}`,
+})
 
 const registerSchema = z.object({
   username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_\u4e00-\u9fa5]+$/, '仅限中英文数字下划线'),
@@ -36,7 +51,7 @@ router.post('/register', strictLimit(), async ctx => {
   ctx.body = { user }
 })
 
-router.post('/login', strictLimit(), async ctx => {
+router.post('/login', loginIpLimit, loginUserLimit, loginUserIpLimit, async ctx => {
   const body = loginSchema.parse(ctx.request.body)
   const result = await authService.login({ ...body, ip: ctx.ip })
   ctx.body = result
