@@ -68,7 +68,7 @@ router.get('/settings', requireAuth, async ctx => {
 })
 
 router.put('/settings', requireAuth, async ctx => {
-  const body = z.object({ settings: z.record(z.unknown()) }).parse(ctx.request.body)
+  const body = z.object({ settings: z.record(z.string(), z.unknown()) }).parse(ctx.request.body)
   ctx.body = await syncService.putSettings(ctx.state.auth!.userGuid, body)
   if (Object.keys(body.settings).length > 0) {
     notifySettingsChanged(ctx.state.auth!.userGuid, ctx.state.auth!.deviceId)

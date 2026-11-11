@@ -22,7 +22,11 @@ export function errorMiddleware() {
         }
       } else if (err instanceof ZodError) {
         ctx.status = 400
-        ctx.body = { error: 'INVALID_PARAMS', message: '参数校验失败', details: err.errors.map(e => `${e.path.join('.')}: ${e.message}`) }
+        ctx.body = {
+          error: 'INVALID_PARAMS',
+          message: '参数校验失败',
+          details: err.issues.map(e => `${e.path.join('.')}: ${e.message}`),
+        }
       } else {
         ctx.status = 500
         ctx.body = { error: 'INTERNAL', message: '服务器内部错误' }

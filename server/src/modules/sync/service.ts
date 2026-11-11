@@ -18,7 +18,7 @@ export async function upsertResource(userGuid: string, resource: string, rows: u
   const name = parseResource(resource)
   if (!name) throw new ApiError(404, 'NOT_FOUND', `未知资源 ${resource}`)
   if (!Array.isArray(rows)) throw new ApiError(400, 'INVALID_PARAMS', 'body 应为行数组')
-  const schema = schemas[name] as z.ZodTypeAny
+  const schema = schemas[name] as z.ZodType<any>
   const delegate = (prisma as any)[table[name]]
 
   let applied = 0
@@ -166,7 +166,7 @@ export async function restoreBackup(userGuid: string, payload: any) {
     ]
     for (const [resource, rows] of res) {
       const name = parseResource(resource)!
-      const schema = schemas[name] as z.ZodTypeAny
+      const schema = schemas[name] as z.ZodType<any>
       const delegate = (tx as any)[table[name]]
       if (!Array.isArray(rows)) {
         stats[resource] = { applied: 0, skipped: 0, rejected: [{ index: -1, reasons: ['资源数据应为数组'] }] }
