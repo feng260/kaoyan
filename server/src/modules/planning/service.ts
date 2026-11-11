@@ -7,6 +7,7 @@ import type { GeneratedPlan, GeneratedStage } from './generator'
 import { AiUnavailable, generateAiPlan, type AiPlanningInput, type PlanProgress } from './aiGenerator'
 import type { PlanSpec } from './planSpec'
 import { GenerationJobStore, type PlanGenerationJob } from './generationJobs'
+import { aiAlert } from '../usage/aiAlert'
 import { generatePlanDocument } from './aiDocument'
 import { runPlanInterview, type InterviewInput, type InterviewResult } from './aiCoach'
 import { parseTimetableImage, type TimetableImage, type TimetableResult } from './timetable'
@@ -1575,6 +1576,7 @@ export function createPlanningService(
       assertGenerateOptions(profileRow, options)
       const horizonDays = Math.max(0, diffDays(toDay(profileRow.examDate), dayStart(new Date())))
       const job = generationJobs.create(userGuid, horizonDays)
+      aiAlert.warnIfBusy(generationJobs.runningCount())
       const push = (patch: Partial<PlanGenerationJob>) => {
         const updated = generationJobs.update(job.id, patch)
         if (updated) onUpdate?.(updated)
@@ -1602,6 +1604,8 @@ export function createPlanningService(
         // 最终状态与 usage 同一次推送:客户端收到 done/failed 时已经能展示消耗
         onFinish: summary => {
           if (finalPatch) push({ ...finalPatch, usage: summary })
+          aiAlert.warnIfJobExceeds(summary.totalTokens, job.id)
+          void aiAlert.checkDailyTokenAlert()
         },
       })
       return { jobId: job.id, job }
@@ -1609,6 +1613,11 @@ export function createPlanningService(
 
     async getGenerationJob(userGuid: string, id: string): Promise<PlanGenerationJob | null> {
       return generationJobs.get(userGuid, id)
+    },
+
+    /** 管理端显示当前并发生成数;单实例进程内统计 */
+    runningGenerationCount(): number {
+      return generationJobs.runningCount()
     },
 
     async confirmPlan(userGuid: string, planId: number): Promise<PublicPlan> {
@@ -2879,3 +2888,8 @@ export type PlanningService = ReturnType<typeof createPlanningService>
 
 /** 生产实例:注入真实的 Prisma 客户端 */
 export const planningService = createPlanningService(prisma as unknown as PlanningDb)
+
+/** 管理端显示当前并发生成数;单实例进程内统计 */
+export function runningGenerationCount(): number {
+  return planningService.runningGenerationCount()
+}

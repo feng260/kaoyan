@@ -4,7 +4,8 @@ import path from 'path'
 import { prisma, num } from '../../shared/prisma'
 import { ApiError } from '../../middlewares/error'
 import { env } from '../../config/env'
-import { clampAdminDays, getAdminUsage } from '../usage/service'
+import { clampAdminDays, getAdminUsage, getTodayTotalTokens } from '../usage/service'
+import { runningGenerationCount } from '../planning/service'
 
 /**
  * 管理端 API(鉴权:X-Admin-Token,与 APK 上传共用):
@@ -91,7 +92,12 @@ router.delete('/users/:guid', async ctx => {
 })
 
 router.get('/usage', async ctx => {
-  ctx.body = { ...await getAdminUsage(clampAdminDays(ctx.query.days)), serverTime: Date.now() }
+  ctx.body = {
+    ...await getAdminUsage(clampAdminDays(ctx.query.days)),
+    todayTokens: await getTodayTotalTokens(),
+    runningJobs: runningGenerationCount(),
+    serverTime: Date.now(),
+  }
 })
 
 router.get('/releases', async ctx => {

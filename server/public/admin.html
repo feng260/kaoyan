@@ -194,6 +194,8 @@ async function loadUsage(days = usageDays) {
     ['总 tokens', fmtNum(u.totals.totalTokens)],
     ['调用次数', fmtNum(u.totals.calls)],
     ['活跃用户', fmtNum(u.totals.activeUsers)],
+    ['今日 tokens', fmtNum(u.todayTokens)],
+    ['生成中任务', fmtNum(u.runningJobs)],
     ['估算调用占比', u.totals.calls ? Math.round(u.totals.estimatedCalls * 100 / u.totals.calls) + '%' : '0%'],
   ]
   if (u.estimatedCostCny != null) cards.push(['预估成本', '¥' + u.estimatedCostCny.toFixed(2)])

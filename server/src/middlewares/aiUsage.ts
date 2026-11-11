@@ -1,5 +1,6 @@
 import { Context, Next } from 'koa'
 import { runWithAiUsage, type RunWithAiUsageOptions } from '../shared/llm/usage'
+import { aiAlert } from '../modules/usage/aiAlert'
 
 /**
  * AI 请求级计量:处理期间所有 chatComplete 调用记入本轮会话,请求结束后一次落库。
@@ -12,6 +13,10 @@ export function aiUsageMeter(options: RunWithAiUsageOptions = {}) {
       await next()
       return
     }
-    await runWithAiUsage(userGuid, next, options)
+    try {
+      await runWithAiUsage(userGuid, next, options)
+    } finally {
+      void aiAlert.checkDailyTokenAlert()
+    }
   }
 }

@@ -159,6 +159,16 @@ export async function getUserUsage(userGuid: string, utcOffsetMinutes: number, n
   }
 }
 
+/** 管理端「今日 token」:固定按 Asia/Shanghai 自然日 */
+export async function getTodayTotalTokens(now = new Date()): Promise<number> {
+  const since = dayStartForOffset(now, 480)
+  const agg = await prisma.llmUsage.aggregate({
+    where: { createdAt: { gte: since } },
+    _sum: { totalTokens: true },
+  })
+  return agg._sum.totalTokens ?? 0
+}
+
 export async function getAdminUsage(days: number, now = new Date()): Promise<AdminUsage> {
   const clamped = clampAdminDays(days)
   const from = new Date(now.getTime() - clamped * DAY_MS)

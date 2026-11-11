@@ -67,6 +67,12 @@ export class GenerationJobStore {
     return null
   }
 
+  runningCount(): number {
+    let count = 0
+    for (const job of this.jobs.values()) if (job.status === 'running') count++
+    return count
+  }
+
   update(id: string, patch: Partial<PlanGenerationJob>): PlanGenerationJob | null {
     const job = this.jobs.get(id)
     if (!job) return null

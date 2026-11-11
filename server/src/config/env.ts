@@ -44,6 +44,10 @@ export const env = {
     .map(s => s.trim())
     .filter(Boolean),
   adminToken: process.env.ADMIN_TOKEN ?? '',
+  // AI 用量告警:只观测不拦截;邮件发往 ALERT_EMAIL(缺省沿用发信人)
+  aiAlertDailyTokens: Number(process.env.AI_ALERT_DAILY_TOKENS ?? 8_000_000),
+  aiAlertJobTokens: Number(process.env.AI_ALERT_JOB_TOKENS ?? 500_000),
+  alertEmail: process.env.ALERT_EMAIL ?? process.env.SMTP_FROM ?? '',
   // 邀测期静态邀请码,逗号分隔;生产未配置时注册会返回 INVITE_REQUIRED
   inviteCodes: (process.env.INVITE_CODES ?? '')
     .split(',')
