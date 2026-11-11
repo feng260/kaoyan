@@ -119,9 +119,9 @@ sudo docker compose logs -f api
 
 ```bash
 # 新镜像以 node 用户运行;旧 releases 卷由 root 容器创建,上线前必须交还属主
-docker compose exec -u 0 api chown -R node:node /app/releases
+sudo docker compose exec -u 0 api chown -R node:node /app/releases
 # 验证可写(应无输出、退出码 0)
-docker compose exec api sh -c 'touch /app/releases/.write-test && rm /app/releases/.write-test'
+sudo docker compose exec api sh -c 'touch /app/releases/.write-test && rm /app/releases/.write-test'
 ```
 
 全新部署不需要这一步（Dockerfile 已创建目录并 chown）。如果已经跳过、首次上传报 5xx
