@@ -50,7 +50,10 @@ abstract class YanZhongDatabase : RoomDatabase() {
                 instance = null
             }
             // deleteDatabase 连带清掉 -wal/-shm,必须在本连接关闭之后调用
-            context.applicationContext.deleteDatabase(DB_NAME)
+            val dbContext = context.applicationContext
+            val dbFile = dbContext.getDatabasePath(DB_NAME)
+            val deleted = dbContext.deleteDatabase(DB_NAME)
+            if (!deleted && dbFile.exists()) error("failed to delete Room database")
         }
 
         private fun build(context: Context) = Room.databaseBuilder(

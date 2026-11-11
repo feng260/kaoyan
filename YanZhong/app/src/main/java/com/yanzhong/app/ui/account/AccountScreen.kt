@@ -364,7 +364,7 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
             text = {
                 Text(
                     "服务器上的档案、计划、进度记录会一起删掉,删完就没有了。\n" +
-                        "本机上的学习记录都留着,不影响你继续用。"
+                        "这台设备上的学习记录和设置也会一并清除,完成后会回到登录页。"
                 )
             },
             confirmButton = {
