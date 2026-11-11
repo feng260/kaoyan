@@ -14,7 +14,8 @@ export type AiAlertOptions = {
 
 export type AiAlertDeps = {
   sumTokensSince: (since: Date) => Promise<number>
-  sendAlert: (subject: string, text: string) => Promise<void>
+  /** true = 邮件已实际交给 SMTP;false = SMTP/告警邮箱未配置,未发送 */
+  sendAlert: (subject: string, text: string) => Promise<boolean>
   clock: () => number
   log: (message: string) => void
 }
@@ -40,10 +41,15 @@ export function createAiAlert(deps: AiAlertDeps, opts: AiAlertOptions) {
       try {
         const total = await deps.sumTokensSince(since)
         if (total < opts.dailyTokens) return
-        await deps.sendAlert(
+        const delivered = await deps.sendAlert(
           '研钟 AI 用量告警',
           `今日(${day} CST)AI token 用量已达 ${total},超过阈值 ${opts.dailyTokens}。请登录管理后台查看明细。`,
         )
+        if (!delivered) {
+          // 未实际发出时不占用当日去重,配置补齐后当天的后续检查仍可告警
+          deps.log('[ai-alert] 跳过:SMTP 或告警邮箱未配置')
+          return
+        }
         lastAlertDay = day
         deps.log(`[ai-alert] 已发送日报警 total=${total}`)
       } catch (error) {
@@ -72,8 +78,9 @@ export const aiAlert = createAiAlert({
     return agg._sum.totalTokens ?? 0
   },
   sendAlert: async (subject, text) => {
-    if (!smtpConfigured() || !env.alertEmail) return
+    if (!smtpConfigured() || !env.alertEmail) return false
     await sendMail({ to: env.alertEmail, subject, text })
+    return true
   },
   clock: () => Date.now(),
   log: message => console.warn(message),
