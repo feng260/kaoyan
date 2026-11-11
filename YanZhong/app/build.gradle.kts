@@ -44,6 +44,10 @@ android {
         // 否则老设备永远收不到更新(updateAvailable 恒为 false)。
         versionCode = 10
         versionName = "1.0.0-m10"
+        // 部署域名从这里注入:./gradlew -PYANZHONG_API_BASE=https://实际域名
+        val apiBase = (project.findProperty("YANZHONG_API_BASE") as String?)
+            ?: "https://api.yanzhong.app"
+        buildConfigField("String", "API_BASE_URL", "\"$apiBase\"")
     }
 
     buildTypes {

@@ -39,7 +39,7 @@ object TokenStore {
      * 升级后一次性丢弃,回到内置默认地址——否则老设备会一直被旧地址压住,
      * 表现为"装的明明是刚打的新包,请求却还发往旧地址"。
      */
-    private const val SERVER_CONFIG_VERSION = 1
+    private const val SERVER_CONFIG_VERSION = 2
 
     private var appContext: Context? = null
     fun init(context: Context) { appContext = context.applicationContext }

@@ -1144,13 +1144,12 @@ interface YanzhongApi {
 // ---------- 网络装配 ----------
 
 /**
- * 默认服务器地址:自建服务器 IP + HTTP,仅用于内测阶段。
- * 明文请求依赖 res/xml/network_security_config.xml 放行该 IP,换地址时两处要一起改。
- * 接入 HTTPS 域名后改成 "https://<域名>" 并收回明文许可;
- * 若届时仍需区分调试/正式环境,可恢复成按 BuildConfig.DEBUG 分支的写法。
+ * 默认服务器地址:由构建参数 YANZHONG_API_BASE 注入到 BuildConfig.API_BASE_URL(见 app/build.gradle.kts),
+ * 正式包默认 https://api.yanzhong.app。明文 HTTP 仅在 debug 构建可用
+ * (src/debug/res/xml/network_security_config.xml 只放行模拟器与 localhost),release 不放开任何明文地址。
  * 用户在登录页/「云同步」页手动保存过的地址优先级更高(见 [effectiveServerUrl])。
  */
-const val DEFAULT_SERVER_URL: String = "http://81.71.14.219:3000"
+val DEFAULT_SERVER_URL: String = com.yanzhong.app.BuildConfig.API_BASE_URL
 
 /**
  * 本次请求实际要用的服务器地址:设备上保存过的自定义地址优先,没保存则用内置默认地址。
