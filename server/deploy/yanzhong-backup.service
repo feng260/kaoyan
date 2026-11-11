@@ -1,0 +1,10 @@
+[Unit]
+Description=YanZhong MySQL backup to Tencent COS
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/kaoyan/server
+EnvironmentFile=/etc/yanzhong/backup.env
+ExecStart=/opt/kaoyan/server/scripts/backup-mysql.sh

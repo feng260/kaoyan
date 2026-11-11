@@ -27,5 +27,25 @@ docker compose exec -T mysql sh -c 'exec mysqldump --single-transaction --quick 
 gzip -t -- "$tmp"
 mv -- "$tmp" "$file"
 log "Backup complete: $file ($(wc -c < "$file") bytes)"
-find "$BACKUP_DIR" -maxdepth 1 -type f -name 'yanzhong-*.sql.gz' -mtime "+$((10#$RETENTION_DAYS - 1))" -print -delete | while IFS= read -r old; do log "Removed expired backup: $old"; done
+# Record the basename so the .sql.gz/.sha256 pair stays verifiable after being copied elsewhere.
+(cd "$BACKUP_DIR" && sha256sum -- "$(basename "$file")" > "$(basename "$file").sha256")
+log "Checksum written: $file.sha256"
+
+if [[ "${BACKUP_SKIP_UPLOAD:-0}" != "1" ]]; then
+  : "${COS_BUCKET:?COS_BUCKET is required for offsite upload}"
+  command -v rclone >/dev/null || { log "rclone is required"; exit 2; }
+  day_path="$(date -u '+%Y/%m/%d')"
+  remote="cos:${COS_BUCKET}/yanzhong-backup/mysql/${day_path}"
+  rclone copyto -- "$file" "${remote}/$(basename "$file")"
+  rclone copyto -- "$file.sha256" "${remote}/$(basename "$file").sha256"
+  log "Uploaded to ${remote}"
+fi
+
+if [[ -n "${HEALTHCHECK_BACKUP_URL:-}" ]]; then
+  command -v curl >/dev/null || { log "curl is required for healthcheck ping"; exit 2; }
+  curl -fsS -m 10 --retry 2 "$HEALTHCHECK_BACKUP_URL" >/dev/null || log "WARN backup healthcheck ping failed"
+fi
+
+# Expired dumps and their checksums share the same mtime, so both are removed together; newer pairs are kept.
+find "$BACKUP_DIR" -maxdepth 1 -type f \( -name 'yanzhong-*.sql.gz' -o -name 'yanzhong-*.sql.gz.sha256' \) -mtime "+$((10#$RETENTION_DAYS - 1))" -print -delete | while IFS= read -r old; do log "Removed expired backup: $old"; done
 log 'Retention cleanup complete'

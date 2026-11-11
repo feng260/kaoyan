@@ -15,6 +15,9 @@ dump="$1"
 [[ -f "$dump" ]] || { printf 'Dump not found: %s\n' "$dump" >&2; exit 2; }
 for tool in docker gzip; do command -v "$tool" >/dev/null || { printf '%s is required\n' "$tool" >&2; exit 2; }; done
 gzip -t -- "$dump"
+if [[ -f "$dump.sha256" ]]; then
+  (cd "$(dirname "$dump")" && sha256sum -c -- "$(basename "$dump.sha256")")
+fi
 container="yanzhong-restore-drill-$(date -u '+%Y%m%d%H%M%S')-$$"
 # The container has no network, published ports, bind mounts, or production volumes.
 # docker rm -v removes only this container and its anonymous data volume.
@@ -30,5 +33,10 @@ for (( i=0; i<60; i++ )); do
 done
 [[ "$ready" == true ]] || { printf 'Temporary MySQL did not become ready\n' >&2; exit 1; }
 gzip -dc -- "$dump" | docker exec -i "$container" mysql -uroot
-docker exec "$container" mysql -uroot -N -e 'SELECT 1 AS health; SELECT COUNT(*) AS user_rows FROM yanzhong.users;'
+docker exec "$container" mysql -uroot -N -e "
+SELECT 'users', COUNT(*) FROM yanzhong.users
+UNION ALL SELECT 'plans', COUNT(*) FROM yanzhong.plans
+UNION ALL SELECT 'plan_items', COUNT(*) FROM yanzhong.plan_items
+UNION ALL SELECT 'tasks', COUNT(*) FROM yanzhong.tasks
+UNION ALL SELECT 'pomodoro_sessions', COUNT(*) FROM yanzhong.pomodoro_sessions;"
 printf '[%s] Restore drill passed; temporary resources will be removed.\n' "$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
