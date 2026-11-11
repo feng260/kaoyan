@@ -229,7 +229,7 @@ paths:
   /ws:
     get:
       tags: [ws]
-      summary: 专注状态 WebSocket(连接参数 ?token=<access>)
+      summary: 专注状态 WebSocket(Authorization: Bearer <access>)
       description: |
         C→S:`{"type":"hello","deviceName":"..."}` / `{"type":"status","phase":"focus|break|idle","remainMs":0,"taskId":1,"taskTitle":"...","planName":"..."}` / `{"type":"stop"}`。
         S→C:`presence`(全量在线设备+最近状态) / `peerStatus`(他端状态变更) / `kicked`(强制登出,code 4001)。

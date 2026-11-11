@@ -20,6 +20,13 @@ export function verifyAccessToken(token: string): JwtPayload | null {
   }
 }
 
+/** 从 Authorization 头提取 Bearer token;WS 握手与 HTTP 共用一套格式 */
+export function bearerToken(header: string | undefined): string {
+  if (!header) return ''
+  const match = /^Bearer\s+(.+)$/i.exec(header.trim())
+  return match?.[1]?.trim() ?? ''
+}
+
 /** refresh token:明文仅存于客户端,服务端只存 SHA-256 */
 export function sha256(v: string): string {
   return crypto.createHash('sha256').update(v).digest('hex')

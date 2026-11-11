@@ -11,8 +11,6 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.Route
-import okhttp3.WebSocket
-import okhttp3.WebSocketListener
 import retrofit2.Retrofit
 import retrofit2.converter.kotlinx.serialization.asConverterFactory
 import retrofit2.http.Body
@@ -1247,34 +1245,5 @@ object ApiClient {
             .addConverterFactory(json.asConverterFactory("application/json".toMediaType()))
             .build()
         return retrofit.create(YanzhongApi::class.java)
-    }
-
-    /** 专注状态 WebSocket:登录后连接,重连成功后回调(hello + presence 恢复) */
-    fun statusWs(
-        token: String,
-        deviceName: String,
-        onEvent: (String) -> Unit,
-        onOpened: () -> Unit
-    ): WebSocket {
-        val server = runBlocking { effectiveServerUrl() }
-        val wsUrl = server.replaceFirst("http", "ws") + "/ws?token=" + token
-        val client = OkHttpClient()
-        return client.newWebSocket(
-            Request.Builder().url(wsUrl).build(),
-            object : WebSocketListener() {
-                override fun onOpen(webSocket: WebSocket, response: Response) {
-                    webSocket.send("""{"type":"hello","deviceName":"$deviceName"}""")
-                    onOpened()
-                }
-
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    onEvent(text)
-                }
-
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    onEvent("""{"type":"error","message":"${t.message ?: "连接断开"}"}""")
-                }
-            }
-        )
     }
 }

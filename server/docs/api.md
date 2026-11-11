@@ -42,7 +42,7 @@ resource ∈ `subjects | countdownNodes | tasks | sessions | dailyReviews | week
 
 ## WebSocket 状态同步
 
-连接 `ws://<host>/ws?token=<access>`（access 过期返回 4001，刷新后重连）
+连接 `ws://<host>/ws`（`Authorization: Bearer <access>`；access 过期返回 4001，刷新后重连）
 
 **上行**：
 ```json

@@ -1,9 +1,9 @@
 import WebSocket from 'ws'
-import { verifyAccessToken } from '../../shared/jwt'
+import { bearerToken, verifyAccessToken } from '../../shared/jwt'
 import { hub, PeerStatus } from '../../shared/ws/Hub'
 
 /**
- * 专注状态 WebSocket(/ws?token=<access>):
+ * 专注状态 WebSocket(/ws,Authorization: Bearer <access>):
  * C→S hello{deviceName} / status{...} / stop{}
  * S→C presence / peerStatus / kicked
  * access token 过期时 4001 关闭,客户端刷新后重连。
@@ -13,8 +13,8 @@ export function setupStatusWs(server: import('http').Server) {
   hub.startHeartbeat()
 
   wss.on('connection', (ws, req) => {
-    const url = new URL(req.url ?? '/ws', 'http://localhost')
-    const token = url.searchParams.get('token') ?? ''
+    // 只认 Authorization 头:URL query 会落到反代访问日志里
+    const token = bearerToken(req.headers.authorization)
     const payload = verifyAccessToken(token)
     if (!payload) {
       ws.close(4001, 'unauthorized')

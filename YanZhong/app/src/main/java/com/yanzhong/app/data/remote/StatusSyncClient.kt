@@ -190,8 +190,11 @@ class StatusSyncClient(private val app: YanZhongApp) {
             val access = TokenStore.currentAccess() ?: return@launch
             if (!started) return@launch
             val server = effectiveServerUrl()
-            val wsUrl = server.replaceFirst("http", "ws") + "/ws?token=" + access
-            val request = Request.Builder().url(wsUrl).build()
+            val wsUrl = server.replaceFirst("http", "ws") + "/ws"
+            val request = Request.Builder()
+                .url(wsUrl)
+                .header("Authorization", "Bearer $access")
+                .build()
             val version = synchronized(connectionLock) {
                 if (!started) return@launch
                 ++connectionVersion
