@@ -226,46 +226,77 @@ compose 的 `ports` 恢复为 `"3000:3000"`、`TRUST_PROXY` 改回 `"false"` 再
 | 重启 API | `sudo docker compose restart api` |
 | 更新代码后重新部署 | `sudo git pull && sudo docker compose up -d --build` |
 | 停止全部服务 | `sudo docker compose down`（**不要加 `-v`，会连数据卷一起删**） |
-| 立即备份数据库 | `sudo /opt/kaoyan/server/scripts/backup-mysql.sh` |
+| 立即备份数据库 | `sudo systemctl start yanzhong-backup.service`（手动触发备份服务） |
+| 备份定时器状态 | `systemctl list-timers yanzhong-backup.timer` |
 | 隔离恢复演练 | `sudo /opt/kaoyan/server/scripts/restore-mysql-drill.sh /var/backups/yanzhong/mysql/<备份名>.sql.gz` |
 | 进数据库命令行 | `sudo docker compose exec mysql mysql -uroot -p yanzhong` |
 
 ### 自动备份与恢复演练
 
 `backup-mysql.sh` 默认写入 `/var/backups/yanzhong/mysql`，文件名含 UTC 时间与进程号；
-创建压缩 dump 后先检验 gzip，再原子改名。它使用 Compose 内的 MySQL 密码，失败时返回非零，
-在同目录 `backup.log` 记录 UTC 时间；只清理该目录中超过 `RETENTION_DAYS` 天的
-`yanzhong-*.sql.gz` 文件，默认保留 14 天。备份目录应在受控存储上，定期异地复制并限制访问。
-脚本的可选环境变量：`BACKUP_DIR`、`RETENTION_DAYS`（正整数）、`COMPOSE_PROJECT_DIR`
-（默认脚本上级目录）；运行用户须有 Docker 权限和备份目录写权限。
+创建压缩 dump 后先检验 gzip，再原子改名，并在同目录生成仅含文件名的 `.sha256`
+（整对拷走后仍可校验）。它使用 Compose 内的 MySQL 密码，失败时返回非零，在同目录
+`backup.log` 记录 UTC 时间；本地默认保留 14 天，到期时 `yanzhong-*.sql.gz` 与配对的
+`.sha256` 一并清理。备份目录应在受控存储上并限制访问。脚本的可选环境变量：
+`BACKUP_DIR`、`RETENTION_DAYS`（正整数）、`COMPOSE_PROJECT_DIR`（默认脚本上级目录）、
+`BACKUP_SKIP_UPLOAD=1`（仅本地演练时跳过 COS 上传）；运行用户须有 Docker 权限和备份目录写权限。
+
+每日 04:00（Asia/Shanghai，`Persistent=true`，随机延迟最多 5 分钟）由 systemd timer 触发，
+日志进 journald。启用前先在主机安装 `rclone` 并用 `sudo rclone config` 配置名为 `cos`
+的 remote（S3 兼容，provider TencentCOS，子账号只授权该私有桶），再创建 systemd
+服务必读的环境文件：
+
+```bash
+sudo install -d -m 700 /etc/yanzhong
+sudo install -m 600 /dev/null /etc/yanzhong/backup.env
+sudoedit /etc/yanzhong/backup.env
+```
+
+```ini
+COS_BUCKET=<桶名>
+HEALTHCHECK_BACKUP_URL=<Healthchecks ping URL>
+```
+
+该文件必须为 600 且包含上述两项；`yanzhong-backup.service` 的 `EnvironmentFile` 没有
+`-` 前缀，文件缺失或 `COS_BUCKET` 为空时服务直接失败（刻意的 fail-fast）。随后安装单元：
 
 ```bash
 cd /opt/kaoyan/server
 sudo chmod 700 scripts/backup-mysql.sh scripts/restore-mysql-drill.sh
 sudo install -d -m 700 /var/backups/yanzhong/mysql
-sudo scripts/backup-mysql.sh
-sudo gzip -t /var/backups/yanzhong/mysql/yanzhong-*.sql.gz
-sudo crontab -e
+sudo cp deploy/yanzhong-backup.service deploy/yanzhong-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now yanzhong-backup.timer
+sudo systemctl start yanzhong-backup.service   # 立即手动跑一次并等待完成
+sudo systemctl status yanzhong-backup.service --no-pager
+systemctl list-timers yanzhong-backup.timer
 ```
 
-在打开的 root crontab 编辑器里加入以下一行（每日 02:15）：
+预期产物：本地 `/var/backups/yanzhong/mysql/yanzhong-*.sql.gz` 与同名 `.sha256`；
+COS `cos:${COS_BUCKET}/yanzhong-backup/mysql/YYYY/MM/DD/` 下同一对文件。远端生命周期
+30 天与桶的服务端加密在 COS 桶配置中设置（脚本本身不加密）；本地 14 天保留包含校验和。
+每次成功会 ping `HEALTHCHECK_BACKUP_URL`；上传失败让服务非零退出（用
+`journalctl -u yanzhong-backup.service` 查看），配合 Healthchecks 宽限期内的心跳缺失
+构成死信告警。心跳 ping 失败只记 WARN，不改变备份结果。
 
-```cron
-15 2 * * * /opt/kaoyan/server/scripts/backup-mysql.sh
-```
+> **曾按旧文档加过 cron 的服务器必须先删除旧任务**：执行 `sudo crontab -e`，删除或注释
+> `15 2 * * * /opt/kaoyan/server/scripts/backup-mysql.sh`，并可用
+> `sudo crontab -l | grep backup-mysql` 确认无残留。旧 cron 不读取
+> `/etc/yanzhong/backup.env`，会因缺少 `COS_BUCKET` 每次退出 1，还会与 timer 重复备份。
 
-cron 邮件/监控应对非零退出码告警，
-定期检查 `backup.log` 与磁盘容量。每次重大 schema 变更前再手动备份并记下文件校验值。
+定期检查 `backup.log`、`journalctl` 与磁盘容量。每次重大 schema 变更前再手动备份并记下文件校验值。
 
 ```bash
 sudo /opt/kaoyan/server/scripts/restore-mysql-drill.sh /var/backups/yanzhong/mysql/<备份名>.sql.gz
 ```
 
-演练脚本先检验压缩包，然后用 `mysql:8` 建立无网络、无端口映射、无生产卷的临时容器；
-导入后运行 `SELECT 1` 与 `SELECT COUNT(*) FROM yanzhong.users`，退出时仅删除该临时容器
-及匿名卷。脚本不支持生产恢复，即使设置 `ALLOW_PRODUCTION_RESTORE=YES` 也会拒绝；
-真正生产恢复需单独审批、停止写入、确认目标和备份，并遵循事故恢复流程。脚本只验证语法
-不等于已完成实际恢复演练，执行时需服务器可用且 Docker 已拉取 `mysql:8` 镜像。
+演练脚本只接受 `.sql.gz`：先做 gzip 完整性检验，若同目录存在同名 `.sha256` 会先执行
+`sha256sum -c` 校验；随后用 `mysql:8` 建立无网络、无端口映射、无生产卷的临时容器，
+导入后打印 `users`、`plans`、`plan_items`、`tasks`、`pomodoro_sessions` 五个关键表的
+行数供与备份时点对比，退出时仅删除该临时容器及匿名卷。脚本不支持生产恢复，即使设置
+`ALLOW_PRODUCTION_RESTORE=YES` 也会拒绝；真正生产恢复需单独审批、停止写入、确认目标和
+备份，并遵循事故恢复流程。演练需服务器可用且已拉取 `mysql:8` 镜像；打印的行数需人工
+核对，脚本跑通不等于数据完整。
 
 数据落在两个命名卷里：`mysql-data`（数据库）、`releases-data`（上传的 APK）。
 容器重建不影响数据，但 `docker compose down -v` 会清空。
