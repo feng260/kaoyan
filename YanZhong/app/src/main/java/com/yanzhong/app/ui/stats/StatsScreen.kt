@@ -23,6 +23,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.yanzhong.app.ui.guide.GuideAnchor
+import com.yanzhong.app.ui.guide.GuideAnchors
+import com.yanzhong.app.ui.guide.ProvideGuideSpec
+import com.yanzhong.app.ui.guide.statsGuide
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
@@ -48,6 +52,7 @@ fun StatsScreen(padding: PaddingValues) {
     val state by vm.uiState.collectAsStateWithLifecycle()
     val server by vm.server.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { vm.refreshServer() }
+    ProvideGuideSpec(statsGuide(), ready = true)
 
     // 平板:限宽 720dp 居中
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -68,15 +73,21 @@ fun StatsScreen(padding: PaddingValues) {
                 Column {
                     PageHeader(title = "统计", meta = "图表来自本机，执行情况来自服务端")
                     Spacer(Modifier.height(12.dp))
-                    SegmentedChips(
-                        options = StatsRange.entries.map { it.label },
-                        selectedIndex = StatsRange.entries.indexOf(state.range),
-                        onSelect = { vm.selectRange(StatsRange.entries[it]) }
-                    )
+                    GuideAnchor(GuideAnchors.STATS_RANGE) {
+                        SegmentedChips(
+                            options = StatsRange.entries.map { it.label },
+                            selectedIndex = StatsRange.entries.indexOf(state.range),
+                            onSelect = { vm.selectRange(StatsRange.entries[it]) }
+                        )
+                    }
                 }
             }
 
-            item(key = "kpi") { KpiBanner(state) }
+            item(key = "kpi") {
+                GuideAnchor(GuideAnchors.STATS_KPI) {
+                    KpiBanner(state)
+                }
+            }
 
             item(key = "server-execution") {
                 ServerExecutionCard(state = server, onRetry = vm::refreshServer)

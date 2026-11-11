@@ -72,6 +72,10 @@ import com.yanzhong.app.service.FocusService
 import com.yanzhong.app.service.StrictGuardPolicy
 import com.yanzhong.app.timer.Phase
 import com.yanzhong.app.timer.TimerMode
+import com.yanzhong.app.ui.guide.GuideAnchor
+import com.yanzhong.app.ui.guide.GuideAnchors
+import com.yanzhong.app.ui.guide.ProvideGuideSpec
+import com.yanzhong.app.ui.guide.focusGuide
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.AppSheet
@@ -101,6 +105,9 @@ fun FocusScreen(padding: PaddingValues) {
     val vm: FocusViewModel = viewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     val timer = state.timer
+    // 只在空闲态引导;计时中或休息中不打断
+    // loaded 保证等引擎首个真实状态(冷启动恢复中的计时)到达后再判定就绪
+    ProvideGuideSpec(focusGuide(), ready = timer.phase == Phase.IDLE && state.loaded)
     val view = LocalView.current
 
     val backContext = androidx.compose.ui.platform.LocalContext.current
@@ -281,36 +288,42 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
             }
 
             Spacer(Modifier.height(20.dp))
-            PrimaryButton(
-                text = startLabel,
-                onClick = { startByMode(null) },
-                modifier = Modifier.widthIn(max = 320.dp)
-            )
-
-            Spacer(Modifier.height(20.dp))
-            RowGroup {
-                ListRow(
-                    title = "选择任务",
-                    icon = AppIcons.ClipboardList,
-                    subtitle = if (hasTasks) "从今日待办中选一个" else "今日没有待办",
-                    onClick = if (hasTasks) ({ showTaskSheet = true }) else null,
-                    showChevron = hasTasks,
-                    enabled = hasTasks
+            GuideAnchor(GuideAnchors.FOCUS_START) {
+                PrimaryButton(
+                    text = startLabel,
+                    onClick = { startByMode(null) },
+                    modifier = Modifier.widthIn(max = 320.dp)
                 )
             }
 
             Spacer(Modifier.height(20.dp))
-            SegmentedChips(
-                options = listOf("番茄钟", "正计时", "倒计时"),
-                selectedIndex = mode.ordinal,
-                onSelect = { index ->
-                    mode = when (index) {
-                        0 -> TimerMode.POMODORO
-                        1 -> TimerMode.STOPWATCH
-                        else -> TimerMode.COUNTDOWN
-                    }
+            GuideAnchor(GuideAnchors.FOCUS_TASK_ROW) {
+                RowGroup {
+                    ListRow(
+                        title = "选择任务",
+                        icon = AppIcons.ClipboardList,
+                        subtitle = if (hasTasks) "从今日待办中选一个" else "今日没有待办",
+                        onClick = if (hasTasks) ({ showTaskSheet = true }) else null,
+                        showChevron = hasTasks,
+                        enabled = hasTasks
+                    )
                 }
-            )
+            }
+
+            Spacer(Modifier.height(20.dp))
+            GuideAnchor(GuideAnchors.FOCUS_MODE) {
+                SegmentedChips(
+                    options = listOf("番茄钟", "正计时", "倒计时"),
+                    selectedIndex = mode.ordinal,
+                    onSelect = { index ->
+                        mode = when (index) {
+                            0 -> TimerMode.POMODORO
+                            1 -> TimerMode.STOPWATCH
+                            else -> TimerMode.COUNTDOWN
+                        }
+                    }
+                )
+            }
 
             when (mode) {
                 TimerMode.POMODORO -> {

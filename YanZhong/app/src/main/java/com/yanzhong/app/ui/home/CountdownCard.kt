@@ -40,6 +40,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.yanzhong.app.data.db.CountdownNodeEntity
 import com.yanzhong.app.data.db.NodeType
+import com.yanzhong.app.ui.guide.GuideAnchor
+import com.yanzhong.app.ui.guide.GuideAnchors
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
 import com.yanzhong.app.ui.theme.BrandGradient
@@ -76,14 +78,16 @@ fun CountdownCard(
     }
 
     if (nodes.isEmpty()) {
-        AppCard {
-            EmptyState(
-                icon = AppIcons.Timer,
-                title = "还没有倒计时节点",
-                hint = "添加一个节点，让每一天都有锚点",
-                compact = true,
-                action = { TextAction("添加节点", onClick = onManageNodes) }
-            )
+        GuideAnchor(GuideAnchors.HOME_COUNTDOWN) {
+            AppCard {
+                EmptyState(
+                    icon = AppIcons.Timer,
+                    title = "还没有倒计时节点",
+                    hint = "添加一个节点，让每一天都有锚点",
+                    compact = true,
+                    action = { TextAction("添加节点", onClick = onManageNodes) }
+                )
+            }
         }
         return
     }
@@ -102,47 +106,49 @@ fun CountdownCard(
         onNodeSelected(pagerState.currentPage)
     }
 
-    Column(Modifier.fillMaxWidth()) {
-        HorizontalPager(state = pagerState) { page ->
-            val node = nodes.getOrNull(page) ?: return@HorizontalPager
-            CountdownFace(
-                node = node,
-                now = now,
-                nodeCount = nodes.size,
-                onManageNodes = onManageNodes
-            )
-        }
-        // 分页圆点:≤6 个画点,更多时退化为「3/8」计数。
-        // 圆点在卡外(页面底色)上,普通档用 primary、预警档用语义预警色,白点会与浅色背景融为一体。
-        val current = nodes.getOrNull(pagerState.currentPage)
-        val currentLevel = current?.let { alertLevelOf(TimeUtils.daysBetween(now, it.targetAt)) }
-            ?: CountdownAlertLevel.NORMAL
-        val dotColor = when (currentLevel) {
-            CountdownAlertLevel.NORMAL -> MaterialTheme.colorScheme.primary
-            CountdownAlertLevel.AMBER -> WarnAmber
-            else -> WarnRed
-        }
-        Row(
-            Modifier.fillMaxWidth().padding(top = 12.dp),
-            horizontalArrangement = Arrangement.Center,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (nodes.size <= 6) {
-                repeat(nodes.size) { index ->
-                    Box(
-                        Modifier
-                            .padding(horizontal = 3.dp)
-                            .size(if (index == pagerState.currentPage) 7.dp else 5.dp)
-                            .clip(CircleShape)
-                            .background(dotColor.copy(alpha = if (index == pagerState.currentPage) 0.95f else 0.45f))
+    GuideAnchor(GuideAnchors.HOME_COUNTDOWN) {
+        Column(Modifier.fillMaxWidth()) {
+            HorizontalPager(state = pagerState) { page ->
+                val node = nodes.getOrNull(page) ?: return@HorizontalPager
+                CountdownFace(
+                    node = node,
+                    now = now,
+                    nodeCount = nodes.size,
+                    onManageNodes = onManageNodes
+                )
+            }
+            // 分页圆点:≤6 个画点,更多时退化为「3/8」计数。
+            // 圆点在卡外(页面底色)上,普通档用 primary、预警档用语义预警色,白点会与浅色背景融为一体。
+            val current = nodes.getOrNull(pagerState.currentPage)
+            val currentLevel = current?.let { alertLevelOf(TimeUtils.daysBetween(now, it.targetAt)) }
+                ?: CountdownAlertLevel.NORMAL
+            val dotColor = when (currentLevel) {
+                CountdownAlertLevel.NORMAL -> MaterialTheme.colorScheme.primary
+                CountdownAlertLevel.AMBER -> WarnAmber
+                else -> WarnRed
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = 12.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (nodes.size <= 6) {
+                    repeat(nodes.size) { index ->
+                        Box(
+                            Modifier
+                                .padding(horizontal = 3.dp)
+                                .size(if (index == pagerState.currentPage) 7.dp else 5.dp)
+                                .clip(CircleShape)
+                                .background(dotColor.copy(alpha = if (index == pagerState.currentPage) 0.95f else 0.45f))
+                        )
+                    }
+                } else {
+                    Text(
+                        "${pagerState.currentPage + 1}/${nodes.size}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = dotColor.copy(alpha = 0.8f)
                     )
                 }
-            } else {
-                Text(
-                    "${pagerState.currentPage + 1}/${nodes.size}",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = dotColor.copy(alpha = 0.8f)
-                )
             }
         }
     }

@@ -29,7 +29,9 @@ data class FocusUiState(
     val taskPomodoroToday: Int = 0,
     val subjects: List<SubjectEntity> = emptyList(),
     val todayTasks: List<TaskEntity> = emptyList(),
-    val settings: AppSettings = AppSettings()
+    val settings: AppSettings = AppSettings(),
+    /** 首帧真实数据(不是 stateIn 初始值)已产出;首次引导据此判断页面就绪 */
+    val loaded: Boolean = false
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -98,7 +100,8 @@ class FocusViewModel(app: Application) : AndroidViewModel(app) {
             taskPomodoroToday = core.taskPomodoroToday,
             subjects = lists.subjects,
             todayTasks = lists.todayTasks,
-            settings = lists.settings
+            settings = lists.settings,
+            loaded = true
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), FocusUiState())
 

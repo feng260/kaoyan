@@ -50,6 +50,10 @@ import androidx.navigation.NavController
 import com.yanzhong.app.data.db.RepeatRule
 import com.yanzhong.app.data.db.TaskEntity
 import com.yanzhong.app.data.plan.isServerPlanItem
+import com.yanzhong.app.ui.guide.GuideAnchor
+import com.yanzhong.app.ui.guide.GuideAnchors
+import com.yanzhong.app.ui.guide.ProvideGuideSpec
+import com.yanzhong.app.ui.guide.homeGuide
 import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
@@ -58,6 +62,7 @@ import com.yanzhong.app.ui.theme.CONTENT_MAX_WIDTH
 import com.yanzhong.app.ui.theme.EnglishColor
 import com.yanzhong.app.ui.theme.HeroCard
 import com.yanzhong.app.ui.theme.isExpanded
+import com.yanzhong.app.ui.theme.isTablet
 import com.yanzhong.app.ui.theme.MathColor
 import com.yanzhong.app.ui.theme.NeutralTagColor
 import com.yanzhong.app.ui.theme.PageHeader
@@ -85,6 +90,11 @@ fun HomeScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val expanded = isExpanded()
+    // 今日页首次引导:加载出首帧真实数据后再允许出现,避免有/无计划两种文案闪变
+    ProvideGuideSpec(
+        spec = homeGuide(hasActivePlan = state.hasActivePlan, tablet = isTablet()),
+        ready = state.loaded
+    )
     // 计划体检:有生效计划才拉;未登录时 refresh() 内部直接返回,不展示
     val checkupVm: CheckupViewModel = viewModel()
     val checkupState by checkupVm.ui.collectAsStateWithLifecycle()
@@ -133,7 +143,6 @@ fun HomeScreen(
     var showDailyReview by remember { mutableStateOf(false) }
     var showWeeklyReview by remember { mutableStateOf(false) }
     var showMonthlyReview by remember { mutableStateOf(false) }
-    var showOnboarding by remember { mutableStateOf(false) }
     /** 左滑顺延确认弹窗的任务(从任务列表 item 提升,避免每行持有弹窗) */
     var postponeCandidate by remember { mutableStateOf<TaskEntity?>(null) }
     // 日键:模板/排程/周日判定跨天才会变化,避免每分钟 now 更新触发全页重组
@@ -180,10 +189,6 @@ fun HomeScreen(
     }
     /** 今日已完成任务 id:节奏卡概览行按任务真实完成态统计,与展开后的任务段一一对应 */
     val doneTaskIds = remember(state.today.done) { state.today.done.map { it.id }.toSet() }
-
-    LaunchedEffect(state.onboardingDone) {
-        showOnboarding = !state.onboardingDone
-    }
 
     Box(Modifier.fillMaxSize()) {
         if (expanded) {
@@ -644,35 +649,21 @@ fun HomeScreen(
             onDismiss = { showMonthlyReview = false }
         )
     }
-
-    if (showOnboarding) {
-        OnboardingCard(
-            presetLabel = state.nodes.getOrNull(state.pinnedIndex)
-                ?.let { "${it.name} ${TimeUtils.formatYmd(it.targetAt)}" },
-            onManage = {
-                showOnboarding = false
-                showNodeManager = true
-                vm.dismissOnboarding()
-            },
-            onDismiss = {
-                showOnboarding = false
-                vm.dismissOnboarding()
-            }
-        )
-    }
 }
 
 /** 未生成 AI 计划时的引导空态:不展示阶段进度/今日节奏/进度卡,只引导去和 AI 制定计划 */
 @Composable
 private fun PlanGuideCard(onOpenPlan: () -> Unit) {
-    HeroCard(
-        title = "还没有学习计划",
-        desc = "和 AI 聊 5 分钟，按目标院校与每天可用时间排一份全程计划。",
-        icon = AppIcons.Sparkles,
-        colors = actionCardGradient(),
-        onClick = onOpenPlan,
-        actionLabel = "开始制定"
-    )
+    GuideAnchor(GuideAnchors.HOME_PLAN_GUIDE) {
+        HeroCard(
+            title = "还没有学习计划",
+            desc = "和 AI 聊 5 分钟，按目标院校与每天可用时间排一份全程计划。",
+            icon = AppIcons.Sparkles,
+            colors = actionCardGradient(),
+            onClick = onOpenPlan,
+            actionLabel = "开始制定"
+        )
+    }
 }
 
 /** 阶段进度条:当前阶段名 + 第几天 + 各阶段占比轨道(结构来自生效 AI 计划的 stages) */
@@ -895,41 +886,43 @@ private fun TodayProgress(
     val weekProgress = if (weekGoalMin <= 0) 0f else weekMinutes.toFloat() / weekGoalMin
     val weekReached = weekMinutes >= weekGoalMin
 
-    AppCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "今日概览",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f)
-            )
-            if (timerRunning) {
-                Icon(
-                    AppIcons.Flame,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(Modifier.width(6.dp))
+    GuideAnchor(GuideAnchors.HOME_PROGRESS) {
+        AppCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "专注中",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
+                    "今日概览",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
                 )
+                if (timerRunning) {
+                    Icon(
+                        AppIcons.Flame,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        "专注中",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
             }
+            ProgressRow(label = "今日任务", value = "$done/$total", progress = taskProgress)
+            ProgressRow(
+                label = "今日番茄",
+                value = "$todayPomodoros/$dailyPomodoroGoal",
+                progress = pomodoroProgress,
+                icon = AppIcons.Timer
+            )
+            ProgressRow(
+                label = "本周净学习",
+                value = "${formatStudyMinutes(weekMinutes)} / ${formatStudyMinutes(weekGoalMin)}",
+                progress = weekProgress,
+                color = if (weekReached) successContentColor else MaterialTheme.colorScheme.primary
+            )
         }
-        ProgressRow(label = "今日任务", value = "$done/$total", progress = taskProgress)
-        ProgressRow(
-            label = "今日番茄",
-            value = "$todayPomodoros/$dailyPomodoroGoal",
-            progress = pomodoroProgress,
-            icon = AppIcons.Timer
-        )
-        ProgressRow(
-            label = "本周净学习",
-            value = "${formatStudyMinutes(weekMinutes)} / ${formatStudyMinutes(weekGoalMin)}",
-            progress = weekProgress,
-            color = if (weekReached) successContentColor else MaterialTheme.colorScheme.primary
-        )
     }
 }
 
@@ -997,20 +990,5 @@ private fun BatchImportDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("取消") }
         }
-    )
-}
-
-/** 首次启动引导:只讲一件事——添加倒计时节点(PRD 1.4 ③) */
-@Composable
-private fun OnboardingCard(presetLabel: String?, onManage: () -> Unit, onDismiss: () -> Unit) {
-    androidx.compose.material3.AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("欢迎来到研钟") },
-        text = {
-            // 预置节点是按用户档案同步出来的,别再把日期写死——考期因人而异
-            Text("30 秒开始:为你的考研路添加第一个倒计时节点——\n\n已为你预置「${presetLabel ?: "考研初试"}」,你可以直接使用,或添加更多节点(模考、报名、复试)。")
-        },
-        confirmButton = { TextButton(onClick = onManage) { Text("管理节点") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("开始使用") } }
     )
 }

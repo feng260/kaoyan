@@ -47,7 +47,6 @@ data class HomeUiState(
     val todayPlan: TodayPlanSummary = TodayPlanSummary(),
     val subjects: List<SubjectEntity> = emptyList(),
     val timerRunning: Boolean = false,
-    val onboardingDone: Boolean = true,
     val phase: StageInfo? = null,
     /** 是否已有生效的服务端计划:false 时首页不展示阶段进度/今日节奏/进度卡,改给引导空态 */
     val hasActivePlan: Boolean = false,
@@ -64,7 +63,9 @@ data class HomeUiState(
     val weekDoneTasks: Int = 0,
     val monthlyReview: MonthlyReviewEntity? = null,
     val monthMinutes: Int = 0,
-    val monthDoneTasks: Int = 0
+    val monthDoneTasks: Int = 0,
+    /** 首帧真实数据(不是 stateIn 初始值)已产出;首次引导据此判断页面就绪 */
+    val loaded: Boolean = false
 ) {
     val pinned: CountdownNodeEntity? get() = nodes.getOrNull(pinnedIndex) ?: nodes.firstOrNull()
     val doneCount: Int get() = today.done.size
@@ -100,7 +101,6 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
     private val onboarding = settingsRepo.settings
         .map {
             SettingsSlice(
-                onboardingDone = it.onboardingDone,
                 weeklyGoalMin = it.weeklyGoalHours * 60,
                 dailyPomodoroGoal = it.dailyPomodoroGoal,
                 focusMinutes = it.currentPlan.focusMin
@@ -109,7 +109,6 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsSlice())
 
     private data class SettingsSlice(
-        val onboardingDone: Boolean = true,
         val weeklyGoalMin: Int = 37 * 60,
         val dailyPomodoroGoal: Int = 8,
         val focusMinutes: Int = 25
@@ -257,7 +256,6 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             ),
             subjects = subjects,
             timerRunning = timerRunning,
-            onboardingDone = settings.onboardingDone,
             phase = activePlan?.stageInfo(slice.now),
             hasActivePlan = hasActivePlan,
             weekMinutes = stats.weekMinutes,
@@ -272,7 +270,8 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
             weekDoneTasks = reviews.weekDone,
             monthlyReview = reviews.monthly,
             monthMinutes = stats.monthMinutes,
-            monthDoneTasks = reviews.monthDone
+            monthDoneTasks = reviews.monthDone,
+            loaded = true
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), HomeUiState())
 
@@ -381,10 +380,6 @@ class HomeViewModel(app: Application) : AndroidViewModel(app) {
 
     fun toggleNodePin(node: CountdownNodeEntity) {
         viewModelScope.launch { repo.toggleNodePin(node) }
-    }
-
-    fun dismissOnboarding() {
-        viewModelScope.launch { settingsRepo.setOnboardingDone() }
     }
 
     fun saveDailyReview(q1: String, q2: String, q3: String) {

@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -70,7 +71,6 @@ data class AppSettings(
     val soundOn: Boolean = true,
     /** 静音模式:总开关,压制阶段提醒的震动与音效(横幅/弹窗不受影响) */
     val silentMode: Boolean = false,
-    val onboardingDone: Boolean = false,
     val weeklyGoalHours: Int = 37,
     /** 每日番茄目标数(参考番茄ToDo §8) */
     val dailyPomodoroGoal: Int = 8,
@@ -138,7 +138,7 @@ class SettingsRepository(private val context: Context) {
         val VIBRATION = booleanPreferencesKey("vibration_on")
         val SOUND = booleanPreferencesKey("sound_on")
         val SILENT = booleanPreferencesKey("silent_mode")
-        val ONBOARDING = booleanPreferencesKey("onboarding_done")
+        val GUIDE_SEEN = stringSetPreferencesKey("guide_seen_pages")
         val WEEKLY_GOAL = intPreferencesKey("weekly_goal_hours")
         val DAILY_POMODORO = intPreferencesKey("daily_pomodoro_goal")
         val SUPER_ON = booleanPreferencesKey("super_mode_on")
@@ -167,7 +167,6 @@ class SettingsRepository(private val context: Context) {
             vibrationOn = p[Keys.VIBRATION] ?: true,
             soundOn = p[Keys.SOUND] ?: true,
             silentMode = p[Keys.SILENT] ?: false,
-            onboardingDone = p[Keys.ONBOARDING] ?: false,
             weeklyGoalHours = (p[Keys.WEEKLY_GOAL] ?: 37).coerceIn(10, 80),
             dailyPomodoroGoal = (p[Keys.DAILY_POMODORO] ?: 8).coerceIn(1, 30),
             superModeOn = p[Keys.SUPER_ON] ?: false,
@@ -214,8 +213,6 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setSilent(on: Boolean) = context.settingsStore.edit { it[Keys.SILENT] = on }
 
-    suspend fun setOnboardingDone() = context.settingsStore.edit { it[Keys.ONBOARDING] = true }
-
     // ---- 专注接力玩法引导(仅设备本地,不进 AppSettings/云同步) ----
 
     val relayGuideShown: Flow<Boolean> = context.settingsStore.data
@@ -225,6 +222,20 @@ class SettingsRepository(private val context: Context) {
         .map { it[Keys.RELAY_GUIDE] ?: false }
 
     suspend fun setRelayGuideShown() = context.settingsStore.edit { it[Keys.RELAY_GUIDE] = true }
+
+    // ---- 首次分页引导:仅设备本地,不进 AppSettings/云同步 ----
+
+    val guideSeenPages: Flow<Set<String>> = context.settingsStore.data
+        .catch { e ->
+            if (e is java.io.IOException) emit(emptyPreferences()) else throw e
+        }
+        .map { it[Keys.GUIDE_SEEN] ?: emptySet() }
+
+    suspend fun markGuideSeen(page: String) = context.settingsStore.edit { prefs ->
+        prefs[Keys.GUIDE_SEEN] = (prefs[Keys.GUIDE_SEEN] ?: emptySet()) + page
+    }
+
+    suspend fun resetGuides() = context.settingsStore.edit { it[Keys.GUIDE_SEEN] = emptySet() }
 
     suspend fun setWeeklyGoal(hours: Int) = context.settingsStore.edit {
         it[Keys.WEEKLY_GOAL] = hours.coerceIn(10, 80)

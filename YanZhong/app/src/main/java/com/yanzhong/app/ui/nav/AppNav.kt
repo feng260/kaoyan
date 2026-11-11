@@ -37,6 +37,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -44,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -52,6 +54,12 @@ import androidx.navigation.compose.rememberNavController
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.timer.Phase
 import com.yanzhong.app.ui.focus.FocusScreen
+import com.yanzhong.app.ui.guide.GuideAnchor
+import com.yanzhong.app.ui.guide.GuideAnchors
+import com.yanzhong.app.ui.guide.GuideController
+import com.yanzhong.app.ui.guide.GuideHost
+import com.yanzhong.app.ui.guide.LocalGuideController
+import com.yanzhong.app.ui.guide.LocalGuideTargets
 import com.yanzhong.app.ui.home.HomeScreen
 import com.yanzhong.app.ui.mine.MineScreen
 import com.yanzhong.app.ui.plan.PlanScreen
@@ -59,6 +67,7 @@ import com.yanzhong.app.ui.stats.StatsScreen
 import com.yanzhong.app.ui.theme.AppIcons
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 object Routes {
@@ -117,6 +126,15 @@ private data class TabSpec(
 fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
     val navController = rememberNavController()
     val app = androidx.compose.ui.platform.LocalContext.current.applicationContext as YanZhongApp
+    // 首次分页引导:已看页来自本机 DataStore;结束(跳过/看完)即回写
+    val seenPages by remember {
+        app.settingsRepo.guideSeenPages
+    }.collectAsStateWithLifecycle(initialValue = emptySet())
+    val guideController = remember {
+        GuideController { page ->
+            app.appScope.launch { app.settingsRepo.markGuideSeen(page.key) }
+        }
+    }
     // 只订阅低频的 isRunning:remainingMs 每秒变化,若在根部收集整包状态会引发整树每秒重组
     val timerRunning by remember {
         app.engine.state.map { it.isRunning }.distinctUntilChanged()
@@ -132,138 +150,150 @@ fun YanZhongAppRoot(startDestination: String = Routes.HOME) {
         currentRoute?.startsWith("apppicker") == true
     val showNav = !deepPage && !(currentRoute == Routes.FOCUS && timerRunning)
 
-    Box(Modifier.fillMaxSize()) {
-    Row(Modifier.fillMaxSize()) {
-        // 平板:左侧导航栏(Material 适配规范);手机:底部导航栏
-        if (tablet && showNav) {
-            YanZhongNavRail(navController)
-        }
-        Scaffold(
-            bottomBar = {
-                if (!tablet && showNav) {
-                    YanZhongBottomBar(navController)
+    CompositionLocalProvider(
+        LocalGuideController provides guideController,
+        LocalGuideTargets provides guideController.targets
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            Row(Modifier.fillMaxSize()) {
+                // 平板:左侧导航栏(Material 适配规范);手机:底部导航栏
+                if (tablet && showNav) {
+                    YanZhongNavRail(navController)
                 }
-            }
-        ) { padding ->
-            Box(Modifier.fillMaxSize()) {
-                NavHost(
-                    navController = navController,
-                    startDestination = startDestination,
-                    modifier = Modifier.fillMaxSize(),
-                    // 深层页转场:淡入 + 轻微横向位移,方向感来自位移而非整屏横滑。
-                    // 时长压在 250ms 内,Compose 会自动尊重系统的动画缩放设置。
-                    // 专注运行中(timerRunning)会令底部导航隐藏 / Scaffold 高度突变,
-                    // 那种情况下横向位移会和高度变化叠加成一次跳动,所以强制退化为纯淡入。
-                    enterTransition = {
-                        if (timerRunning) fadeIn(tween(140))
-                        else fadeIn(tween(180)) +
-                            slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 12 }
-                    },
-                    exitTransition = { fadeOut(tween(120)) },
-                    popEnterTransition = { fadeIn(tween(180)) },
-                    popExitTransition = {
-                        if (timerRunning) fadeOut(tween(140))
-                        else fadeOut(tween(180)) +
-                            slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 12 }
+                Scaffold(
+                    bottomBar = {
+                        if (!tablet && showNav) {
+                            YanZhongBottomBar(navController)
+                        }
                     }
-                ) {
-                    // 5 个 tab 之间只做淡入淡出:横滑会让人误以为它们是左右相邻的页面
-                    composable(Routes.HOME, enterTransition = { fadeIn(tween(140)) },
-                        exitTransition = { fadeOut(tween(100)) }) {
-                        HomeScreen(padding, navController)
-                    }
-                    composable(Routes.PLAN, enterTransition = { fadeIn(tween(140)) },
-                        exitTransition = { fadeOut(tween(100)) }) {
-                        PlanScreen(padding, navController)
-                    }
-                    composable(Routes.FOCUS, enterTransition = { fadeIn(tween(140)) },
-                        exitTransition = { fadeOut(tween(100)) }) {
-                        FocusScreen(padding)
-                    }
-                    composable(Routes.STATS, enterTransition = { fadeIn(tween(140)) },
-                        exitTransition = { fadeOut(tween(100)) }) {
-                        StatsScreen(padding)
-                    }
-                    composable(Routes.MINE, enterTransition = { fadeIn(tween(140)) },
-                        exitTransition = { fadeOut(tween(100)) }) {
-                        MineScreen(padding, navController)
-                    }
-                    composable(Routes.SUPERMODE) {
-                        com.yanzhong.app.ui.supermode.SuperModeScreen(padding, navController)
-                    }
-                    composable(Routes.ACCOUNT) {
-                        com.yanzhong.app.ui.account.AccountScreen(padding, navController)
-                    }
-                    composable(Routes.EDIT_PROFILE) {
-                        com.yanzhong.app.ui.profile.EditProfileScreen(padding, navController)
-                    }
-                    composable(
-                        Routes.PLAN_SETUP,
-                        arguments = listOf(
-                            androidx.navigation.navArgument("profileOnly") {
-                                type = androidx.navigation.NavType.BoolType
-                                defaultValue = false
-                            }
-                        )
-                    ) { entry ->
-                        com.yanzhong.app.ui.plan.PlanSetupScreen(
-                            padding,
-                            navController,
-                            profileOnly = entry.arguments?.getBoolean("profileOnly") ?: false
-                        )
-                    }
-                    composable(
-                        Routes.PLAN_INTERVIEW,
-                        arguments = listOf(
-                            androidx.navigation.navArgument("mode") {
-                                type = androidx.navigation.NavType.StringType
-                                defaultValue = ""
+                ) { padding ->
+                    Box(Modifier.fillMaxSize()) {
+                        NavHost(
+                            navController = navController,
+                            startDestination = startDestination,
+                            modifier = Modifier.fillMaxSize(),
+                            // 深层页转场:淡入 + 轻微横向位移,方向感来自位移而非整屏横滑。
+                            // 时长压在 250ms 内,Compose 会自动尊重系统的动画缩放设置。
+                            // 专注运行中(timerRunning)会令底部导航隐藏 / Scaffold 高度突变,
+                            // 那种情况下横向位移会和高度变化叠加成一次跳动,所以强制退化为纯淡入。
+                            enterTransition = {
+                                if (timerRunning) fadeIn(tween(140))
+                                else fadeIn(tween(180)) +
+                                    slideInHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 12 }
                             },
-                            androidx.navigation.navArgument("prefill") {
-                                type = androidx.navigation.NavType.StringType
-                                defaultValue = ""
+                            exitTransition = { fadeOut(tween(120)) },
+                            popEnterTransition = { fadeIn(tween(180)) },
+                            popExitTransition = {
+                                if (timerRunning) fadeOut(tween(140))
+                                else fadeOut(tween(180)) +
+                                    slideOutHorizontally(tween(220, easing = FastOutSlowInEasing)) { it / 12 }
                             }
-                        )
-                    ) { entry ->
-                        com.yanzhong.app.ui.plan.PlanInterviewScreen(
-                            padding,
-                            navController,
-                            mode = entry.arguments?.getString("mode").orEmpty(),
-                            prefill = entry.arguments?.getString("prefill").orEmpty()
-                        )
-                    }
-                    composable(Routes.PLAN_DOCUMENT) {
-                        com.yanzhong.app.ui.plan.PlanDocumentScreen(padding, navController)
-                    }
-                    composable(Routes.PLAN_HISTORY) {
-                        com.yanzhong.app.ui.plan.PlanHistoryScreen(padding, navController)
-                    }
-                    composable(
-                        Routes.APP_PICKER,
-                        arguments = listOf(
-                            androidx.navigation.navArgument("subjectId") {
-                                type = androidx.navigation.NavType.LongType
+                        ) {
+                            // 5 个 tab 之间只做淡入淡出:横滑会让人误以为它们是左右相邻的页面
+                            composable(Routes.HOME, enterTransition = { fadeIn(tween(140)) },
+                                exitTransition = { fadeOut(tween(100)) }) {
+                                HomeScreen(padding, navController)
                             }
-                        )
-                    ) { entry ->
-                        com.yanzhong.app.ui.supermode.AppPickerScreen(
-                            padding,
-                            navController,
-                            entry.arguments?.getLong("subjectId") ?: -1L
-                        )
+                            composable(Routes.PLAN, enterTransition = { fadeIn(tween(140)) },
+                                exitTransition = { fadeOut(tween(100)) }) {
+                                PlanScreen(padding, navController)
+                            }
+                            composable(Routes.FOCUS, enterTransition = { fadeIn(tween(140)) },
+                                exitTransition = { fadeOut(tween(100)) }) {
+                                FocusScreen(padding)
+                            }
+                            composable(Routes.STATS, enterTransition = { fadeIn(tween(140)) },
+                                exitTransition = { fadeOut(tween(100)) }) {
+                                StatsScreen(padding)
+                            }
+                            composable(Routes.MINE, enterTransition = { fadeIn(tween(140)) },
+                                exitTransition = { fadeOut(tween(100)) }) {
+                                MineScreen(padding, navController)
+                            }
+                            composable(Routes.SUPERMODE) {
+                                com.yanzhong.app.ui.supermode.SuperModeScreen(padding, navController)
+                            }
+                            composable(Routes.ACCOUNT) {
+                                com.yanzhong.app.ui.account.AccountScreen(padding, navController)
+                            }
+                            composable(Routes.EDIT_PROFILE) {
+                                com.yanzhong.app.ui.profile.EditProfileScreen(padding, navController)
+                            }
+                            composable(
+                                Routes.PLAN_SETUP,
+                                arguments = listOf(
+                                    androidx.navigation.navArgument("profileOnly") {
+                                        type = androidx.navigation.NavType.BoolType
+                                        defaultValue = false
+                                    }
+                                )
+                            ) { entry ->
+                                com.yanzhong.app.ui.plan.PlanSetupScreen(
+                                    padding,
+                                    navController,
+                                    profileOnly = entry.arguments?.getBoolean("profileOnly") ?: false
+                                )
+                            }
+                            composable(
+                                Routes.PLAN_INTERVIEW,
+                                arguments = listOf(
+                                    androidx.navigation.navArgument("mode") {
+                                        type = androidx.navigation.NavType.StringType
+                                        defaultValue = ""
+                                    },
+                                    androidx.navigation.navArgument("prefill") {
+                                        type = androidx.navigation.NavType.StringType
+                                        defaultValue = ""
+                                    }
+                                )
+                            ) { entry ->
+                                com.yanzhong.app.ui.plan.PlanInterviewScreen(
+                                    padding,
+                                    navController,
+                                    mode = entry.arguments?.getString("mode").orEmpty(),
+                                    prefill = entry.arguments?.getString("prefill").orEmpty()
+                                )
+                            }
+                            composable(Routes.PLAN_DOCUMENT) {
+                                com.yanzhong.app.ui.plan.PlanDocumentScreen(padding, navController)
+                            }
+                            composable(Routes.PLAN_HISTORY) {
+                                com.yanzhong.app.ui.plan.PlanHistoryScreen(padding, navController)
+                            }
+                            composable(
+                                Routes.APP_PICKER,
+                                arguments = listOf(
+                                    androidx.navigation.navArgument("subjectId") {
+                                        type = androidx.navigation.NavType.LongType
+                                    }
+                                )
+                            ) { entry ->
+                                com.yanzhong.app.ui.supermode.AppPickerScreen(
+                                    padding,
+                                    navController,
+                                    entry.arguments?.getLong("subjectId") ?: -1L
+                                )
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
 
-        // 深层页(导航栏已隐藏):右下角悬浮迷你倒计时,点击回到专注屏
-        if (timerRunning && deepPage) {
-            RunningTimerPill(
-                navController,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(20.dp)
+            // 深层页(导航栏已隐藏):右下角悬浮迷你倒计时,点击回到专注屏
+            if (timerRunning && deepPage) {
+                RunningTimerPill(
+                    navController,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(20.dp)
+                )
+            }
+
+            GuideHost(
+                controller = guideController,
+                currentRoute = currentRoute,
+                deepPage = deepPage,
+                seenPages = seenPages
             )
         }
     }
@@ -328,24 +358,26 @@ private fun YanZhongNavRail(navController: NavHostController) {
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
 
-    NavigationRail(
-        containerColor = MaterialTheme.colorScheme.surface,
-        header = {
-            FocusFab(navController, Modifier.padding(top = 8.dp))
-        }
-    ) {
-        tabs.forEach { tab ->
-            NavigationRailItem(
-                selected = currentRoute == tab.route,
-                onClick = { navigateTab(navController, tab.route) },
-                icon = {
-                    Icon(
-                        tab.icon,
-                        contentDescription = tab.label
-                    )
-                },
-                label = { Text(tab.label) }
-            )
+    GuideAnchor(GuideAnchors.NAV_BAR) {
+        NavigationRail(
+            containerColor = MaterialTheme.colorScheme.surface,
+            header = {
+                FocusFab(navController, Modifier.padding(top = 8.dp))
+            }
+        ) {
+            tabs.forEach { tab ->
+                NavigationRailItem(
+                    selected = currentRoute == tab.route,
+                    onClick = { navigateTab(navController, tab.route) },
+                    icon = {
+                        Icon(
+                            tab.icon,
+                            contentDescription = tab.label
+                        )
+                    },
+                    label = { Text(tab.label) }
+                )
+            }
         }
     }
 }
@@ -355,55 +387,57 @@ private fun YanZhongBottomBar(navController: NavHostController) {
     val backStack by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route
     val colors = MaterialTheme.colorScheme
-    Box {
-        Surface(color = colors.surface, modifier = Modifier.fillMaxWidth()) {
-            Column(Modifier.navigationBarsPadding()) {
-                HorizontalDivider(color = colors.outlineVariant)
-                Box(Modifier.fillMaxWidth().height(64.dp), contentAlignment = Alignment.BottomCenter) {
-                    Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
-                        BottomTab(
-                            selected = currentRoute == Routes.HOME,
-                            label = "今日",
-                            icon = AppIcons.TabToday,
-                            onClick = { navigateTab(navController, Routes.HOME) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        BottomTab(
-                            selected = currentRoute == Routes.PLAN,
-                            label = "计划",
-                            icon = AppIcons.TabPlan,
-                            onClick = { navigateTab(navController, Routes.PLAN) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        Spacer(Modifier.weight(1f))
-                        BottomTab(
-                            selected = currentRoute == Routes.STATS,
-                            label = "统计",
-                            icon = AppIcons.TabStats,
-                            onClick = { navigateTab(navController, Routes.STATS) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        BottomTab(
-                            selected = currentRoute == Routes.MINE,
-                            label = "我的",
-                            icon = AppIcons.TabMine,
-                            onClick = { navigateTab(navController, Routes.MINE) },
-                            modifier = Modifier.weight(1f)
+    GuideAnchor(GuideAnchors.NAV_BAR, expandTop = 38.dp) {
+        Box {
+            Surface(color = colors.surface, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.navigationBarsPadding()) {
+                    HorizontalDivider(color = colors.outlineVariant)
+                    Box(Modifier.fillMaxWidth().height(64.dp), contentAlignment = Alignment.BottomCenter) {
+                        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                            BottomTab(
+                                selected = currentRoute == Routes.HOME,
+                                label = "今日",
+                                icon = AppIcons.TabToday,
+                                onClick = { navigateTab(navController, Routes.HOME) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            BottomTab(
+                                selected = currentRoute == Routes.PLAN,
+                                label = "计划",
+                                icon = AppIcons.TabPlan,
+                                onClick = { navigateTab(navController, Routes.PLAN) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            Spacer(Modifier.weight(1f))
+                            BottomTab(
+                                selected = currentRoute == Routes.STATS,
+                                label = "统计",
+                                icon = AppIcons.TabStats,
+                                onClick = { navigateTab(navController, Routes.STATS) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            BottomTab(
+                                selected = currentRoute == Routes.MINE,
+                                label = "我的",
+                                icon = AppIcons.TabMine,
+                                onClick = { navigateTab(navController, Routes.MINE) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Text(
+                            "专注",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (currentRoute == Routes.FOCUS) colors.primary else colors.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 6.dp)
                         )
                     }
-                    Text(
-                        "专注",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (currentRoute == Routes.FOCUS) colors.primary else colors.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    )
                 }
             }
+            FocusFab(
+                navController = navController,
+                modifier = Modifier.align(Alignment.TopCenter).offset(y = (-18).dp)
+            )
         }
-        FocusFab(
-            navController = navController,
-            modifier = Modifier.align(Alignment.TopCenter).offset(y = (-18).dp)
-        )
     }
 }
 
@@ -427,7 +461,7 @@ internal fun tabNavPlan(target: String) = TabNavPlan(
     restoreState = target != Routes.HOME
 )
 
-private fun navigateTab(navController: NavHostController, route: String) {
+internal fun navigateTab(navController: NavHostController, route: String) {
     val plan = tabNavPlan(route)
     navController.navigate(route) {
         launchSingleTop = true

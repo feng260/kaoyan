@@ -50,14 +50,21 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import com.yanzhong.app.BuildConfig
+import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.db.SubjectEntity
 import com.yanzhong.app.data.prefs.PomodoroPlan
 import com.yanzhong.app.data.prefs.ThemeMode
 import com.yanzhong.app.data.remote.UpdateCenter
 import com.yanzhong.app.data.remote.UpdateCheckResult
 import com.yanzhong.app.data.stats.LearningProfile
+import com.yanzhong.app.ui.guide.GuideAnchor
+import com.yanzhong.app.ui.guide.GuideAnchors
+import com.yanzhong.app.ui.guide.LocalGuideController
+import com.yanzhong.app.ui.guide.ProvideGuideSpec
+import com.yanzhong.app.ui.guide.mineGuide
 import com.yanzhong.app.ui.legal.PolicyLinksRow
 import com.yanzhong.app.ui.nav.Routes
+import com.yanzhong.app.ui.nav.navigateTab
 import com.yanzhong.app.ui.profile.UserAvatar
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
@@ -93,6 +100,14 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
     val vm: MineViewModel = viewModel()
     val state by vm.uiState.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val app = remember { context.applicationContext as YanZhongApp }
+    val guideController = LocalGuideController.current
+    var showGuideReset by remember { mutableStateOf(false) }
+
+    ProvideGuideSpec(
+        spec = mineGuide(),
+        ready = state.account != AccountState.Loading
+    )
     val updateScope = rememberCoroutineScope()
     var checkingUpdate by remember { mutableStateOf(false) }
 
@@ -144,37 +159,50 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item(key = "header") {
-                HeaderCard(
-                    state,
-                    onOpenAccount = {
-                        val target = if (state.account is AccountState.LoggedIn) Routes.EDIT_PROFILE else Routes.ACCOUNT
-                        navController.navigate(target) { launchSingleTop = true }
-                    }
-                )
+                GuideAnchor(GuideAnchors.MINE_HEADER) {
+                    HeaderCard(
+                        state,
+                        onOpenAccount = {
+                            val target = if (state.account is AccountState.LoggedIn) Routes.EDIT_PROFILE else Routes.ACCOUNT
+                            navController.navigate(target) { launchSingleTop = true }
+                        }
+                    )
+                }
             }
 
             item(key = "account") {
                 Column {
                     SectionHeader("账号与档案")
                     Spacer(Modifier.height(8.dp))
-                    RowGroup {
-                        ListRow(
-                            title = accountTitle,
-                            subtitle = accountSubtitle,
-                            icon = AppIcons.CloudUpload,
-                            onClick = {
-                                navController.navigate(Routes.ACCOUNT) { launchSingleTop = true }
+                    GuideAnchor(GuideAnchors.MINE_ACCOUNT_GROUP) {
+                        RowGroup {
+                            ListRow(
+                                title = accountTitle,
+                                subtitle = accountSubtitle,
+                                icon = AppIcons.CloudUpload,
+                                onClick = {
+                                    navController.navigate(Routes.ACCOUNT) { launchSingleTop = true }
+                                }
+                            )
+                            RowDivider()
+                            ListRow(
+                                title = "备考档案",
+                                subtitle = "考试科目、目标院校、课表",
+                                icon = AppIcons.Target,
+                                onClick = {
+                                    navController.navigate(Routes.planSetup()) { launchSingleTop = true }
+                                }
+                            )
+                            RowDivider()
+                            GuideAnchor(GuideAnchors.MINE_GUIDE_ROW) {
+                                ListRow(
+                                    title = "新手引导",
+                                    subtitle = "重看各页的功能说明",
+                                    icon = AppIcons.Info,
+                                    onClick = { showGuideReset = true }
+                                )
                             }
-                        )
-                        RowDivider()
-                        ListRow(
-                            title = "备考档案",
-                            subtitle = "考试科目、目标院校、课表",
-                            icon = AppIcons.Target,
-                            onClick = {
-                                navController.navigate(Routes.planSetup()) { launchSingleTop = true }
-                            }
-                        )
+                        }
                     }
                 }
             }
@@ -412,6 +440,28 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                 }
             }
         }
+    }
+
+    if (showGuideReset) {
+        AlertDialog(
+            onDismissRequest = { showGuideReset = false },
+            title = { Text("重看新手引导？") },
+            text = { Text("各页的功能说明会重新出现一遍。") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showGuideReset = false
+                        navigateTab(navController, Routes.HOME)
+                        guideController?.resetDismissed()
+                        // 用应用级 scope:退出这一页的过渡动画会取消 updateScope,重置会半路夭折
+                        app.appScope.launch { app.settingsRepo.resetGuides() }
+                    }
+                ) { Text("重看") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGuideReset = false }) { Text("取消") }
+            }
+        )
     }
 
     /** 删除科目二次确认:外键关联的任务与专注记录将一并删除 */

@@ -51,6 +51,10 @@ import com.yanzhong.app.data.remote.AdjustmentDto
 import com.yanzhong.app.data.remote.PlanDto
 import com.yanzhong.app.data.remote.PlanItemDto
 import com.yanzhong.app.data.remote.PlanStageDto
+import com.yanzhong.app.ui.guide.GuideAnchor
+import com.yanzhong.app.ui.guide.GuideAnchors
+import com.yanzhong.app.ui.guide.ProvideGuideSpec
+import com.yanzhong.app.ui.guide.planGuide
 import com.yanzhong.app.ui.nav.Routes
 import com.yanzhong.app.ui.theme.AppCard
 import com.yanzhong.app.ui.theme.AppIcons
@@ -104,6 +108,17 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
     val todayDate = remember(state.today) {
         Instant.ofEpochMilli(state.today).atZone(ZoneId.systemDefault()).toLocalDate()
     }
+    val displayState = selectPlanDisplayState(
+        loggedIn = loggedIn,
+        plan = serverPlan,
+        networkError = planError != null,
+        loading = planLoading
+    )
+    // 只在「已就绪」或「确定没有计划」时引导;登录门/加载中/网络错误不弹
+    ProvideGuideSpec(
+        spec = planGuide(hasPlan = displayState == PlanDisplayState.READY),
+        ready = displayState == PlanDisplayState.READY || displayState == PlanDisplayState.NO_PLAN
+    )
 
     // 从"制定/调整备考档案"页回来:计划可能刚被重新生成,静默刷一次
     LaunchedEffect(Unit) {
@@ -132,8 +147,10 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
                     meta = "AI 按你的备考档案排的计划",
                     actions = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            IconButton(onClick = { navController.navigate(Routes.PLAN_HISTORY) }) {
-                                Icon(AppIcons.ClipboardList, contentDescription = "历史计划")
+                            GuideAnchor(GuideAnchors.PLAN_HISTORY_ACTION) {
+                                IconButton(onClick = { navController.navigate(Routes.PLAN_HISTORY) }) {
+                                    Icon(AppIcons.ClipboardList, contentDescription = "历史计划")
+                                }
                             }
                             IconButton(onClick = vm::refreshPlan, enabled = loggedIn && !planLoading) {
                                 Icon(AppIcons.RotateCcw, contentDescription = "刷新")
@@ -144,7 +161,7 @@ fun PlanScreen(padding: PaddingValues, navController: NavHostController) {
             }
 
             item(key = "server-plan") {
-                when (selectPlanDisplayState(loggedIn, serverPlan, planError != null, planLoading)) {
+                when (displayState) {
                     PlanDisplayState.READY -> Column(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
@@ -238,24 +255,26 @@ private fun PlanActionCard(
     secondaryLabel: String? = null,
     onSecondary: (() -> Unit)? = null
 ) {
-    AppCard {
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Icon(
-                icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(28.dp)
-            )
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(
-                desc,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2
-            )
-            PrimaryButton(primaryLabel, onPrimary, icon = AppIcons.Sparkles)
-            if (secondaryLabel != null && onSecondary != null) {
-                TextAction(secondaryLabel, onSecondary, modifier = Modifier.fillMaxWidth())
+    GuideAnchor(GuideAnchors.PLAN_ACTION_CARD) {
+        AppCard {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(28.dp)
+                )
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    desc,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2
+                )
+                PrimaryButton(primaryLabel, onPrimary, icon = AppIcons.Sparkles)
+                if (secondaryLabel != null && onSecondary != null) {
+                    TextAction(secondaryLabel, onSecondary, modifier = Modifier.fillMaxWidth())
+                }
             }
         }
     }
@@ -356,36 +375,38 @@ private fun ServerPlanSummary(
     }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         // 概览卡:当前阶段与第几天、全程进度、下一阶段
-        AppCard {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        plan.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        "${current?.name ?: "全程计划"} · $stageLabel",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+        GuideAnchor(GuideAnchors.PLAN_OVERVIEW) {
+            AppCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            plan.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            "${current?.name ?: "全程计划"} · $stageLabel",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    StatusPill("进行中", PillTone.ACCENT)
                 }
-                StatusPill("进行中", PillTone.ACCENT)
+                Spacer(Modifier.height(10.dp))
+                ProgressLine(progress = plan.progress.doneItems.toFloat() / plan.progress.totalItems.coerceAtLeast(1))
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "全程 ${plan.progress.doneItems}/${plan.progress.totalItems} 项 · 考期 ${plan.examDate}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "下一阶段：${nextStage?.name ?: "已进入最后阶段"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
-            Spacer(Modifier.height(10.dp))
-            ProgressLine(progress = plan.progress.doneItems.toFloat() / plan.progress.totalItems.coerceAtLeast(1))
-            Spacer(Modifier.height(6.dp))
-            Text(
-                "全程 ${plan.progress.doneItems}/${plan.progress.totalItems} 项 · 考期 ${plan.examDate}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "下一阶段：${nextStage?.name ?: "已进入最后阶段"}",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
 
         // 档案改过但计划还没重建:用醒目横幅说明"为什么内容和档案对不上",按钮直奔重新生成
@@ -410,12 +431,14 @@ private fun ServerPlanSummary(
         }
 
         // 主操作:任何时候都能从这里去改档案 / 重新生成,这是这一页的中心入口
-        PrimaryButton(
-            text = if (plan.stale) "重新生成计划" else "调整档案并重新生成",
-            onClick = onOpenSetup,
-            enabled = !busy,
-            icon = AppIcons.Sparkles
-        )
+        GuideAnchor(GuideAnchors.PLAN_PRIMARY_ACTION) {
+            PrimaryButton(
+                text = if (plan.stale) "重新生成计划" else "调整档案并重新生成",
+                onClick = onOpenSetup,
+                enabled = !busy,
+                icon = AppIcons.Sparkles
+            )
+        }
 
         // 二级入口收进行卡:三个全宽大按钮改成三行入口,页面立刻轻下来
         RowGroup {
