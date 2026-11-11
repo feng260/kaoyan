@@ -14,6 +14,13 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
       interval: 5s
       retries: 20
+    mem_limit: 768m
+    memswap_limit: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   api:
     build: .
@@ -36,11 +43,21 @@ services:
       LLM_MODEL: ${LLM_MODEL:-deepseek-flash}
       LLM_TIMEOUT_MS: ${LLM_TIMEOUT_MS:-120000}
       LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-8192}
-      # 直接对外暴露 3000 端口、前面没有反向代理,必须为 false:
-      # 置 true 会让攻击者伪造 X-Forwarded-For 绕过限流并伪造来源 IP
-      TRUST_PROXY: "false"
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-465}
+      SMTP_SECURE: ${SMTP_SECURE:-true}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-研钟 <no-reply@yanzhong.app>}
+      INVITE_CODES: ${INVITE_CODES:-}
+      AI_ALERT_DAILY_TOKENS: ${AI_ALERT_DAILY_TOKENS:-8000000}
+      AI_ALERT_JOB_TOKENS: ${AI_ALERT_JOB_TOKENS:-500000}
+      ALERT_EMAIL: ${ALERT_EMAIL:-}
+      # 3000 只绑定 127.0.0.1,前面是 Caddy(会覆写来源 IP 头),可以信任代理头:
+      # Caddy 覆写 X-Forwarded-For / X-Real-IP,客户端无法伪造来源 IP 绕过限流
+      TRUST_PROXY: "true"
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     volumes:
       # 管理端上传的 APK 落在 /app/releases,不挂卷会在容器重建后全部丢失
       - releases-data:/app/releases
@@ -50,6 +67,13 @@ services:
       timeout: 5s
       retries: 3
       start_period: 40s
+    mem_limit: 768m
+    memswap_limit: 1g
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   mysql-data:
