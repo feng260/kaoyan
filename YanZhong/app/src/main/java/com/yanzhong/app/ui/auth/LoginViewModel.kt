@@ -7,9 +7,11 @@ import androidx.lifecycle.viewModelScope
 import com.yanzhong.app.YanZhongApp
 import com.yanzhong.app.data.remote.ApiClient
 import com.yanzhong.app.data.remote.DEFAULT_SERVER_URL
+import com.yanzhong.app.data.remote.EmailCodeReq
 import com.yanzhong.app.data.remote.ForgotReq
 import com.yanzhong.app.data.remote.LoginReq
 import com.yanzhong.app.data.remote.RegisterReq
+import com.yanzhong.app.data.remote.ResetReq
 import com.yanzhong.app.data.remote.TokenStore
 import com.yanzhong.app.data.remote.apiErrorMessage
 import com.yanzhong.app.data.remote.effectiveServerUrl
@@ -28,16 +30,22 @@ data class LoginUiState(
     val message: String = "",
     val messageIsError: Boolean = false,
     val serverUrl: String = DEFAULT_SERVER_URL,
-    /**
-     * 注册时必须勾选,登录不需要。默认不勾——同意这种事不能被默认选中,
-     * 那是替用户做决定,也是最容易被投诉的写法。
-     */
-    val consentChecked: Boolean = false,
+    // 注册验证码与邀请码
+    val emailCode: String = "",
+    val inviteCode: String = "",
+    val codeBusy: Boolean = false,
+    val codeCountdown: Int = 0,
+    // 邮箱验证码找回
     val forgotMode: Boolean = false,
     val forgotAccount: String = "",
     val forgotBusy: Boolean = false,
     val forgotMessage: String = "",
-    val emailResetAvailable: Boolean? = null
+    val resetCode: String = "",
+    val resetPassword: String = "",
+    val resetConfirm: String = "",
+    val resetBusy: Boolean = false,
+    val resetCountdown: Int = 0,
+    val resetSuccess: Boolean = false
 )
 
 /** 登录和注册使用 ApiClient 的内置地址或设备上已保存的地址。 */
@@ -50,12 +58,6 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val server = effectiveServerUrl()
             _ui.update { it.copy(serverUrl = server) }
-        }
-        // 能力探测:决定「忘记密码」发送后给用户哪种解释文案
-        viewModelScope.launch {
-            val available = runCatching { ApiClient.api().health() }.getOrNull()
-                ?.features?.emailReset
-            if (available != null) _ui.update { it.copy(emailResetAvailable = available) }
         }
         // 退出/被踢回登录页的这一跳只发生一次:顺手清掉上次提交留在输入框里的密码。
         // 用登录态而不是 LoginScreen 的 LaunchedEffect——后者每次 Activity 重建都会跑,
@@ -85,9 +87,15 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
         _ui.update {
             it.copy(
                 forgotMode = true,
-                forgotAccount = it.username,
+                // 用户名不一定是邮箱,预填只会误导;让用户明确填写注册邮箱
+                forgotAccount = "",
                 forgotBusy = false,
-                forgotMessage = ""
+                forgotMessage = "",
+                resetCode = "",
+                resetPassword = "",
+                resetConfirm = "",
+                resetBusy = false,
+                resetSuccess = false
             )
         }
     }
@@ -96,26 +104,112 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
 
     fun updateForgotAccount(value: String) = _ui.update { it.copy(forgotAccount = value) }
 
-    fun submitForgot() {
-        if (_ui.value.forgotBusy) return
-        val account = _ui.value.forgotAccount.trim()
-        if (account.isEmpty()) {
-            _ui.update { it.copy(forgotMessage = "请输入用户名或邮箱") }
+    /** 注册第一步:请求邮箱验证码;服务端按邮箱做 60s 冷却,客户端倒计时只是提前反馈 */
+    fun requestRegisterCode() {
+        val s = _ui.value
+        val email = s.email.trim()
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            _ui.update { it.copy(message = "请先填写正确的邮箱", messageIsError = true) }
+            return
+        }
+        if (s.codeBusy || s.codeCountdown > 0) return
+        viewModelScope.launch {
+            _ui.update { it.copy(codeBusy = true, message = "") }
+            runCatching {
+                ApiClient.api().requestEmailCode(
+                    EmailCodeReq(
+                        email = email,
+                        purpose = "register",
+                        inviteCode = s.inviteCode.trim().takeIf { it.isNotEmpty() }
+                    )
+                )
+            }.fold({
+                _ui.update {
+                    it.copy(codeBusy = false, message = "验证码已发送，请查收邮箱（含垃圾箱）", messageIsError = false)
+                }
+                startCountdown(register = true)
+            }, { e ->
+                _ui.update { it.copy(codeBusy = false, message = "发送失败:${e.apiErrorMessage()}", messageIsError = true) }
+            })
+        }
+    }
+
+    private fun startCountdown(register: Boolean) {
+        viewModelScope.launch {
+            for (remaining in 60 downTo 1) {
+                _ui.update {
+                    if (register) it.copy(codeCountdown = remaining)
+                    else it.copy(resetCountdown = remaining)
+                }
+                kotlinx.coroutines.delay(1_000)
+            }
+            _ui.update {
+                if (register) it.copy(codeCountdown = 0) else it.copy(resetCountdown = 0)
+            }
+        }
+    }
+
+    /** 找回第一步:请求重置验证码;统一文案不暴露邮箱是否注册 */
+    fun requestResetCode() {
+        val email = _ui.value.forgotAccount.trim()
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            _ui.update { it.copy(forgotMessage = "请输入注册邮箱") }
+            return
+        }
+        if (_ui.value.forgotBusy || _ui.value.resetCountdown > 0) return
+        viewModelScope.launch {
+            _ui.update { it.copy(forgotBusy = true, forgotMessage = "") }
+            runCatching { ApiClient.api().forgotPassword(ForgotReq(email)) }.fold({
+                _ui.update {
+                    it.copy(
+                        forgotBusy = false,
+                        forgotMessage = "如果该邮箱已注册，验证码已发送，10 分钟内有效。"
+                    )
+                }
+                startCountdown(register = false)
+            }, { e ->
+                _ui.update { it.copy(forgotBusy = false, forgotMessage = "发送失败:${e.apiErrorMessage()}") }
+            })
+        }
+    }
+
+    /** 找回第二步:邮箱 + 验证码 + 新密码,成功后所有会话失效 */
+    fun submitReset() {
+        val s = _ui.value
+        if (s.resetBusy) return
+        val email = s.forgotAccount.trim()
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()) {
+            _ui.update { it.copy(forgotMessage = "请输入注册邮箱") }
+            return
+        }
+        if (!s.resetCode.trim().matches(Regex("^\\d{6}$"))) {
+            _ui.update { it.copy(forgotMessage = "请输入 6 位验证码") }
+            return
+        }
+        if (s.resetPassword.length < 8) {
+            _ui.update { it.copy(forgotMessage = "新密码至少 8 位") }
+            return
+        }
+        if (s.resetPassword != s.resetConfirm) {
+            _ui.update { it.copy(forgotMessage = "两次输入的密码不一致") }
             return
         }
         viewModelScope.launch {
-            _ui.update { it.copy(forgotBusy = true, forgotMessage = "") }
-            runCatching { ApiClient.api().forgotPassword(ForgotReq(account)) }.fold({
-                // 服务端有意不透露账号是否存在;这里也只给统一结果,
-                // 文案按「服务器是否配置邮件」分三档,能力未知时不替服务器下结论。
-                val message = when (_ui.value.emailResetAvailable) {
-                    true -> "如果这个账号绑定了邮箱，重置链接已经发出，30 分钟内有效。"
-                    false -> "已提交。当前服务器未配置邮件发送，请联系管理员获取重置链接；链接 30 分钟内有效。"
-                    null -> "已提交。若账号绑定了邮箱，重置链接会发出，30 分钟内有效；未收到请联系管理员。"
+            _ui.update { it.copy(resetBusy = true, forgotMessage = "") }
+            runCatching {
+                ApiClient.api().resetPassword(ResetReq(email, s.resetCode.trim(), s.resetPassword))
+            }.fold({
+                runCatching { TokenStore.clearAll() }
+                _ui.update {
+                    it.copy(
+                        resetBusy = false,
+                        resetSuccess = true,
+                        forgotMessage = "密码已重置，请用新密码登录",
+                        password = ""
+                    )
                 }
-                _ui.update { it.copy(forgotBusy = false, forgotMessage = message) }
             }, { e ->
-                _ui.update { it.copy(forgotBusy = false, forgotMessage = "提交失败:${e.apiErrorMessage()}") }
+                _ui.update { it.copy(resetBusy = false, forgotMessage = "重置失败:${e.apiErrorMessage()}") }
             })
         }
     }
@@ -167,12 +261,16 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(message = "两次输入的密码不一致", messageIsError = true) }
                 return
             }
-            if (s.email.isNotBlank() && !android.util.Patterns.EMAIL_ADDRESS.matcher(s.email.trim()).matches()) {
-                _ui.update { it.copy(message = "请输入正确的邮箱地址", messageIsError = true) }
+            if (s.email.isBlank() || !android.util.Patterns.EMAIL_ADDRESS.matcher(s.email.trim()).matches()) {
+                _ui.update { it.copy(message = "请输入正确的邮箱", messageIsError = true) }
                 return
             }
-            if (!s.consentChecked) {
-                _ui.update { it.copy(message = "先勾一下上面那行,我们才好把数据存到服务器", messageIsError = true) }
+            if (!s.emailCode.trim().matches(Regex("^\\d{6}$"))) {
+                _ui.update { it.copy(message = "请输入 6 位邮箱验证码", messageIsError = true) }
+                return
+            }
+            if (s.inviteCode.isBlank()) {
+                _ui.update { it.copy(message = "请输入邀请码", messageIsError = true) }
                 return
             }
         }
@@ -184,8 +282,11 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
                         RegisterReq(
                             username = username,
                             password = s.password,
-                            email = s.email.trim().takeIf { it.isNotEmpty() },
-                            // 服务端对这两个字段是硬校验:缺了直接 400 LEGAL_CONSENT_REQUIRED
+                            email = s.email.trim(),
+                            code = s.emailCode.trim(),
+                            inviteCode = s.inviteCode.trim(),
+                            // 服务端对这两个字段是硬校验:缺了直接 400 LEGAL_CONSENT_REQUIRED;
+                            // 协议留档由首启同意门(ConsentGate)负责,注册只负责带上"已同意"这个事实
                             termsAccepted = true,
                             privacyAccepted = true
                         )
@@ -197,6 +298,8 @@ class LoginViewModel(app: Application) : AndroidViewModel(app) {
                             registerMode = false,
                             password = "",
                             confirm = "",
+                            emailCode = "",
+                            inviteCode = "",
                             message = "注册成功，请登录",
                             messageIsError = false
                         )

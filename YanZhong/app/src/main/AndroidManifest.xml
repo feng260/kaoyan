@@ -45,13 +45,6 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-            <!-- 密码重置邮件深链:yanzhong://password-reset?token=xxx -->
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="yanzhong" android:host="password-reset" />
-            </intent-filter>
         </activity>
 
         <service

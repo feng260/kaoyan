@@ -1,7 +1,6 @@
 package com.yanzhong.app
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
@@ -36,7 +35,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.yanzhong.app.data.prefs.ThemeMode
 import com.yanzhong.app.service.FocusService
 import com.yanzhong.app.ui.auth.LoginScreen
-import com.yanzhong.app.ui.auth.PasswordResetBus
 import com.yanzhong.app.ui.legal.ConsentGate
 import com.yanzhong.app.ui.nav.YanZhongAppRoot
 import com.yanzhong.app.ui.theme.AppIcons
@@ -54,9 +52,6 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // 只有全新启动才消费深链:旋转/进程重建会带着同一个 intent 回来,
-        // 再分发一次等于把已经用过的 token 又递上来一遍。
-        if (savedInstanceState == null) handleDeepLink(intent)
         val app = application as YanZhongApp
         setContent {
             // Flow 操作符必须待在 remember 里:否则每次重组都会新建一条 Flow,
@@ -87,19 +82,6 @@ class MainActivity : ComponentActivity() {
                     if (consent == true && auth == true) NotificationPermissionPrompt()
                 }
             }
-        }
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        setIntent(intent)
-        handleDeepLink(intent)
-    }
-
-    private fun handleDeepLink(intent: Intent?) {
-        val data = intent?.data ?: return
-        if (data.scheme == "yanzhong" && data.host == "password-reset") {
-            PasswordResetBus.offer(data.getQueryParameter("token"))
         }
     }
 

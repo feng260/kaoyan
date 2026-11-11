@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -156,24 +157,48 @@ fun LoginScreen() {
                         AuthTextField(
                             value = state.email,
                             onValueChange = { value -> vm.update { it.copy(email = value) } },
-                            label = "邮箱（选填）",
-                            placeholder = "用于找回密码",
+                            label = "邮箱",
+                            placeholder = "用于接收验证码与找回密码",
                             icon = AppIcons.TabMine,
                             keyboardType = KeyboardType.Email,
+                            imeAction = ImeAction.Next
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) {
+                                AuthTextField(
+                                    value = state.emailCode,
+                                    onValueChange = { value -> vm.update { it.copy(emailCode = value) } },
+                                    label = "邮箱验证码",
+                                    placeholder = "6 位数字",
+                                    icon = AppIcons.ShieldCheck,
+                                    keyboardType = KeyboardType.Number,
+                                    imeAction = ImeAction.Next
+                                )
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            TextButton(
+                                onClick = vm::requestRegisterCode,
+                                enabled = !state.codeBusy && state.codeCountdown == 0
+                            ) {
+                                Text(
+                                    when {
+                                        state.codeBusy -> "发送中…"
+                                        state.codeCountdown > 0 -> "${state.codeCountdown}s"
+                                        else -> "获取验证码"
+                                    }
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        AuthTextField(
+                            value = state.inviteCode,
+                            onValueChange = { value -> vm.update { it.copy(inviteCode = value) } },
+                            label = "邀请码",
+                            placeholder = "向管理员获取",
+                            icon = AppIcons.Key,
                             imeAction = ImeAction.Done,
                             onDone = vm::submit
-                        )
-                    }
-
-                    if (state.registerMode) {
-                        Spacer(Modifier.height(12.dp))
-                        // 协议放在注册这一侧:登录的人早就同意了,不必每次再问一遍
-                        com.yanzhong.app.ui.legal.ConsentRow(
-                            checked = state.consentChecked,
-                            onCheckedChange = { checked ->
-                                vm.update { it.copy(consentChecked = checked, message = "", messageIsError = false) }
-                            },
-                            modifier = Modifier.fillMaxWidth()
                         )
                     }
 
@@ -270,53 +295,99 @@ fun LoginScreen() {
         }
 
         if (state.forgotMode) {
-            // 能力探测中/探测失败时既不能承诺发信,也不能断言服务器没配置邮件,只能用中性说法
-            val intro = when (state.emailResetAvailable) {
-                true -> "填写注册时绑定的邮箱，我们会发一封重置链接，30 分钟内有效。"
-                false -> "填写账号提交后，需要联系管理员获取重置链接；链接 30 分钟内有效。"
-                null -> "填写用户名或邮箱提交，我们会按服务器配置发送重置链接。"
-            }
             AlertDialog(
-                onDismissRequest = { if (!state.forgotBusy) vm.closeForgot() },
-                title = {
-                    Text(
-                        if (state.emailResetAvailable == false) "找回密码（邮件未开通）" else "找回密码"
-                    )
-                },
+                onDismissRequest = { if (!state.forgotBusy && !state.resetBusy) vm.closeForgot() },
+                title = { Text(if (state.resetSuccess) "密码已重置" else "找回密码") },
                 text = {
-                    Column {
-                        Text(
-                            intro,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedTextField(
-                            value = state.forgotAccount,
-                            onValueChange = vm::updateForgotAccount,
-                            label = { Text("用户名或邮箱") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        if (state.forgotMessage.isNotBlank()) {
+                    if (state.resetSuccess) {
+                        Text("请用新密码重新登录。")
+                    } else {
+                        Column {
+                            Text(
+                                "填写注册邮箱获取验证码，10 分钟内有效。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colors.onSurfaceVariant
+                            )
                             Spacer(Modifier.height(10.dp))
-                            Text(state.forgotMessage, style = MaterialTheme.typography.bodySmall)
+                            OutlinedTextField(
+                                value = state.forgotAccount,
+                                onValueChange = vm::updateForgotAccount,
+                                label = { Text("注册邮箱") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                OutlinedTextField(
+                                    value = state.resetCode,
+                                    onValueChange = { value -> vm.update { it.copy(resetCode = value) } },
+                                    label = { Text("验证码") },
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    modifier = Modifier.weight(1f)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                TextButton(
+                                    onClick = vm::requestResetCode,
+                                    enabled = !state.forgotBusy && state.resetCountdown == 0
+                                ) {
+                                    Text(
+                                        when {
+                                            state.forgotBusy -> "发送中…"
+                                            state.resetCountdown > 0 -> "${state.resetCountdown}s"
+                                            else -> "获取验证码"
+                                        }
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedTextField(
+                                value = state.resetPassword,
+                                onValueChange = { value -> vm.update { it.copy(resetPassword = value) } },
+                                label = { Text("新密码（至少 8 位）") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            OutlinedTextField(
+                                value = state.resetConfirm,
+                                onValueChange = { value -> vm.update { it.copy(resetConfirm = value) } },
+                                label = { Text("再输一次新密码") },
+                                singleLine = true,
+                                visualTransformation = PasswordVisualTransformation(),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            if (state.forgotMessage.isNotBlank()) {
+                                Spacer(Modifier.height(10.dp))
+                                Text(state.forgotMessage, style = MaterialTheme.typography.bodySmall)
+                            }
                         }
                     }
                 },
                 confirmButton = {
                     TextButton(
-                        onClick = { vm.submitForgot() },
-                        enabled = !state.forgotBusy && state.forgotAccount.isNotBlank()
-                    ) { Text(if (state.forgotBusy) "提交中…" else "提交") }
+                        onClick = { if (state.resetSuccess) vm.closeForgot() else vm.submitReset() },
+                        enabled = !state.resetBusy
+                    ) {
+                        Text(
+                            when {
+                                state.resetSuccess -> "知道了"
+                                state.resetBusy -> "提交中…"
+                                else -> "重置密码"
+                            }
+                        )
+                    }
                 },
-                dismissButton = {
-                    TextButton(
-                        onClick = { vm.closeForgot() },
-                        // 提交在途时关窗会丢掉结果提示,这里不允许关
-                        enabled = !state.forgotBusy
-                    ) { Text("关闭") }
-                }
+                dismissButton = if (!state.resetSuccess) {
+                    {
+                        TextButton(
+                            onClick = { vm.closeForgot() },
+                            enabled = !state.forgotBusy && !state.resetBusy
+                        ) { Text("取消") }
+                    }
+                } else null
             )
         }
     }

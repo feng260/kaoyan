@@ -51,15 +51,19 @@ data class TokensDto(val access: String, val refresh: String, val expiresIn: Lon
 /**
  * 注册请求。
  *
- * [termsAccepted] / [privacyAccepted] 是服务端的必填项：它既用来留档（同意时间点），
- * 也是"数据属于我自己"这句话的凭证。客户端在提交前会明确校验这两个布尔值，
- * 而不是靠服务端 400 才弹提示——那样用户填了半天密码才被拒，很败好感。
+ * 邮箱在注册时必须通过验证码验证,所以 [email] / [code] 都是必填;
+ * [inviteCode] 由服务端在发码和注册两处各校验一次,客户端只做"非空"这一层拦截。
+ *
+ * [termsAccepted] / [privacyAccepted] 是服务端的硬校验字段:首启同意门已经把协议留档,
+ * 这里固定传 true,只是为了让服务端确认"注册这个动作本身也带着同意"。
  */
 @Serializable
 data class RegisterReq(
     val username: String,
     val password: String,
-    val email: String? = null,
+    val email: String,
+    val code: String,
+    val inviteCode: String? = null,
     val termsAccepted: Boolean = false,
     val privacyAccepted: Boolean = false
 )
@@ -87,11 +91,19 @@ data class RefreshReq(val refresh: String)
 @Serializable
 data class RefreshResp(val user: UserDto, val device: DeviceDto, val tokens: TokensDto)
 
+/** 注册第一步:往邮箱发 6 位验证码;邀请码在发码时就会校验一次,别让用户填完整个表单才被拒 */
 @Serializable
-data class ForgotReq(val account: String)
+data class EmailCodeReq(val email: String, val purpose: String, val inviteCode: String? = null)
 
 @Serializable
-data class ResetReq(val token: String, val newPassword: String)
+data class EmailCodeResp(val sent: Boolean = false)
+
+/** 找回密码第一步:只按邮箱发码;响应统一为 {"sent": true},不暴露邮箱是否注册 */
+@Serializable
+data class ForgotReq(val email: String)
+
+@Serializable
+data class ResetReq(val email: String, val code: String, val newPassword: String)
 
 @Serializable
 data class ChangePasswordReq(val oldPassword: String, val newPassword: String)
@@ -894,6 +906,10 @@ interface YanzhongApi {
     /** 健康探针:无需登录即可调,告知服务端时间与可用能力(如邮件重置开关) */
     @GET("healthz")
     suspend fun health(): HealthResp
+
+    /** 注册第一步:请求邮箱验证码 */
+    @POST("api/v1/auth/email/code")
+    suspend fun requestEmailCode(@Body body: EmailCodeReq): EmailCodeResp
 
     @POST("api/v1/auth/register")
     suspend fun register(@Body body: RegisterReq): RegisterResp

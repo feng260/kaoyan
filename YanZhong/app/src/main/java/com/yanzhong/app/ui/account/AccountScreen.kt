@@ -3,7 +3,6 @@ package com.yanzhong.app.ui.account
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -44,7 +43,6 @@ import androidx.navigation.NavHostController
 import com.yanzhong.app.data.remote.DeviceFullDto
 import com.yanzhong.app.ui.cloud.CloudDataViewModel
 import com.yanzhong.app.ui.cloud.CloudSyncViewModel
-import com.yanzhong.app.ui.legal.ConsentRow
 import com.yanzhong.app.ui.legal.PolicyLinksRow
 import com.yanzhong.app.ui.mine.MineViewModel
 import com.yanzhong.app.ui.nav.Routes
@@ -66,7 +64,7 @@ import com.yanzhong.app.util.TimeUtils
 /**
  * 账号子页:一个账号多设备登录,共用同一份服务端计划。
  *
- * 页面上的分组 —— 登录/注册、同步状态与手动同步、云端数据(导出/下载/恢复)、
+ * 页面上的分组 —— 登录(未登录兜底)、同步状态与手动同步、云端数据(导出/下载/恢复)、
  * 账号安全、设备管理、退出与注销。
  * 服务器地址、增量同步、专注接力等实现细节一律不在此出现:
  * 同步是后台常驻行为,用户不需要理解,也不该被要求操作。
@@ -103,9 +101,7 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
 
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var email by remember { mutableStateOf("") }
     var rememberMe by remember { mutableStateOf(false) }
-    var consentChecked by remember { mutableStateOf(false) }
 
     // 退出与登出都不可撤销,先确认再执行
     var logoutConfirm by remember { mutableStateOf(false) }
@@ -148,7 +144,7 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
             Column(Modifier.padding(horizontal = 20.dp)) {
                 Spacer(Modifier.height(8.dp))
                 if (!state.loggedIn) {
-                    SectionHeader(title = "登录 / 注册")
+                    SectionHeader(title = "登录")
                     Spacer(Modifier.height(8.dp))
                     AppCard {
                         Text(
@@ -173,36 +169,16 @@ fun AccountScreen(padding: PaddingValues, navController: NavHostController) {
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = email, onValueChange = { email = it },
-                            label = { Text("邮箱(找回密码用,可选)") }, singleLine = true,
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = rememberMe, onCheckedChange = { rememberMe = it })
                             Text("记住我(30 天免登录)", style = MaterialTheme.typography.bodyMedium)
                         }
-                        ConsentRow(
-                            checked = consentChecked,
-                            onCheckedChange = { consentChecked = it },
-                            modifier = Modifier.fillMaxWidth()
-                        )
                         Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            PrimaryButton(
-                                text = "登录",
-                                onClick = { vm.login(username, password, rememberMe) },
-                                enabled = !state.busy && username.isNotBlank() && password.length >= 8,
-                                modifier = Modifier.weight(1f)
-                            )
-                            SecondaryButton(
-                                text = "注册",
-                                onClick = { vm.register(username, password, email, consentChecked) },
-                                enabled = !state.busy && username.length >= 3 && password.length >= 8,
-                                modifier = Modifier.weight(1f)
-                            )
-                        }
+                        PrimaryButton(
+                            text = "登录",
+                            onClick = { vm.login(username, password, rememberMe) },
+                            enabled = !state.busy && username.isNotBlank() && password.length >= 8
+                        )
                         PolicyLinksRow(prefix = "", modifier = Modifier.fillMaxWidth())
                     }
                 } else {
