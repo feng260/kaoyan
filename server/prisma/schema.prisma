@@ -20,6 +20,9 @@ model User {
   username     String  @unique @db.VarChar(32)
   email        String? @unique @db.VarChar(255)
   passwordHash String  @db.VarChar(100) // bcrypt(12)
+  // 邮箱验证与政策版本:注册时写入,找回密码要求邮箱可收信
+  emailVerifiedAt       DateTime?
+  acceptedPolicyVersion String? @db.VarChar(16)
   // 找回密码:一次性 token 的 SHA-256(不存明文)
   resetTokenHash    String?
   resetTokenExpiry  BigInt?
@@ -375,4 +378,21 @@ model LlmUsage {
   @@index([userGuid, createdAt])
   @@index([createdAt])
   @@map("llm_usage")
+}
+
+// ---------- 邮箱验证码 ----------
+
+/// 验证码只存哈希;一次签发只保留最新一条有效记录
+model EmailCode {
+  id         Int     @id @default(autoincrement())
+  email      String  @db.VarChar(255)
+  purpose    String  @db.VarChar(16) // register / reset
+  codeHash   String  @db.VarChar(100)
+  expiresAt  BigInt
+  attempts   Int     @default(0)
+  consumedAt BigInt?
+  createdAt  BigInt
+
+  @@index([email, purpose, createdAt])
+  @@map("email_codes")
 }

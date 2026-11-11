@@ -41,6 +41,13 @@ router.patch('/me', requireAuth, apiLimit(), async ctx => {
   ctx.body = { identity, serverTime: Date.now() }
 })
 
+/** 重新同意政策:App 首启同意门在已登录状态下补报 */
+router.post('/consent', requireAuth, apiLimit(), async ctx => {
+  const body = z.object({ version: z.string().min(1).max(16) }).parse(ctx.request.body)
+  await accountService.acceptPolicy(ctx.state.auth!.userGuid, body.version)
+  ctx.status = 204
+})
+
 /** 导出全部数据:一次性返回 JSON,并带上下载文件名(浏览器直接访问也能存下来) */
 router.get('/export', requireAuth, apiLimit(), async ctx => {
   const dump = await accountService.exportAccount(ctx.state.auth!.userGuid)

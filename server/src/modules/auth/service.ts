@@ -1,11 +1,13 @@
 import bcrypt from 'bcryptjs'
-import nodemailer from 'nodemailer'
 import { Prisma } from '@prisma/client'
 import { prisma, num } from '../../shared/prisma'
 import { signAccessToken, sha256, randomToken, uuid } from '../../shared/jwt'
-import { env, smtpConfigured } from '../../config/env'
+import { env } from '../../config/env'
 import { ApiError } from '../../middlewares/error'
-import { assertLegalConsent } from './consent'
+import { assertLegalConsent, POLICY_VERSION } from './consent'
+import { createEmailCodeStore, normalizeEmail } from './emailCode'
+import { assertInvite } from './invite'
+import { assertSmtpConfigured, sendMail, verificationMail } from '../../shared/mailer'
 
 const now = () => Date.now()
 
@@ -49,27 +51,51 @@ async function issueTokens(userGuid: string, deviceId: number, rememberMe: boole
   return { access, refresh, expiresIn: days * 24 * 3600_000 }
 }
 
-/** email 允许 null:客户端"没填邮箱"时下发的是 null 而非省略键(见 routes.ts registerSchema) */
+const emailCodes = createEmailCodeStore(prisma)
+
+/** 注册第一步:校验邀请码与邮箱占用后发验证码 */
+export async function requestRegisterCode(input: {
+  email: string
+  inviteCode?: string | null
+}): Promise<void> {
+  assertSmtpConfigured()
+  assertInvite(input.inviteCode)
+  const email = normalizeEmail(input.email)
+  const exists = await prisma.user.findUnique({ where: { email } })
+  if (exists) throw new ApiError(409, 'CONFLICT', '该邮箱已被注册')
+  const code = await emailCodes.issue(email, 'register')
+  await sendMail({ to: email, ...verificationMail(code, 'register') })
+}
+
+/** email 必填:找回密码依赖它,注册即验证 */
 export async function register(input: {
   username: string
   password: string
-  email?: string | null
+  email: string
+  code: string
+  inviteCode?: string | null
   termsAccepted?: boolean | null
   privacyAccepted?: boolean | null
 }): Promise<PublicUser> {
   // 同意门禁放在服务层而非路由层:这是唯一的注册入口,谁调都绕不过去。
   assertLegalConsent(input)
+  assertInvite(input.inviteCode)
+  const email = normalizeEmail(input.email)
   const exists = await prisma.user.findFirst({
-    where: { OR: [{ username: input.username }, ...(input.email ? [{ email: input.email }] : [])] },
+    where: { OR: [{ username: input.username }, { email }] },
   })
   if (exists) throw new ApiError(409, 'CONFLICT', '用户名或邮箱已被注册')
+  const verified = await emailCodes.verify(email, 'register', input.code)
+  if (!verified) throw new ApiError(400, 'INVALID_EMAIL_CODE', '邮箱验证码错误或已过期')
   try {
     const acceptedAt = new Date(now())
     const user = await prisma.user.create({
       data: {
         guid: uuid(),
         username: input.username,
-        email: input.email ?? null,
+        email,
+        emailVerifiedAt: acceptedAt,
+        acceptedPolicyVersion: POLICY_VERSION,
         passwordHash: await bcrypt.hash(input.password, 12),
         // 同意时间落库:日后要证明"用户当时同意了哪一版协议"时,这是唯一的凭据
         termsAcceptedAt: acceptedAt,
@@ -162,46 +188,36 @@ export async function changePassword(userGuid: string, oldPassword: string, newP
 }
 
 /**
- * 找回密码:
- * - 生成一次性 token(30 分钟有效,仅存哈希),含 userId 的 reset 链接
- * - SMTP 未配置时降级:链接输出服务端日志(个人自部署场景)
+ * 找回密码第一步:统一返回成功,不暴露邮箱是否存在。
+ * 未配置 SMTP 时在查询前就返回 503,避免成为账号探测通道。
  */
-export async function forgotPassword(usernameOrEmail: string): Promise<{ sent: boolean }> {
-  const user = await prisma.user.findFirst({
-    where: { OR: [{ username: usernameOrEmail }, { email: usernameOrEmail }] },
-  })
-  // 统一返回成功,不泄漏账号是否存在
+export async function forgotPassword(emailRaw: string): Promise<{ sent: true }> {
+  assertSmtpConfigured()
+  const email = normalizeEmail(emailRaw)
+  const user = await prisma.user.findUnique({ where: { email } })
   if (!user) return { sent: true }
-  const token = randomToken(32)
-  await prisma.user.update({
-    where: { guid: user.guid },
-    data: { resetTokenHash: sha256(token), resetTokenExpiry: now() + 30 * 60_000 },
-  })
-  const link = `yanzhong://password-reset?token=${token}`
-  if (smtpConfigured() && user.email) {
-    const transport = nodemailer.createTransport({
-      host: env.smtp.host, port: env.smtp.port, secure: env.smtp.secure,
-      auth: { user: env.smtp.user, pass: env.smtp.pass },
-    })
-    await transport.sendMail({
-      from: env.smtp.from, to: user.email, subject: '研钟 · 重置密码',
-      text: `30 分钟内有效,点击或复制到 App 中打开:\n${link}\n若非本人操作请忽略。`,
-    })
-  } else {
-    // 降级:个人部署无 SMTP,链接输出日志,从服务器日志取用
-    console.log(`[password-reset] user=${user.username} link=${link}`)
+  const code = await emailCodes.issue(email, 'reset')
+  try {
+    await sendMail({ to: email, ...verificationMail(code, 'reset') })
+  } catch {
+    // sendMail 已按脱敏错误码记录日志;这里吞掉失败,保证「邮箱不存在」与「发送失败」响应一致
   }
   return { sent: true }
 }
 
-export async function resetPassword(token: string, newPassword: string): Promise<void> {
-  const user = await prisma.user.findFirst({ where: { resetTokenHash: sha256(token) } })
-  if (!user || !user.resetTokenExpiry || num(user.resetTokenExpiry) < now()) {
-    throw new ApiError(400, 'INVALID_TOKEN', '重置链接无效或已过期')
-  }
+export async function resetPasswordWithCode(input: {
+  email: string
+  code: string
+  newPassword: string
+}): Promise<void> {
+  const email = normalizeEmail(input.email)
+  const verified = await emailCodes.verify(email, 'reset', input.code)
+  if (!verified) throw new ApiError(400, 'INVALID_EMAIL_CODE', '验证码错误或已过期')
+  const user = await prisma.user.findUnique({ where: { email } })
+  if (!user) throw new ApiError(400, 'INVALID_EMAIL_CODE', '验证码错误或已过期')
   await prisma.user.update({
     where: { guid: user.guid },
-    data: { passwordHash: await bcrypt.hash(newPassword, 12), resetTokenHash: null, resetTokenExpiry: null },
+    data: { passwordHash: await bcrypt.hash(input.newPassword, 12) },
   })
   // 强制所有设备下线
   await prisma.refreshToken.updateMany({ where: { userGuid: user.guid, revokedAt: null }, data: { revokedAt: now() } })

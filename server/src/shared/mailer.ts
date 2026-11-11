@@ -24,7 +24,13 @@ export async function sendMail(input: { to: string; subject: string; text: strin
     auth: { user: env.smtp.user, pass: env.smtp.pass },
     connectionTimeout: 10_000,
   })
-  await transport.sendMail({ from: env.smtp.from, to: input.to, subject: input.subject, text: input.text })
+  try {
+    await transport.sendMail({ from: env.smtp.from, to: input.to, subject: input.subject, text: input.text })
+  } catch (error) {
+    // nodemailer 的原始错误里带收件人地址;这里只记录脱敏错误码,再换成业务错误
+    console.warn(`[mail] 发送失败:${describeMailError(error)}`)
+    throw new ApiError(502, 'EMAIL_SEND_FAILED', '验证码邮件发送失败,请稍后再试')
+  }
 }
 
 const TITLES: Record<'register' | 'reset', string> = {

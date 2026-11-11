@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { ApiError } from '../../middlewares/error'
+import { POLICY_VERSION } from '../auth/consent'
 import { createAccountService, type AccountDb } from './service'
 
 /**
@@ -109,6 +110,35 @@ function serviceWith(fake: { db: AccountDb }) {
     }),
   }
 }
+
+test('acceptPolicy records the current policy version and consent timestamps', async () => {
+  const fake = createFakeAccountDb()
+  seed(fake.state)
+  const { service } = serviceWith(fake)
+
+  await service.acceptPolicy(USER, POLICY_VERSION)
+
+  const row = fake.state.user.find(r => r.guid === USER)!
+  assert.equal(row.acceptedPolicyVersion, POLICY_VERSION)
+  assert.ok(row.termsAcceptedAt instanceof Date)
+  assert.ok(row.privacyAcceptedAt instanceof Date)
+})
+
+test('acceptPolicy rejects a stale policy version and touches nothing', async () => {
+  const fake = createFakeAccountDb()
+  seed(fake.state)
+  const before = fake.state.user[0].termsAcceptedAt
+  const { service } = serviceWith(fake)
+
+  await assert.rejects(() => service.acceptPolicy(USER, '2026-09'), (err: unknown) => {
+    assert.ok(err instanceof ApiError)
+    assert.equal(err.status, 409)
+    assert.equal(err.code, 'POLICY_VERSION_MISMATCH')
+    return true
+  })
+  assert.equal(fake.state.user[0].termsAcceptedAt, before)
+  assert.equal(fake.state.user[0].acceptedPolicyVersion, undefined)
+})
 
 test('exportAccount bundles account, profile, plan and synced data', async () => {
   const fake = createFakeAccountDb()

@@ -37,6 +37,7 @@ export interface EmailCodeDb {
     create(args: any): Promise<unknown>
     findFirst(args: any): Promise<Row | null>
     update(args: any): Promise<unknown>
+    updateMany(args: any): Promise<{ count: number }>
   }
 }
 
@@ -71,8 +72,12 @@ export function createEmailCodeStore(db: EmailCodeDb, clock: () => number = Date
       await db.emailCode.update({ where: { id: row.id }, data: { attempts: { increment: 1 } } })
       return false
     }
-    await db.emailCode.update({ where: { id: row.id }, data: { consumedAt: clock() } })
-    return true
+    // 原子消费:并发提交同一验证码时只有一个请求能拿到 count=1
+    const consumed = await db.emailCode.updateMany({
+      where: { id: row.id, consumedAt: null },
+      data: { consumedAt: clock() },
+    })
+    return consumed.count === 1
   }
 
   return { issue, verify }

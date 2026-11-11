@@ -6,10 +6,10 @@ import { ApiError } from '../../middlewares/error'
  * 刻意不引用 Prisma —— 这样在没有数据库的开发机上也能跑通「不勾选就不给注册」这条测试。
  */
 
-/** 当前生效的协议版本:注册时留时间戳,版本号在协议页和导出里标明 */
-export const POLICY_VERSION = '2026-09'
+/** 当前生效的协议版本:注册与重新同意时落库 */
+export const POLICY_VERSION = '2026-11'
 /** 协议生效日期(协议页展示用) */
-export const POLICY_EFFECTIVE_DATE = '2026-09-25'
+export const POLICY_EFFECTIVE_DATE = '2026-11-25'
 
 /**
  * 同意字段单独成 schema,而不是塞进 registerSchema 里内联:
@@ -31,5 +31,11 @@ export type LegalConsentInput = z.infer<typeof legalConsentSchema>
 export function assertLegalConsent(input: LegalConsentInput | undefined | null): void {
   if (input?.termsAccepted !== true || input?.privacyAccepted !== true) {
     throw new ApiError(400, 'LEGAL_CONSENT_REQUIRED', '请先阅读并同意《用户协议》与《隐私政策》')
+  }
+}
+
+export function assertPolicyVersion(version: string): void {
+  if (version !== POLICY_VERSION) {
+    throw new ApiError(409, 'POLICY_VERSION_MISMATCH', '协议版本已更新,请重新阅读并同意')
   }
 }

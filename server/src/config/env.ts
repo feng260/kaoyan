@@ -44,6 +44,11 @@ export const env = {
     .map(s => s.trim())
     .filter(Boolean),
   adminToken: process.env.ADMIN_TOKEN ?? '',
+  // 邀测期静态邀请码,逗号分隔;生产未配置时注册会返回 INVITE_REQUIRED
+  inviteCodes: (process.env.INVITE_CODES ?? '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean),
   // 行程调整引擎:elastic=近期弹性调整(默认);legacy=旧版整窗重排(仅回滚用)
   planAdjustEngine: process.env.PLAN_ADJUST_ENGINE === 'legacy' ? 'legacy' as const : 'elastic' as const,
   // AI 计划生成用的大模型接口(OpenAI 兼容协议)。

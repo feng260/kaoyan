@@ -22,17 +22,66 @@ const loginUserIpLimit = rateLimit({
   key: ctx => `${clientAddress(ctx, env.trustProxy)}:${accountKey(bodyField(ctx, 'username'))}`,
 })
 
+const registerIpLimit = rateLimit({ name: 'register-ip', max: 10, windowMs: 60 * 60_000 })
+const registerEmailLimit = rateLimit({
+  name: 'register-email',
+  max: 5,
+  windowMs: 60 * 60_000,
+  key: ctx => accountKey(bodyField(ctx, 'email')),
+})
+
 const registerSchema = z.object({
   username: z.string().min(3).max(32).regex(/^[a-zA-Z0-9_\u4e00-\u9fa5]+$/, '仅限中英文数字下划线'),
   password: z.string().min(8).max(64),
-  // 邮箱可选。客户端用 kotlinx.serialization 且默认 explicitNulls=true,
-  // "没填邮箱"时序列化出来的是 {"email": null} 而不是省略该键;
-  // 而 zod 的 .optional() 只放行 undefined、遇到 null 会报 "Expected string",
-  // 于是注册被直接打回 400。故用 .nullish() 同时放行 null/undefined,由 service 归一成 null。
-  email: z.string().email().nullish(),
+  email: z.string().email(),
+  code: z.string().regex(/^\d{6}$/, '验证码为 6 位数字'),
+  // 客户端 explicitNulls=true,未填时下发 null,必须用 nullish 放行
+  inviteCode: z.string().max(64).nullish(),
   // 协议同意:这里只校验类型,「必须为 true」的判定交给 assertLegalConsent,
   // 这样未勾选时客户端拿到的是 LEGAL_CONSENT_REQUIRED 而不是泛泛的 INVALID_PARAMS
   ...legalConsentSchema.shape,
+})
+
+const emailCodeSchema = z.object({
+  email: z.string().email(),
+  purpose: z.literal('register'),
+  inviteCode: z.string().max(64).nullish(),
+})
+
+const forgotSchema = z.object({ email: z.string().email() })
+
+const resetSchema = z.object({
+  email: z.string().email(),
+  code: z.string().regex(/^\d{6}$/),
+  newPassword: z.string().min(8).max(64),
+})
+
+const codeIpLimit = rateLimit({ name: 'email-code-ip', max: 10, windowMs: 60 * 60_000 })
+const codeEmailLimit = rateLimit({
+  name: 'email-code-email',
+  max: 3,
+  windowMs: 60 * 60_000,
+  key: ctx => accountKey(bodyField(ctx, 'email')),
+})
+const codeCooldown = rateLimit({
+  name: 'email-code-cooldown',
+  max: 1,
+  windowMs: 60_000,
+  key: ctx => accountKey(bodyField(ctx, 'email')),
+})
+const forgotIpLimit = rateLimit({ name: 'forgot-ip', max: 10, windowMs: 60 * 60_000 })
+const forgotEmailLimit = rateLimit({
+  name: 'forgot-email',
+  max: 5,
+  windowMs: 60 * 60_000,
+  key: ctx => accountKey(bodyField(ctx, 'email')),
+})
+const resetIpLimit = rateLimit({ name: 'reset-ip', max: 10, windowMs: 60 * 60_000 })
+const resetEmailLimit = rateLimit({
+  name: 'reset-email',
+  max: 5,
+  windowMs: 60 * 60_000,
+  key: ctx => accountKey(bodyField(ctx, 'email')),
 })
 
 const loginSchema = z.object({
@@ -44,7 +93,13 @@ const loginSchema = z.object({
   rememberMe: z.boolean().optional(),
 })
 
-router.post('/register', strictLimit(), async ctx => {
+router.post('/email/code', codeIpLimit, codeEmailLimit, codeCooldown, async ctx => {
+  const body = emailCodeSchema.parse(ctx.request.body)
+  await authService.requestRegisterCode(body)
+  ctx.body = { sent: true }
+})
+
+router.post('/register', registerIpLimit, registerEmailLimit, async ctx => {
   const body = registerSchema.parse(ctx.request.body)
   const user = await authService.register(body)
   ctx.status = 201
@@ -67,15 +122,14 @@ router.post('/logout', requireAuth, async ctx => {
   ctx.status = 204
 })
 
-router.post('/password/forgot', strictLimit(), async ctx => {
-  const body = z.object({ account: z.string().min(1) }).parse(ctx.request.body)
-  ctx.body = await authService.forgotPassword(body.account)
+router.post('/password/forgot', forgotIpLimit, forgotEmailLimit, async ctx => {
+  const body = forgotSchema.parse(ctx.request.body)
+  ctx.body = await authService.forgotPassword(body.email)
 })
 
-router.post('/password/reset', strictLimit(), async ctx => {
-  const body = z.object({ token: z.string().min(20), newPassword: z.string().min(8).max(64) })
-    .parse(ctx.request.body)
-  await authService.resetPassword(body.token, body.newPassword)
+router.post('/password/reset', resetIpLimit, resetEmailLimit, async ctx => {
+  const body = resetSchema.parse(ctx.request.body)
+  await authService.resetPasswordWithCode(body)
   ctx.status = 204
 })
 

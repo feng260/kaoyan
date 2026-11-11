@@ -33,6 +33,11 @@ function fakeDb() {
           if (data.attempts?.increment) row.attempts += data.attempts.increment
           if (data.consumedAt !== undefined) row.consumedAt = data.consumedAt
         },
+        async updateMany({ where, data }: any) {
+          const hit = rows.filter(r => r.id === where.id && r.consumedAt === where.consumedAt)
+          for (const row of hit) row.consumedAt = data.consumedAt
+          return { count: hit.length }
+        },
       },
     },
   }
@@ -77,7 +82,8 @@ test('连续输错 5 次后即使输对也被拒绝', async () => {
   const store = createEmailCodeStore(db, () => 1_000)
   const code = await store.issue('a@b.com', 'register')
   for (let i = 0; i < MAX_CODE_ATTEMPTS; i++) {
-    assert.equal(await store.verify('a@b.com', 'register', '000000'), false)
+    // 用非数字串排除与随机生成的 6 位验证码碰撞(1e-6)导致的偶发误判
+    assert.equal(await store.verify('a@b.com', 'register', 'abcdef'), false)
   }
   assert.equal(await store.verify('a@b.com', 'register', code), false)
 })

@@ -4,7 +4,7 @@ import { ApiError } from '../../middlewares/error'
 import { hub } from '../../shared/ws/Hub'
 import { exportBackup } from '../sync/service'
 import { planningService, type PublicPlan, type PublicProfile } from '../planning/service'
-import { POLICY_EFFECTIVE_DATE, POLICY_VERSION } from '../auth/consent'
+import { assertPolicyVersion, POLICY_EFFECTIVE_DATE, POLICY_VERSION } from '../auth/consent'
 import { normalizeIdentityPatch, type IdentityInput } from './identity'
 
 /**
@@ -167,6 +167,17 @@ export function createAccountService(db: AccountDb, deps: AccountDeps = DEFAULT_
     }
   }
 
+  /** 已登录用户升级后重新接受新政策:版本不符则 409 */
+  async function acceptPolicy(userGuid: string, version: string): Promise<void> {
+    await requireUser(userGuid)
+    assertPolicyVersion(version)
+    const at = new Date()
+    await db.user.updateMany({
+      where: { guid: userGuid },
+      data: { acceptedPolicyVersion: version, termsAcceptedAt: at, privacyAcceptedAt: at },
+    })
+  }
+
   /** 彻底注销:先验明身份,再在一个事务里删干净 */
   async function deleteAccount(input: DeleteAccountInput): Promise<{ deleted: number }> {
     const user = await requireUser(input.userGuid)
@@ -207,7 +218,7 @@ export function createAccountService(db: AccountDb, deps: AccountDeps = DEFAULT_
     return { deleted }
   }
 
-  return { exportAccount, deleteAccount, getIdentity, updateIdentity }
+  return { acceptPolicy, exportAccount, deleteAccount, getIdentity, updateIdentity }
 }
 
 export type AccountService = ReturnType<typeof createAccountService>

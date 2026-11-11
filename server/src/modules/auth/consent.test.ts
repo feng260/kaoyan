@@ -5,6 +5,7 @@ import {
   POLICY_VERSION,
   POLICY_EFFECTIVE_DATE,
   assertLegalConsent,
+  assertPolicyVersion,
   legalConsentSchema,
 } from './consent'
 
@@ -58,7 +59,22 @@ test('legalConsentSchema rejects a non-boolean', () => {
 })
 
 test('policy version and effective date are published for the client to display', () => {
-  assert.match(POLICY_VERSION, /^\d{4}-\d{2}$/)
-  assert.match(POLICY_EFFECTIVE_DATE, /^\d{4}-\d{2}-\d{2}$/)
-  assert.ok(!Number.isNaN(Date.parse(POLICY_EFFECTIVE_DATE)))
+  assert.equal(POLICY_VERSION, '2026-11')
+  assert.equal(POLICY_EFFECTIVE_DATE, '2026-11-25')
+})
+
+test('assertPolicyVersion 拒绝过期版本', () => {
+  assert.throws(
+    () => assertPolicyVersion('2026-09'),
+    (err: unknown) => {
+      assert.ok(err instanceof ApiError)
+      assert.equal(err.status, 409)
+      assert.equal(err.code, 'POLICY_VERSION_MISMATCH')
+      return true
+    },
+  )
+})
+
+test('assertPolicyVersion 接受当前版本', () => {
+  assert.doesNotThrow(() => assertPolicyVersion(POLICY_VERSION))
 })
