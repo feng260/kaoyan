@@ -5,7 +5,7 @@
 
 > **仓库基线为 Caddy + HTTPS**：`docker-compose.yml` 已把 API 绑定到 `127.0.0.1:3000`，并设置
 > `TRUST_PROXY: "true"`，对外只经 Caddy 的 80/443 提供服务（切换步骤见第九节）。
-> 下文第六节的 IP + HTTP 地址示例属于**旧内测形态，仅作回滚参考**，标准路径以第九节为准。
+> 下文出现的 IP + HTTP 地址示例均属**旧内测形态，仅作回滚参考**，标准路径以第九节为准。
 
 ## 一、环境要求
 
@@ -120,17 +120,20 @@ curl http://127.0.0.1:3000/healthz
 # 期望: {"ok":true,"serverTime":...}
 ```
 
-在**本地电脑上**（这一步才能真正验证安全组是否放行）：
+在**本地电脑上**（验证公网链路；需先完成第九节的 Caddy / HTTPS 切换）：
 
 ```bash
-curl http://81.71.14.219:3000/healthz
+curl -fsS https://<域名>/healthz
 ```
 
-浏览器打开 `http://81.71.14.219:3000/docs` 可看 Swagger 文档，
-`http://81.71.14.219:3000/admin` 用 `ADMIN_TOKEN` 登录管理后台。
+> **旧路径（仅回滚用）**：退回 IP + HTTP 内测时才执行 `curl http://81.71.14.219:3000/healthz`
+> 验证 3000 是否放行（见 2.2 与第九节末尾）。
 
-App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接登录即可；
-也可在「我的 → 云同步 → 服务器地址」手动覆盖。
+浏览器打开 `https://<域名>/docs` 可看 Swagger 文档，
+`https://<域名>/admin` 用 `ADMIN_TOKEN` 登录管理后台。
+
+App 端：标准包默认地址为 `https://<域名>`，装包后直接登录即可（旧内测包仍内置
+`http://81.71.14.219:3000`）；也可在「我的 → 云同步 → 服务器地址」手动覆盖。
 
 ## 七、发布 App 更新（管理后台）
 
@@ -146,7 +149,7 @@ App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接�
 
    产物：`app/build/outputs/apk/release/app-release.apk`。
 
-3. **上传**：浏览器打开 `http://81.71.14.219:3000/admin`，用 `ADMIN_TOKEN` 登录，
+3. **上传**：浏览器打开 `https://<域名>/admin`，用 `ADMIN_TOKEN` 登录，
    在「版本发布」选 APK、按需勾选「强制更新」、填写更新说明后上传。
    服务端会直接从 APK 的 AndroidManifest 解析包名与版本，不读表单：
    - 包名必须是 `com.yanzhong.app`，否则拒绝；
@@ -156,7 +159,7 @@ App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接�
 4. **验证**：
 
    ```bash
-   curl -s "http://81.71.14.219:3000/api/v1/app/latest?current=1"
+   curl -s "https://<域名>/api/v1/app/latest?current=1"
    # 期望 updateAvailable 为 true,并返回 latest.versionCode / downloadUrl / sha256
    ```
 
@@ -189,25 +192,26 @@ App 端：默认地址已内置为 `http://81.71.14.219:3000`，装包后直接�
 
 1. DNS A/AAAA 指向服务器；云安全组及主机防火墙只开放 TCP 80/443（若启用 IPv6 也要检查），
    3000 保持不对公网开放。
-2. 部署仓库现有 compose（已内置 `127.0.0.1:3000:3000` 与 `TRUST_PROXY: "true"`，**无需手改端口或变量**）：
+2. **HTTPS APK 必须先构建并就绪**：现有测试用户仍指向 IP/HTTP 旧包，服务端一旦只提供 HTTPS
+   且 3000 不再公网可达，旧包会立即断线。先将 Android `data/remote/Api.kt` 的
+   `DEFAULT_SERVER_URL` 改为 `https://<域名>`，从 `res/xml/network_security_config.xml`
+   移除旧公网 IP 的明文许可，打出 release 包并确认能在切换同一窗口装机（真机冒烟见第 7 步）。
+3. 部署仓库现有 compose（已内置 `127.0.0.1:3000:3000` 与 `TRUST_PROXY: "true"`，**无需手改端口或变量**）：
    `sudo docker compose up -d --build`，再用 `curl -fsS http://127.0.0.1:3000/healthz` 确认本机健康。
-3. 安装 Caddy 后先创建日志目录并交给 caddy 用户——用 root 直接 `mkdir` 会让 Caddy 无法写日志：
+4. 安装 Caddy 后先创建日志目录并交给 caddy 用户——用 root 直接 `mkdir` 会让 Caddy 无法写日志：
 
    ```bash
    sudo install -d -o caddy -g caddy -m 0755 /var/log/caddy
    ```
 
    复制 `deploy/Caddyfile.example` 到 `/etc/caddy/Caddyfile`，把 `api.yanzhong.app` 替换为实际 `<域名>`。
-4. 校验并重载：`sudo caddy validate --config /etc/caddy/Caddyfile`、`sudo systemctl reload caddy`
+5. 校验并重载：`sudo caddy validate --config /etc/caddy/Caddyfile`、`sudo systemctl reload caddy`
    （首次部署用 `systemctl restart caddy`）。
-5. 验证 `curl -fsS https://<域名>/healthz`、证书、登录及 WebSocket（Caddy 自动转发 WebSocket Upgrade）；
+6. 验证 `curl -fsS https://<域名>/healthz`、证书、登录及 WebSocket（Caddy 自动转发 WebSocket Upgrade）；
    并在外部确认 `:3000` 已不可达（如 `curl --connect-timeout 5 http://81.71.14.219:3000/healthz` 应超时或拒绝）。
-6. **HTTPS APK 必须在切换前或与切换同一窗口装机就绪**：现有测试用户仍指向 IP/HTTP 旧包，
-   服务端一旦只提供 HTTPS 且 3000 不再公网可达，旧包会立即断线。将 Android
-   `data/remote/Api.kt` 的 `DEFAULT_SERVER_URL` 改为 `https://<域名>`，从
-   `res/xml/network_security_config.xml` 移除旧公网 IP 的明文许可，重新发布并真机冒烟。
 7. 验证 `https://<域名>/docs`、`/admin`、`/api/v1/app/latest` 和已发布 APK 的
-   `/api/v1/app/download/<versionCode>`（带 `Range` 请求）。
+   `/api/v1/app/download/<versionCode>`（带 `Range` 请求），并在同一窗口用第 2 步的新包
+   真机冒烟（登录、云同步、计划、下载、WebSocket）。
 
 切换失败时以清单中记录的旧镜像标签/ID 回滚 API，保留两个数据卷；数据库 schema 不兼容时
 先停止写入并评估恢复，不能将演练脚本指向生产库。确需退回 IP + HTTP 内测时，在知情的前提下把

@@ -12,14 +12,14 @@
 
 ## 部署与切换
 
-- [ ] 部署候选服务，检查 `docker compose ps`、`docker compose logs --tail=100 api` 和 `curl -fsS http://127.0.0.1:3000/healthz`。
+- [ ] **先备妥 HTTPS APK**：Android `DEFAULT_SERVER_URL` 改为 `https://<域名>`，从 `res/xml/network_security_config.xml` 移除旧公网 IP 的明文许可，构建并签名 release 包，确认可安装且 `versionCode` 高于线上。旧测试用户仍指向 IP/HTTP 包，一旦 API 仅本机监听且 3000 不再公网可达，旧包立即离线，因此新包必须在任何部署/切换动作之前就绪，并在同一窗口装机。
 - [ ] DNS A/AAAA 记录指向服务器；确保 DNS 解析和 IPv6（如有）均指向实际服务节点。
-- [ ] 切换前构建并安装指向 `https://<域名>` 的新 APK（或与服务器切换同一窗口原子完成）：旧测试用户仍指向 IP/HTTP 包，一旦 API 仅本机监听且 3000 不再公网可达，旧包立即离线。
-- [ ] 先在安全组/防火墙**只**开放 80/443；安装 Caddy，执行 `sudo install -d -o caddy -g caddy -m 0755 /var/log/caddy` 创建日志目录（用 root 直接 `mkdir` 会导致 Caddy 无法写日志）；替换 `deploy/Caddyfile.example` 中域名，校验配置并启动；验证证书和 `curl -fsS https://<域名>/healthz`。
-- [ ] 部署仓库现有 compose（已内置 `127.0.0.1:3000:3000` 与 `TRUST_PROXY: "true"`，不要手动改端口或变量）；在外部确认公网 `:3000` 不可达且域名 HTTPS 正常，安全组/防火墙仅保留 80/443。
+- [ ] 部署仓库现有 compose（即候选构建，已内置 `127.0.0.1:3000:3000` 与 `TRUST_PROXY: "true"`，不要手动改端口或变量）；检查 `docker compose ps`、`docker compose logs --tail=100 api` 和 `curl -fsS http://127.0.0.1:3000/healthz`。
+- [ ] 在安全组/防火墙**只**开放 80/443；安装 Caddy，执行 `sudo install -d -o caddy -g caddy -m 0755 /var/log/caddy` 创建日志目录（用 root 直接 `mkdir` 会导致 Caddy 无法写日志）；替换 `deploy/Caddyfile.example` 中域名，校验配置并启动；验证证书和 `curl -fsS https://<域名>/healthz`。
+- [ ] 在外部确认公网 `:3000` 不可达（如 `curl --connect-timeout 5 http://81.71.14.219:3000/healthz` 应超时或拒绝），安全组/防火墙仅保留 80/443。
 - [ ] 确认 Caddy 覆写 `X-Forwarded-For` / `X-Real-IP`（客户端无法伪造），验证登录限流、真实 IP 与 WebSocket 连接。
 - [ ] 经 HTTPS 检查 `/docs`、`/admin`、`/api/v1/app/latest` 和已发布版本的 `/api/v1/app/download/<versionCode>`（可用 `curl -I` 检查响应/Range）；检查 APK 下载与上传权限。
-- [ ] Android `DEFAULT_SERVER_URL` 更新为 `https://<域名>` 并发布新包；移除旧公网 IP 的明文网络许可，真机检查登录、云同步、计划、下载和 WebSocket。
+- [ ] 同一窗口在真机安装新 APK，检查登录、云同步、计划、下载和 WebSocket；确认设备不再使用旧 IP/HTTP 地址。
 
 ## 观察与回滚
 
