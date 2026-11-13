@@ -1,4 +1,4 @@
-# 将 api.yanzhong.app 替换为已备案域名。
+# 域名须已完成备案,并与 APK 里的 API 地址一致。
 {
 	log default {
 		output file /var/log/caddy/access.log {
@@ -9,7 +9,7 @@
 	}
 }
 
-api.yanzhong.app {
+api.sunpush.top {
 	log default
 
 	reverse_proxy 127.0.0.1:3000 {

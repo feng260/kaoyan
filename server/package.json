@@ -1,7 +1,7 @@
 {
   "name": "yanzhong-server",
   "version": "1.0.0",
-  "description": "研钟 App 后端:用户认证、多设备状态同步、数据备份(原生 Koa + TypeScript + MySQL/Prisma)",
+  "description": "日拱 App 后端:用户认证、多设备状态同步、数据备份(原生 Koa + TypeScript + MySQL/Prisma)",
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",

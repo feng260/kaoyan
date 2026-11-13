@@ -183,7 +183,7 @@ class MineViewModel(app: Application) : AndroidViewModel(app) {
                         LocalDataWiper.restart(app)
                     } else {
                         TokenStore.clearAll()
-                        onDone(true, "账号已注销，但本机数据清理失败，请卸载重装研钟")
+                        onDone(true, "账号已注销，但本机数据清理失败，请卸载重装日拱")
                     }
                 },
                 onFailure = { e -> onDone(false, "注销失败:${e.readableMessage()}") }

@@ -41,7 +41,7 @@ const TITLES: Record<'register' | 'reset', string> = {
 export function verificationMail(code: string, purpose: 'register' | 'reset'): { subject: string; text: string } {
   const title = TITLES[purpose]
   return {
-    subject: `研钟 · ${title}`,
+    subject: `日拱 · ${title}`,
     text: `${title}:${code}\n10 分钟内有效,仅可使用一次。\n若非本人操作,请忽略本邮件。`,
   }
 }

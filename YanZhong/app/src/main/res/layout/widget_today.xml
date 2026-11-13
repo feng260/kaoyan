@@ -10,7 +10,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="研钟 · 今日"
+        android:text="日拱 · 今日"
         android:textColor="#B0B7E6"
         android:textSize="12sp" />
 

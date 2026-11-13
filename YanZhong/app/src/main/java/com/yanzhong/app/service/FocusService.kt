@@ -50,7 +50,7 @@ import com.yanzhong.app.util.TimeUtils
  *
  * 兼学霸模式拦截引擎(参考番茄ToDo):
  * - 标准模式:轮询识别前台应用,白名单内放行,否则锁屏拦截;
- * - 严格模式:任何离开研钟的行为都被立即拉回,仅计时结束或 6 位紧急退出密码可解除;
+ * - 严格模式:任何离开日拱的行为都被立即拉回,仅计时结束或 6 位紧急退出密码可解除;
  * - 拦截优先走全屏覆盖层(TYPE_APPLICATION_OVERLAY):非白名单应用直接被覆盖层锁定触摸,
  *   消掉按 Home 后的最大逃逸口;
  * - 严格模式必须有「显示在其他应用上层」:没有覆盖层时既盖不住桌面,也无法可靠地从后台拉回;
@@ -119,10 +119,10 @@ class FocusService : Service() {
                 }
             }
             ACTION_PULLBACK -> if (guardOn) {
-                // 严格模式 onStop 即时上报:覆盖层兜底 + 立即拉回研钟
+                // 严格模式 onStop 即时上报:覆盖层兜底 + 立即拉回日拱
                 showOverlay(guardStrict)
                 pullBack(
-                    if (guardStrict) "严格模式锁定中 · 计时结束前无法离开研钟"
+                    if (guardStrict) "严格模式锁定中 · 计时结束前无法离开日拱"
                     else "应用已禁用 · 专注期间仅可使用白名单应用"
                 )
             }
@@ -172,7 +172,7 @@ class FocusService : Service() {
     /**
      * 每秒轮询前台应用:严格=一律锁定;标准=非白名单锁定(无使用情况权限则返回 null 不拦截)。
      * 休息时段(PomodoroEngine.isFocusingNow=false)完全解除拦截:
-     * 可使用任意应用、可切后台,专注恢复后继续守护——休息结束后由引擎拉回研钟。
+     * 可使用任意应用、可切后台,专注恢复后继续守护——休息结束后由引擎拉回日拱。
      */
     private val guardTick: Runnable = object : Runnable {
         override fun run() {
@@ -183,7 +183,7 @@ class FocusService : Service() {
                 val fg = foregroundPkg()
                 if (fg != null) {
                     if (fg == packageName) {
-                        // 回到研钟自身:撤掉覆盖层
+                        // 回到日拱自身:撤掉覆盖层
                         hideOverlay()
                     } else {
                         val blocked = if (guardStrict) true else fg !in allowPkgs
@@ -191,7 +191,7 @@ class FocusService : Service() {
                             if (!showOverlay(guardStrict)) {
                                 // 无悬浮窗权限:回退拉回方案
                                 pullBack(
-                                    if (guardStrict) "严格模式锁定中 · 计时结束前无法离开研钟"
+                                    if (guardStrict) "严格模式锁定中 · 计时结束前无法离开日拱"
                                     else "应用已禁用 · 专注期间仅可使用白名单应用"
                                 )
                             }
@@ -241,7 +241,7 @@ class FocusService : Service() {
         return true
     }
 
-    /** 撤掉覆盖层:白名单应用/回到研钟时调用 */
+    /** 撤掉覆盖层:白名单应用/回到日拱时调用 */
     private fun hideOverlay() {
         overlayWanted = false
         if (overlayView == null) return
@@ -277,7 +277,7 @@ class FocusService : Service() {
         overlayView = null
     }
 
-    /** 覆盖层视图:深夜色全屏,拦截一切触摸;提供返回研钟与白名单快捷入口 */
+    /** 覆盖层视图:深夜色全屏,拦截一切触摸;提供返回日拱与白名单快捷入口 */
     private fun buildOverlayView(strict: Boolean): View {
         val density = resources.displayMetrics.density
         fun dp(v: Int) = (v * density).toInt()
@@ -353,7 +353,7 @@ class FocusService : Service() {
 
         fun backToYanZhong() {
             // 先撤覆盖层:未授予「使用情况访问」时守护循环识别不到前台应用,
-            // 覆盖层会一直盖住研钟自己,用户连紧急退出都点不到
+            // 覆盖层会一直盖住日拱自己,用户连紧急退出都点不到
             hideOverlay()
             runCatching {
                 startActivity(
@@ -365,9 +365,9 @@ class FocusService : Service() {
 
         if (strict) {
             addTitle("严格模式锁定中")
-            addSub("计时结束前无法离开研钟\n如遇突发情况,回到研钟后可在专注页使用紧急退出")
+            addSub("计时结束前无法离开日拱\n如遇突发情况,回到日拱后可在专注页使用紧急退出")
             addSpace(24)
-            addPrimaryButton("返回研钟专注", ::backToYanZhong)
+            addPrimaryButton("返回日拱专注", ::backToYanZhong)
         } else {
             addTitle("应用已禁用")
             addSub("专注期间仅可使用白名单应用")
@@ -428,14 +428,14 @@ class FocusService : Service() {
                     )
                 )
             }
-            addPrimaryButton("返回研钟专注", ::backToYanZhong)
+            addPrimaryButton("返回日拱专注", ::backToYanZhong)
         }
 
         root.addView(column, lpColumn)
         return root
     }
 
-    /** 拉回研钟:覆盖层已获授权时后台启动 Activity 才可靠;限频防止风暴 */
+    /** 拉回日拱:覆盖层已获授权时后台启动 Activity 才可靠;限频防止风暴 */
     private fun pullBack(reason: String) {
         val now = SystemClock.elapsedRealtime()
         if (now - lastPullAt < PULL_MIN_INTERVAL_MS) return
@@ -561,7 +561,7 @@ class FocusService : Service() {
         }
 
         /**
-         * 强制拉回研钟前台(学霸模式专属):休息结束时由引擎调用,
+         * 强制拉回日拱前台(学霸模式专属):休息结束时由引擎调用,
          * 无 Toast、无限频——必须立即回来说明下一番茄开始/计时结束。
          */
         fun pullToFront(context: Context) {
@@ -592,7 +592,7 @@ class FocusService : Service() {
             Phase.PAUSED -> "已暂停"
             Phase.SHORT_BREAK -> "短休息"
             Phase.LONG_BREAK -> "长休息"
-            Phase.IDLE -> "研钟"
+            Phase.IDLE -> "日拱"
         }
 
         private fun buildNotification(
@@ -602,10 +602,10 @@ class FocusService : Service() {
             taskTitle: String,
             countUp: Boolean = false
         ): Notification {
-            val title = if (taskTitle.isBlank()) "${phaseLabel(phase)} · 研钟"
+            val title = if (taskTitle.isBlank()) "${phaseLabel(phase)} · 日拱"
             else "${phaseLabel(phase)} · $taskTitle"
             val timeLabel = (if (countUp) "已专注 " else "剩余 ") + TimeUtils.mmss(remainingMs)
-            val text = if (remainingMs > 0) timeLabel else "研钟 · 考研学习效率工具"
+            val text = if (remainingMs > 0) timeLabel else "日拱 · 备考效率工具"
             return NotificationCompat.Builder(context, CHANNEL_ONGOING)
                 .setSmallIcon(R.drawable.ic_stat_pomodoro)
                 .setContentTitle(title)
@@ -651,7 +651,7 @@ class FocusService : Service() {
             )
             val notification = NotificationCompat.Builder(context, CHANNEL_EVENT)
                 .setSmallIcon(R.drawable.ic_stat_pomodoro)
-                .setContentTitle("研钟")
+                .setContentTitle("日拱")
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                 .setAutoCancel(true)
@@ -679,7 +679,7 @@ class FocusService : Service() {
             val nm = context.getSystemService(NotificationManager::class.java) ?: return
             val notification = NotificationCompat.Builder(context, CHANNEL_EVENT)
                 .setSmallIcon(R.drawable.ic_stat_pomodoro)
-                .setContentTitle("研钟计划")
+                .setContentTitle("日拱计划")
                 .setContentText(text)
                 .setStyle(NotificationCompat.BigTextStyle().bigText(text))
                 .setAutoCancel(true)

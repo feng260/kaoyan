@@ -1,4 +1,4 @@
-# 研钟后端 API 文档（速查）
+# 日拱后端 API 文档（速查）
 
 完整交互式文档：启动服务后访问 **http://localhost:3000/docs**（Swagger UI）。
 规范文件：`server/docs/openapi.yaml`。

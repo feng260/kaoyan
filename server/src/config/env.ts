@@ -43,7 +43,7 @@ export const env = {
     secure: (process.env.SMTP_SECURE ?? 'true') === 'true',
     user: process.env.SMTP_USER ?? '',
     pass: process.env.SMTP_PASS ?? '',
-    from: process.env.SMTP_FROM ?? '研钟 <no-reply@yanzhong.app>',
+    from: process.env.SMTP_FROM ?? '日拱 <no-reply@sunpush.top>',
   },
   corsOrigins: (process.env.CORS_ORIGINS ?? '')
     .split(',')

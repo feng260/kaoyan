@@ -30,10 +30,10 @@ export async function parseApkMeta(filePath: string): Promise<ApkMeta | null> {
   }
 }
 
-/** 发布前置校验:必须是研钟,且版本号严格大于线上最新(等于会导致老设备收不到更新)。 */
+/** 发布前置校验:必须是日拱,且版本号严格大于线上最新(等于会导致老设备收不到更新)。 */
 export function validateRelease(meta: ApkMeta, latestVersionCode: number | null): string | null {
   if (meta.packageName !== EXPECTED_APP_PACKAGE) {
-    return `安装包不是研钟(${meta.packageName})`
+    return `安装包不是日拱(${meta.packageName})`
   }
   if (latestVersionCode !== null && meta.versionCode <= latestVersionCode) {
     return `versionCode ${meta.versionCode} 必须大于当前最新 ${latestVersionCode}`

@@ -95,7 +95,7 @@ fun UpdateHost() {
                 onClick = {
                     if (!AppUpdater.canInstall(context)) {
                         AppUpdater.openInstallPermissionSettings(context)
-                        error = "请允许「研钟」安装未知应用后重试"
+                        error = "请允许「日拱」安装未知应用后重试"
                         return@TextButton
                     }
                     error = null

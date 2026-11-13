@@ -522,7 +522,7 @@ class PomodoroEngine(
     private fun onBreakFinished() {
         val s = _state.value
         val snap = settingsCache
-        // 学霸模式:休息结束强制拉回研钟(继续下一番茄 / 查看完成结果)
+        // 学霸模式:休息结束强制拉回日拱(继续下一番茄 / 查看完成结果)
         FocusService.pullToFront(app)
         val estimate = s.taskPomodoroEstimate
         val doneTotal = s.taskPomodoroDoneAtStart + s.completedInCycle

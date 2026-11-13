@@ -73,19 +73,19 @@ fun ConsentGate() {
                         modifier = Modifier.size(40.dp)
                     )
                     Spacer(Modifier.size(12.dp))
-                    Text("研钟", style = MaterialTheme.typography.headlineSmall, color = Color.White)
+                    Text("日拱", style = MaterialTheme.typography.headlineSmall, color = Color.White)
                 }
                 Spacer(Modifier.height(20.dp))
                 AppCard(contentPadding = PaddingValues(20.dp)) {
                     Text("开始之前", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "研钟只收集让多设备同步学习记录所必需的数据。请先了解以下处理方式:",
+                        "日拱只收集让多设备同步学习记录所必需的数据。请先了解以下处理方式:",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        "· 用户名、邮箱、学习记录保存在研钟服务器,密码只存哈希\n" +
+                        "· 用户名、邮箱、学习记录保存在日拱服务器,密码只存哈希\n" +
                             "· 生成计划时会把备考档案发送给模型服务商 DeepSeek\n" +
                             "· 注册与找回密码的验证码邮件经 SMTP 服务商发送\n" +
                             "· 数据库每日备份加密存放在腾讯云 COS,保留 30 天",

@@ -76,7 +76,7 @@ data class AppSettings(
     val dailyPomodoroGoal: Int = 8,
     /** 学霸模式:专注计时期间自动拦截非白名单应用(参考番茄ToDo 学霸模式) */
     val superModeOn: Boolean = false,
-    /** 严格等级:标准=放行白名单应用;严格=完全锁定在研钟内 */
+    /** 严格等级:标准=放行白名单应用;严格=完全锁定在日拱内 */
     val superModeStrict: Boolean = false,
     /** 紧急退出密码 SHA-256(严格模式逃生口,明文仅存在于用户记忆) */
     val emergencyPinHash: String = "",

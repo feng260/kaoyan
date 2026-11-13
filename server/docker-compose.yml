@@ -48,7 +48,7 @@ services:
       SMTP_SECURE: ${SMTP_SECURE:-true}
       SMTP_USER: ${SMTP_USER:-}
       SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_FROM: ${SMTP_FROM:-研钟 <no-reply@yanzhong.app>}
+      SMTP_FROM: ${SMTP_FROM:-日拱 <no-reply@sunpush.top>}
       INVITE_CODES: ${INVITE_CODES:-}
       AI_ALERT_DAILY_TOKENS: ${AI_ALERT_DAILY_TOKENS:-8000000}
       AI_ALERT_JOB_TOKENS: ${AI_ALERT_JOB_TOKENS:-500000}

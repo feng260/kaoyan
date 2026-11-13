@@ -1,4 +1,4 @@
-# 研钟后端数据库设计
+# 日拱后端数据库设计
 
 MySQL 8+，Prisma ORM（schema 权威来源：`server/prisma/schema.prisma`）。
 所有时间戳为 **BigInt 毫秒**（与 App `System.currentTimeMillis()` 对齐）。表名 snake_case。

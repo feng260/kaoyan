@@ -414,7 +414,7 @@ private fun BrandHeader(registerMode: Boolean) {
         Spacer(Modifier.size(14.dp))
         Column {
             Text(
-                "研钟",
+                "日拱",
                 style = MaterialTheme.typography.headlineSmall,
                 color = Color.White
             )

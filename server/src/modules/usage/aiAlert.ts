@@ -42,7 +42,7 @@ export function createAiAlert(deps: AiAlertDeps, opts: AiAlertOptions) {
         const total = await deps.sumTokensSince(since)
         if (total < opts.dailyTokens) return
         const delivered = await deps.sendAlert(
-          '研钟 AI 用量告警',
+          '日拱 AI 用量告警',
           `今日(${day} CST)AI token 用量已达 ${total},超过阈值 ${opts.dailyTokens}。请登录管理后台查看明细。`,
         )
         if (!delivered) {

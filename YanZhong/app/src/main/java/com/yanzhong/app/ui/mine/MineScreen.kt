@@ -410,7 +410,7 @@ fun MineScreen(padding: PaddingValues, navController: NavHostController) {
                     Spacer(Modifier.height(8.dp))
                     RowGroup {
                         ListRow(
-                            title = "研钟 YanZhong",
+                            title = "日拱",
                             subtitle = "v${BuildConfig.VERSION_NAME} · 本地数据 · 零广告",
                             icon = AppIcons.Info
                         )

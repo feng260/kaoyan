@@ -20,7 +20,7 @@ test('normalizeApkMeta 拒绝缺失包名或非法 versionCode', () => {
   assert.equal(normalizeApkMeta({ package: EXPECTED_APP_PACKAGE, versionCode: 'abc', versionName: 'x' }), null)
 })
 
-test('validateRelease 只接受研钟且版本号严格递增', () => {
+test('validateRelease 只接受日拱且版本号严格递增', () => {
   const meta = { packageName: EXPECTED_APP_PACKAGE, versionCode: 12, versionName: '1.0.12' }
   assert.equal(validateRelease(meta, null), null)
   assert.equal(validateRelease(meta, 11), null)
@@ -28,7 +28,7 @@ test('validateRelease 只接受研钟且版本号严格递增', () => {
   assert.match(validateRelease(meta, 20) ?? '', /必须大于/)
   assert.match(
     validateRelease({ ...meta, packageName: 'com.example.other' }, null) ?? '',
-    /不是研钟/
+    /不是日拱/
   )
 })
 

@@ -92,7 +92,7 @@ object AppUpdater {
         onProgress: (Int) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
         runCatching {
-            check(canInstall(context)) { "请先允许「研钟」安装未知应用" }
+            check(canInstall(context)) { "请先允许「日拱」安装未知应用" }
             val server = effectiveServerUrl()
             val dir = File(context.filesDir, "updates").apply { mkdirs() }
             // 清掉历史包,避免残留文件占空间或被误装

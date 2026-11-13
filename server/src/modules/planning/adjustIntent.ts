@@ -149,7 +149,7 @@ export async function runAdjustIntent(input: AdjustIntentInput): Promise<AdjustI
 
 function buildSystemPrompt(): string {
   return [
-    '你是考研备考计划助手「研钟」的行程调整分析师。',
+    '你是备考计划助手「日拱」的行程调整分析师。',
     '用户会告诉你一件突发事情、想改的任务或想调整的目标。',
     '你的任务是把这句话解析成结构化意图,只输出 JSON,不要输出多余文本。',
     'JSON 字段:',

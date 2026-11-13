@@ -478,7 +478,7 @@ private fun IdleContent(vm: FocusViewModel, state: FocusUiState, activePeers: Li
             title = { Text("严格模式需要悬浮窗权限") },
             text = {
                 Text(
-                    "没有「显示在其他应用上层」权限时，按 Home 键仍可离开研钟，严格锁定不会生效。\n" +
+                    "没有「显示在其他应用上层」权限时，按 Home 键仍可离开日拱，严格锁定不会生效。\n" +
                         "去系统设置开启权限后，再回来开始专注。"
                 )
             },

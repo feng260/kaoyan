@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: 研钟后端 API
+  title: 日拱后端 API
   version: "1.0.0"
-  description: 研钟 App 后端:用户认证、多设备状态同步(WebSocket)、数据备份与增量同步。
+  description: 日拱 App 后端:用户认证、多设备状态同步(WebSocket)、数据备份与增量同步。
     认证方式为 Bearer JWT(access 2h);过期后用 refresh token 轮换。
 servers:
   - url: http://localhost:3000

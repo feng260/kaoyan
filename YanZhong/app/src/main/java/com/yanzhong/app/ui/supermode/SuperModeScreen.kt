@@ -281,7 +281,7 @@ private fun StrictLevelSection(strict: Boolean, onSelect: (Boolean) -> Unit) {
         RowDivider()
         ListRow(
             title = "严格模式",
-            subtitle = "完全锁定在研钟专注界面,无法退出、无法暂停、无法使用任何其他应用",
+            subtitle = "完全锁定在日拱专注界面,无法退出、无法暂停、无法使用任何其他应用",
             onClick = { onSelect(true) },
             showChevron = false,
             trailing = { SelectedMark(selected = strict) }

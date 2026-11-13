@@ -1,4 +1,4 @@
-// 研钟后端数据库设计(MySQL 8+,Prisma)
+// 日拱后端数据库设计(MySQL 8+,Prisma)
 // 约定:业务字段与 Android Room 实体同名同型(见 YanZhong/.../data/db/Entities.kt);
 //       时间戳统一为 BigInt 毫秒(与 App System.currentTimeMillis() 对齐);
 //       业务表通用列 client_guid + updated_at + is_deleted 支撑增量同步与 LWW upsert。

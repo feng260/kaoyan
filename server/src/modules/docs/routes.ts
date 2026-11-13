@@ -20,7 +20,7 @@ router.get('/docs', ctx => {
   ctx.set('Content-Security-Policy',
     "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
   ctx.body = `<!DOCTYPE html>
-<html><head><title>研钟 API</title>
+<html><head><title>日拱 API</title>
 <link rel="stylesheet" href="/docs/swagger-ui.css"></head>
 <body><div id="swagger-ui"></div>
 <script src="/docs/swagger-ui-bundle.js"></script>

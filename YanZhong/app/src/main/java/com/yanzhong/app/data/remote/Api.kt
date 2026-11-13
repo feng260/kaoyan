@@ -1145,7 +1145,7 @@ interface YanzhongApi {
 
 /**
  * 默认服务器地址:由构建参数 YANZHONG_API_BASE 注入到 BuildConfig.API_BASE_URL(见 app/build.gradle.kts),
- * 正式包默认 https://api.yanzhong.app。明文 HTTP 仅在 debug 构建可用
+ * 正式包默认 https://api.sunpush.top。明文 HTTP 仅在 debug 构建可用
  * (src/debug/res/xml/network_security_config.xml 只放行模拟器与 localhost),release 不放开任何明文地址。
  * 用户在登录页/「云同步」页手动保存过的地址优先级更高(见 [effectiveServerUrl])。
  */

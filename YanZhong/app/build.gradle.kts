@@ -42,11 +42,11 @@ android {
         targetSdk = 34
         // OTA 用 versionCode 递增判定(服务端 current < latest),发布新包必须 +1,
         // 否则老设备永远收不到更新(updateAvailable 恒为 false)。
-        versionCode = 11
+        versionCode = 12
         versionName = "1.0.0-beta1"
         // 部署域名从这里注入:./gradlew -PYANZHONG_API_BASE=https://实际域名
         val apiBase = (project.findProperty("YANZHONG_API_BASE") as String?)
-            ?: "https://api.yanzhong.app"
+            ?: "https://api.sunpush.top"
         buildConfigField("String", "API_BASE_URL", "\"$apiBase\"")
     }
 

@@ -1,4 +1,4 @@
-# 研钟后端部署文档
+# 日拱后端部署文档
 
 面向自建服务器（当前目标：`81.71.14.219`）。技术栈 Koa + TypeScript + Prisma + MySQL 8 + WebSocket，
 用 Docker Compose 一键起 MySQL 与 API。
@@ -221,7 +221,7 @@ App 端：标准包默认地址为 `https://<域名>`，装包后直接登录即
    sudo install -d -o caddy -g caddy -m 0755 /var/log/caddy
    ```
 
-   复制 `deploy/Caddyfile.example` 到 `/etc/caddy/Caddyfile`，把 `api.yanzhong.app` 替换为实际 `<域名>`。
+   复制 `deploy/Caddyfile.example` 到 `/etc/caddy/Caddyfile`（已按 `api.sunpush.top` 写好，换域名时同步替换）。
 5. 校验并重载：`sudo caddy validate --config /etc/caddy/Caddyfile`、`sudo systemctl reload caddy`
    （首次部署用 `systemctl restart caddy`）。
 6. 验证 `curl -fsS https://<域名>/healthz`、证书、登录及 WebSocket（Caddy 自动转发 WebSocket Upgrade）；
